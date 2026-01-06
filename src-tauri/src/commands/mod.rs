@@ -6,3 +6,4 @@ pub mod git;
 pub mod chat;
 pub mod publish;
 pub mod logging;
+pub mod files;

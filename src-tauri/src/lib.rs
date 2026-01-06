@@ -7,6 +7,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -41,6 +42,7 @@ pub fn run() {
             commands::logging::read_log_file,
             commands::logging::clear_log_file,
             commands::logging::get_log_file_size,
+            commands::files::store_chat_attachments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

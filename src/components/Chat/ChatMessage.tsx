@@ -1,4 +1,5 @@
 import type { ChatMessage as ChatMessageType } from '../../types';
+import { AttachmentPreview } from './AttachmentPreview';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -30,6 +31,16 @@ export function ChatMessage({ message, isInactive, isCurrentVersion, onVersionCl
           </div>
         )}
         <div className="text-sm whitespace-pre-wrap break-words">{message.content}</div>
+        {message.attachments && message.attachments.length > 0 && (
+          <div className={`mt-2 pt-2 border-t ${isUser ? 'border-white/20' : 'border-white/10'}`}>
+            <div className="text-xs opacity-75 mb-2">Attachments:</div>
+            <div className="flex flex-wrap gap-2">
+              {message.attachments.map((attachment) => (
+                <AttachmentPreview key={attachment.id} attachment={attachment} />
+              ))}
+            </div>
+          </div>
+        )}
         {message.filesModified && message.filesModified.length > 0 && (
           <div className="mt-2 pt-2 border-t border-white/10">
             <div className="text-xs opacity-75 mb-1">Modified files:</div>

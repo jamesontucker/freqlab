@@ -8,6 +8,7 @@ pub struct ProjectMeta {
     pub name: String,
     pub description: String,
     pub template: Option<String>, // "effect" or "instrument"
+    pub components: Option<Vec<String>>, // Starter components selected
     pub created_at: String,
     pub updated_at: String,
     pub path: String,
@@ -24,6 +25,7 @@ pub struct CreateProjectInput {
     pub vendor_url: Option<String>,
     #[serde(rename = "vendorEmail")]
     pub vendor_email: Option<String>,
+    pub components: Option<Vec<String>>, // Starter components to include
 }
 
 pub fn get_workspace_path() -> PathBuf {
@@ -248,6 +250,7 @@ strip = "symbols"
         name: input.name.clone(),
         description: input.description.clone(),
         template: Some(input.template.clone()),
+        components: input.components.clone(),
         created_at: now.clone(),
         updated_at: now,
         path: project_path.to_string_lossy().to_string(),

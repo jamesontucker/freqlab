@@ -57,12 +57,30 @@ export interface ProjectMeta {
   name: string;
   description: string;
   template?: PluginTemplate;
+  components?: string[];  // Starter components selected
   created_at: string;
   updated_at: string;
   path: string;
 }
 
 export type PluginTemplate = 'effect' | 'instrument';
+
+// Starter components for Effect plugins
+export type EffectComponent =
+  | 'custom_gui'
+  | 'preset_system'
+  | 'param_smoothing'
+  | 'sidechain_input'
+  | 'oversampling';
+
+// Starter components for Instrument plugins
+export type InstrumentComponent =
+  | 'custom_gui'
+  | 'preset_system'
+  | 'polyphony'
+  | 'velocity_layers'
+  | 'adsr_envelope'
+  | 'lfo';
 
 export interface CreateProjectInput {
   name: string;
@@ -71,6 +89,15 @@ export interface CreateProjectInput {
   vendorName?: string;
   vendorUrl?: string;
   vendorEmail?: string;
+  components?: string[];  // Selected component IDs
+}
+
+export interface FileAttachment {
+  id: string;           // UUID for the upload
+  originalName: string; // Original filename
+  path: string;         // Absolute path in project
+  mimeType: string;     // MIME type for display logic
+  size: number;         // File size in bytes
 }
 
 export interface ChatMessage {
@@ -83,6 +110,7 @@ export interface ChatMessage {
   commitHash?: string;
   version?: number;  // Version number for commits (1, 2, 3...) - only set if files were changed
   reverted: boolean;
+  attachments?: FileAttachment[];  // Files attached to this message
 }
 
 export interface ChatState {

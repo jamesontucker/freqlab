@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// File attachment stored with a chat message
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FileAttachment {
+    pub id: String,
+    #[serde(rename = "originalName")]
+    pub original_name: String,
+    pub path: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub size: u64,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatMessage {
     pub id: String,
@@ -14,6 +26,8 @@ pub struct ChatMessage {
     pub version: Option<u32>,  // Version number for commits that changed files
     #[serde(default)]
     pub reverted: bool,  // Computed from activeVersion, kept for backwards compat
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub attachments: Option<Vec<FileAttachment>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

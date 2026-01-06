@@ -2,11 +2,26 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ChatMessage } from './ChatMessage';
-import { ChatInput } from './ChatInput';
+import { ChatInput, type PendingAttachment } from './ChatInput';
 import { useProjectOutput } from '../../stores/outputStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
-import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta } from '../../types';
+import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
+
+interface AttachmentInput {
+  originalName: string;
+  sourcePath: string;
+  mimeType: string;
+  size: number;
+}
+
+interface StoredAttachment {
+  id: string;
+  originalName: string;
+  path: string;
+  mimeType: string;
+  size: number;
+}
 
 interface ClaudeStreamEvent {
   type: 'start' | 'text' | 'error' | 'done';
@@ -63,15 +78,41 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     setIsHistoryLoaded(true);
   }, [project.path]);
 
-  // Load chat history when project changes
+  // Track state from previous render to detect meaningful changes
+  const prevStateRef = useRef<{ projectPath: string | null; isLoading: boolean }>({
+    projectPath: null,
+    isLoading: false,
+  });
+
+  // Load chat history when project changes OR when Claude finishes working on this project
   useEffect(() => {
-    // Reset state when switching projects
+    const prev = prevStateRef.current;
+    const projectChanged = prev.projectPath !== project.path;
+    const claudeJustFinished = prev.isLoading && !isLoading && !projectChanged;
+    const claudeJustStarted = !prev.isLoading && isLoading && !projectChanged;
+
+    // Update ref for next render
+    prevStateRef.current = { projectPath: project.path, isLoading };
+
+    if (claudeJustStarted) {
+      // User just sent a message - handleSend is managing state, don't interfere
+      return;
+    }
+
+    if (claudeJustFinished) {
+      // Claude just finished working on THIS project - reload to get the saved result
+      // Don't reset state, just reload from disk (preserves smooth UX)
+      loadHistory();
+      return;
+    }
+
+    // Project changed or initial mount - reset and reload
     setMessages([]);
     setActiveVersion(null);
     setIsHistoryLoaded(false);
     setStreamingContent('');
     loadHistory();
-  }, [project.path, loadHistory]);
+  }, [project.path, loadHistory, isLoading]);
 
   // Re-sync from disk when window regains focus or becomes visible
   // This fixes state sync issues when the app is minimized or in background
@@ -168,9 +209,38 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     return () => clearInterval(interval);
   }, [isLoading]);
 
-  const handleSend = useCallback(async (content: string) => {
+  const handleSend = useCallback(async (content: string, attachments?: PendingAttachment[]) => {
     // Use ref for current messages (avoids stale closure issues)
     const currentMessages = messagesRef.current;
+
+    // Store attachments if any
+    let storedAttachments: FileAttachment[] | undefined;
+    if (attachments && attachments.length > 0) {
+      try {
+        const attachmentInputs: AttachmentInput[] = attachments.map((a) => ({
+          originalName: a.originalName,
+          sourcePath: a.sourcePath,
+          mimeType: a.mimeType,
+          size: a.size,
+        }));
+        const stored = await invoke<StoredAttachment[]>('store_chat_attachments', {
+          projectPath: project.path,
+          attachments: attachmentInputs,
+        });
+        storedAttachments = stored.map((s) => ({
+          id: s.id,
+          originalName: s.originalName,
+          path: s.path,
+          mimeType: s.mimeType,
+          size: s.size,
+        }));
+      } catch (err) {
+        console.error('Failed to store attachments:', err);
+        // Notify user but continue without attachments
+        addLine(`[Warning] Could not store ${attachments.length} attachment(s): ${err}`);
+        addLine('Message will be sent without attachments.');
+      }
+    }
 
     // Add user message
     const userMessage: ChatMessageType = {
@@ -179,6 +249,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       content,
       timestamp: new Date().toISOString(),
       reverted: false,
+      attachments: storedAttachments,
     };
     const messagesWithUser = [...currentMessages, userMessage];
     setMessages(messagesWithUser);
@@ -200,7 +271,12 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     // Clear and activate output panel
     clear();
     setActive(true);
-    addLine(`> Processing: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
+    // Show appropriate message based on content
+    if (content) {
+      addLine(`> Processing: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
+    } else if (storedAttachments && storedAttachments.length > 0) {
+      addLine(`> Processing ${storedAttachments.length} attachment(s)...`);
+    }
     addLine('');
 
     // Listen for streaming events - filter by project path to prevent cross-talk
@@ -222,12 +298,21 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       }
     });
 
+    // Build message with file context for Claude
+    let messageForClaude = content;
+    if (storedAttachments && storedAttachments.length > 0) {
+      const fileContext = storedAttachments
+        .map((a) => `[Attached file: ${a.originalName} at ${a.path}]`)
+        .join('\n');
+      messageForClaude = `${fileContext}\n\n${content}`;
+    }
+
     try {
       const response = await invoke<{ content: string; commit_hash?: string }>('send_to_claude', {
         projectPath: project.path,
         projectName: project.name,
         description: project.description,
-        message: content,
+        message: messageForClaude,
       });
 
       // Calculate next version number if this response has a commit (files were changed)
@@ -358,7 +443,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && !isLoading ? (
+        {messages.length === 0 && !isLoading && isHistoryLoaded ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center max-w-md">
               <div className="w-16 h-16 mx-auto rounded-xl bg-bg-tertiary flex items-center justify-center mb-4">

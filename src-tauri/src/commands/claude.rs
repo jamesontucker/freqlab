@@ -183,9 +183,27 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
     }
 }
 
+/// Get human-readable description for a component ID
+fn get_component_description(component_id: &str) -> &'static str {
+    match component_id {
+        // Effect components
+        "custom_gui" => "Custom GUI using nih_plug_vizia with knobs, sliders, and visual feedback",
+        "preset_system" => "Preset save/load system with factory presets and user preset management",
+        "param_smoothing" => "Advanced parameter smoothing with configurable interpolation curves",
+        "sidechain_input" => "Sidechain audio input for ducking, keying, or modulation sources",
+        "oversampling" => "2x/4x oversampling for reduced aliasing in nonlinear processing",
+        // Instrument components
+        "polyphony" => "Polyphonic voice architecture with 8 voices and voice stealing",
+        "velocity_layers" => "Velocity-sensitive response with multiple sample/synthesis layers",
+        "adsr_envelope" => "ADSR amplitude envelope with attack, decay, sustain, release controls",
+        "lfo" => "LFO modulation source with multiple waveforms and tempo sync",
+        _ => "Additional plugin feature",
+    }
+}
+
 /// Build the system context for Claude when working on a plugin project
-fn build_context(project_name: &str, description: &str) -> String {
-    format!(
+fn build_context(project_name: &str, description: &str, components: Option<&Vec<String>>, is_first_message: bool) -> String {
+    let mut context = format!(
         r#"You are helping develop a VST audio plugin using nih-plug (Rust).
 
 Project: {project_name}
@@ -212,7 +230,39 @@ When modifying the plugin:
 The user will describe what they want. Make the changes directly to the code."#,
         project_name = project_name,
         description = description
-    )
+    );
+
+    // Add component scaffolding instructions for first message of new projects with components
+    if is_first_message {
+        if let Some(comps) = components {
+            if !comps.is_empty() {
+                context.push_str("\n\n--- STARTER COMPONENTS ---\n");
+                context.push_str("The user selected the following starter components when creating this plugin.\n");
+                context.push_str("On the FIRST user message, implement scaffolding for these components:\n\n");
+
+                for comp_id in comps {
+                    let desc = get_component_description(comp_id);
+                    context.push_str(&format!("- {}: {}\n", comp_id, desc));
+                }
+
+                context.push_str("\nGenerate working skeleton code for each component. ");
+                context.push_str("Include TODO comments where the user will need to customize behavior. ");
+                context.push_str("Make sure the plugin still compiles and runs after adding components.");
+            }
+        }
+    }
+
+    context
+}
+
+/// Load project metadata to get components and other info
+fn load_project_metadata(project_path: &str) -> Option<super::projects::ProjectMeta> {
+    let metadata_path = PathBuf::from(project_path)
+        .join(".vstworkshop")
+        .join("metadata.json");
+
+    let content = fs::read_to_string(metadata_path).ok()?;
+    serde_json::from_str(&content).ok()
 }
 
 #[tauri::command]
@@ -236,11 +286,16 @@ pub async fn send_to_claude(
         eprintln!("[WARN] Failed to update gitignore: {}", e);
     }
 
-    // Build context
-    let context = build_context(&project_name, &description);
-
     // Check for existing session to resume
     let existing_session = load_session_id(&project_path);
+    let is_first_message = existing_session.is_none();
+
+    // Load project metadata to get components
+    let metadata = load_project_metadata(&project_path);
+    let components = metadata.as_ref().and_then(|m| m.components.as_ref());
+
+    // Build context with components info for first message
+    let context = build_context(&project_name, &description, components, is_first_message);
 
     // Build args - include --resume if we have an existing session
     let mut args = vec![
