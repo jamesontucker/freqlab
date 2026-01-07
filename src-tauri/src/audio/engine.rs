@@ -651,3 +651,42 @@ pub fn shutdown_engine() {
     // Note: The stream is leaked and will be cleaned up when the process exits
     // The audio callback will produce silence when the handle is None
 }
+
+/// Reinitialize the audio engine with new settings
+/// This will shutdown the existing engine and create a new one
+pub fn reinit_engine(device_name: Option<&str>, config: AudioConfig) -> Result<(), String> {
+    log::info!(
+        "Reinitializing audio engine: device={:?}, sample_rate={}, buffer_size={}",
+        device_name,
+        config.sample_rate,
+        config.buffer_size
+    );
+
+    // Shutdown existing engine
+    shutdown_engine();
+
+    // Small delay to ensure resources are released
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Force reinitialize by clearing the OnceCell check
+    // We need to create a new engine regardless of the OnceCell state
+    super::plugin::cleanup_temp_bundles();
+
+    let engine = AudioEngine::new(device_name, config)?;
+    let handle = engine.handle();
+
+    // Store the handle
+    let cell = ENGINE_HANDLE.get_or_init(|| RwLock::new(None));
+    *cell.write() = Some(handle);
+
+    // Leak the stream to keep it alive
+    std::mem::forget(engine);
+
+    log::info!("Audio engine reinitialized successfully");
+    Ok(())
+}
+
+/// Get the current audio engine sample rate
+pub fn get_engine_sample_rate() -> Option<u32> {
+    get_engine_handle().map(|h| h.sample_rate)
+}

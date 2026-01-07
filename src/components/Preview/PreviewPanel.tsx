@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePreviewStore, type SignalType, type GatePattern } from '../../stores/previewStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import * as previewApi from '../../api/preview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
@@ -247,6 +248,7 @@ export function PreviewPanel() {
   } = usePreviewStore();
 
   const { activeProject } = useProjectStore();
+  const { audioSettings, markAudioSettingsApplied } = useSettingsStore();
   const [engineInitialized, setEngineInitialized] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [pluginLoading, setPluginLoading] = useState(false);
@@ -274,13 +276,20 @@ export function PreviewPanel() {
 
     const initEngine = async () => {
       try {
-        await previewApi.initAudioEngine();
+        // Initialize with saved audio settings
+        await previewApi.initAudioEngine(
+          audioSettings.outputDevice,
+          audioSettings.sampleRate,
+          audioSettings.bufferSize
+        );
 
         // Check cancellation after each async operation
         if (isCancelled) return;
 
         setEngineInitialized(true);
         setEngineError(null);
+        // Mark current audio settings as "applied" (engine is using them)
+        markAudioSettingsApplied();
 
         // Start level meter updates
         await previewApi.startLevelMeter();

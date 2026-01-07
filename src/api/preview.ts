@@ -25,10 +25,18 @@ export interface PreviewState {
 }
 
 /**
- * Initialize the audio engine
+ * Initialize the audio engine with optional custom settings
  */
-export async function initAudioEngine(deviceName?: string): Promise<void> {
-  await invoke('init_audio_engine', { deviceName });
+export async function initAudioEngine(
+  deviceName?: string | null,
+  sampleRate?: number,
+  bufferSize?: number
+): Promise<void> {
+  await invoke('init_audio_engine', {
+    deviceName: deviceName || null,
+    sampleRate,
+    bufferSize,
+  });
 }
 
 /**

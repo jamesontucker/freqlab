@@ -79,6 +79,15 @@ pub fn get_output_device(name: Option<&str>) -> Result<cpal::Device, String> {
     }
 }
 
+/// Get the default output device's sample rate
+pub fn get_default_sample_rate() -> Result<u32, String> {
+    let device = get_default_output_device()?;
+    let config = device
+        .default_output_config()
+        .map_err(|e| format!("Failed to get default config: {}", e))?;
+    Ok(config.sample_rate().0)
+}
+
 /// Get supported config for a device
 pub fn get_supported_config(
     device: &cpal::Device,

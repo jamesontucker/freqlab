@@ -35,6 +35,12 @@ export interface CustomThemeColors {
   textSecondary: string;
 }
 
+export interface AudioSettings {
+  outputDevice: string | null;  // null = system default
+  sampleRate: number;
+  bufferSize: number;
+}
+
 export interface AppConfig {
   workspacePath: string;
   outputPath: string;

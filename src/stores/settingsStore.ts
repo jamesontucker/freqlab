@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppConfig, DawPaths, CustomThemeColors } from '../types';
+import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings } from '../types';
 
 const defaultDawPaths: DawPaths = {
   reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
@@ -19,7 +19,22 @@ const defaultCustomColors: CustomThemeColors = {
   textSecondary: '#a1a1aa',
 };
 
+const defaultAudioSettings: AudioSettings = {
+  outputDevice: null,  // Use system default
+  sampleRate: 48000,   // 48kHz - industry standard
+  bufferSize: 512,
+};
+
 interface SettingsState extends AppConfig {
+  // Audio settings (what the user has configured)
+  audioSettings: AudioSettings;
+  // Applied audio settings (what the engine is currently using - set on app startup)
+  appliedAudioSettings: AudioSettings | null;
+  setAudioSettings: (settings: AudioSettings) => void;
+  updateAudioSetting: <K extends keyof AudioSettings>(key: K, value: AudioSettings[K]) => void;
+  // Mark current audioSettings as applied (called after engine init)
+  markAudioSettingsApplied: () => void;
+  // Other settings
   setSetupComplete: (complete: boolean) => void;
   setWorkspacePath: (path: string) => void;
   setTheme: (theme: 'dark' | 'light' | 'custom') => void;
@@ -49,6 +64,23 @@ export const useSettingsStore = create<SettingsState>()(
       vendorEmail: '',
       // DAW paths defaults
       dawPaths: defaultDawPaths,
+      // Audio settings defaults
+      audioSettings: defaultAudioSettings,
+      appliedAudioSettings: null, // Set on first engine init
+
+      // Audio settings setters
+      setAudioSettings: (settings) => set({ audioSettings: settings }),
+      updateAudioSetting: (key, value) =>
+        set((state) => ({
+          audioSettings: {
+            ...state.audioSettings,
+            [key]: value,
+          },
+        })),
+      markAudioSettingsApplied: () =>
+        set((state) => ({
+          appliedAudioSettings: { ...state.audioSettings },
+        })),
 
       setSetupComplete: (complete) => set({ setupComplete: complete }),
       setWorkspacePath: (path) => set({ workspacePath: path }),

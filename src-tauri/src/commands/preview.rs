@@ -9,8 +9,8 @@ use tauri::{Emitter, Manager};
 static LEVEL_METER_RUNNING: AtomicBool = AtomicBool::new(false);
 
 use crate::audio::{
-    device::{list_output_devices, AudioConfig, AudioDeviceInfo},
-    engine::{get_engine_handle, init_engine, shutdown_engine, EngineState, InputSource},
+    device::{get_default_sample_rate, list_output_devices, AudioConfig, AudioDeviceInfo},
+    engine::{get_engine_handle, get_engine_sample_rate, init_engine, reinit_engine, shutdown_engine, EngineState, InputSource},
     plugin::PluginState,
     signals::{GatePattern, SignalConfig, SignalType},
 };
@@ -29,10 +29,18 @@ pub struct DemoSample {
     pub path: String,
 }
 
-/// Initialize the audio engine
+/// Initialize the audio engine with optional custom settings
 #[tauri::command]
-pub fn init_audio_engine(device_name: Option<String>) -> Result<(), String> {
-    let config = AudioConfig::default();
+pub fn init_audio_engine(
+    device_name: Option<String>,
+    sample_rate: Option<u32>,
+    buffer_size: Option<u32>,
+) -> Result<(), String> {
+    let config = AudioConfig {
+        sample_rate: sample_rate.unwrap_or(48000),
+        channels: 2,
+        buffer_size: buffer_size.unwrap_or(512),
+    };
     init_engine(device_name.as_deref(), config)
 }
 
@@ -46,6 +54,43 @@ pub fn shutdown_audio_engine() {
 #[tauri::command]
 pub fn get_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
     list_output_devices()
+}
+
+/// Get current audio engine sample rate
+#[tauri::command]
+pub fn get_audio_sample_rate() -> Result<u32, String> {
+    get_engine_sample_rate().ok_or_else(|| "Audio engine not initialized".to_string())
+}
+
+/// Update audio settings and reinitialize the engine
+/// NOTE: This command is kept for potential future use but is currently not called
+/// from the frontend. Audio settings changes now require an app restart to avoid
+/// ObjC WebView class collision issues with webview-based plugins.
+#[tauri::command]
+pub fn set_audio_config(
+    device_name: Option<String>,
+    sample_rate: u32,
+    buffer_size: Option<u32>,
+    _app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    // Stop any current playback
+    if let Some(handle) = get_engine_handle() {
+        handle.stop();
+    }
+
+    // Reinitialize the engine with new settings
+    let config = AudioConfig {
+        sample_rate,
+        channels: 2,
+        buffer_size: buffer_size.unwrap_or(512),
+    };
+    reinit_engine(device_name.as_deref(), config)
+}
+
+/// Get the system's default audio sample rate
+#[tauri::command]
+pub fn get_system_sample_rate() -> Result<u32, String> {
+    get_default_sample_rate()
 }
 
 /// Start audio playback

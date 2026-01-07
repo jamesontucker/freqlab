@@ -9,6 +9,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -52,6 +53,9 @@ pub fn run() {
             commands::preview::init_audio_engine,
             commands::preview::shutdown_audio_engine,
             commands::preview::get_audio_devices,
+            commands::preview::get_audio_sample_rate,
+            commands::preview::get_system_sample_rate,
+            commands::preview::set_audio_config,
             commands::preview::preview_play,
             commands::preview::preview_stop,
             commands::preview::preview_pause,
