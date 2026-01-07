@@ -1,5 +1,6 @@
 import type { ChatMessage as ChatMessageType } from '../../types';
 import { AttachmentPreview } from './AttachmentPreview';
+import ReactMarkdown from 'react-markdown';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -30,7 +31,13 @@ export function ChatMessage({ message, isInactive, isCurrentVersion, onVersionCl
             <span>Inactive version</span>
           </div>
         )}
-        <div className="text-sm whitespace-pre-wrap break-words">{message.content}</div>
+        {isUser ? (
+          <div className="text-sm whitespace-pre-wrap break-words">{message.content}</div>
+        ) : (
+          <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-headings:my-2 prose-code:bg-black/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-pre:bg-black/30 prose-pre:p-3 prose-pre:rounded-lg prose-strong:text-text-primary prose-a:text-accent">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )}
         {message.attachments && message.attachments.length > 0 && (
           <div className={`mt-2 pt-2 border-t ${isUser ? 'border-white/20' : 'border-white/10'}`}>
             <div className="text-xs opacity-75 mb-2">Attachments:</div>
