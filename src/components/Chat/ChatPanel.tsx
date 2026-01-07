@@ -6,6 +6,7 @@ import { ChatInput, type PendingAttachment } from './ChatInput';
 import { useProjectOutput } from '../../stores/outputStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
+import { usePreviewStore } from '../../stores/previewStore';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 
 interface AttachmentInput {
@@ -411,6 +412,10 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       setMessages(state.messages);
       setActiveVersion(state.activeVersion);
       addLine(`[${direction === 'Reverting' ? 'Reverted' : 'Restored'} to v${version}]`);
+
+      // Mark that preview needs a fresh build (source code changed but plugin binary is stale)
+      usePreviewStore.getState().setBuildStatus('needs_rebuild');
+
       // Notify parent that version changed so it can update build status
       onVersionChange?.();
     } catch (err) {

@@ -4,7 +4,7 @@ import type { PluginState } from '../api/preview';
 export type InputSourceType = 'sample' | 'signal' | 'custom' | 'live';
 export type SignalType = 'sine' | 'white_noise' | 'pink_noise' | 'impulse' | 'sweep' | 'square';
 export type GatePattern = 'continuous' | 'pulse' | 'quarter' | 'eighth' | 'sixteenth';
-export type BuildStatus = 'idle' | 'building' | 'ready' | 'error';
+export type BuildStatus = 'idle' | 'building' | 'ready' | 'error' | 'needs_rebuild';
 
 export type { PluginState } from '../api/preview';
 
