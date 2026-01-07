@@ -11,6 +11,7 @@ use super::device::{get_output_device, get_supported_config, AudioConfig};
 use super::plugin::{PluginInstance, PluginState};
 use super::samples::{AudioSample, SamplePlayer};
 use super::signals::{GatePattern, SignalConfig, SignalGenerator};
+use super::spectrum::{SpectrumAnalyzer, NUM_BANDS};
 
 /// Current state of the audio engine
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -61,6 +62,8 @@ struct SharedState {
     // Output levels for metering - using AtomicU32 with f32 bit patterns for lock-free access
     output_level_left: AtomicU32,
     output_level_right: AtomicU32,
+    // Spectrum analyzer data - stored as AtomicU32 array for lock-free access
+    spectrum_bands: [AtomicU32; NUM_BANDS],
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
@@ -194,6 +197,15 @@ impl AudioEngineHandle {
         let left = u32_to_f32(self.shared.output_level_left.load(Ordering::Relaxed));
         let right = u32_to_f32(self.shared.output_level_right.load(Ordering::Relaxed));
         (left, right)
+    }
+
+    /// Get spectrum analyzer band magnitudes (0.0 - 1.0)
+    pub fn get_spectrum_data(&self) -> [f32; NUM_BANDS] {
+        let mut bands = [0.0f32; NUM_BANDS];
+        for (i, band) in self.shared.spectrum_bands.iter().enumerate() {
+            bands[i] = u32_to_f32(band.load(Ordering::Relaxed));
+        }
+        bands
     }
 
     pub fn get_state(&self) -> EngineState {
@@ -375,6 +387,8 @@ impl AudioEngine {
         );
 
         // Create shared state
+        // Initialize spectrum bands array with zeros
+        const INIT_BAND: AtomicU32 = AtomicU32::new(0);
         let shared = Arc::new(SharedState {
             input_source: RwLock::new(InputSource::None),
             signal_generator: RwLock::new(SignalGenerator::new(sample_rate)),
@@ -383,6 +397,7 @@ impl AudioEngine {
             is_looping: AtomicBool::new(true),
             output_level_left: AtomicU32::new(f32_to_u32(0.0)),
             output_level_right: AtomicU32::new(f32_to_u32(0.0)),
+            spectrum_bands: [INIT_BAND; NUM_BANDS],
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
             crossfade_state: AtomicU8::new(CROSSFADE_NONE),
@@ -401,6 +416,11 @@ impl AudioEngine {
         let max_buffer_size = max_frames * channels; // 8192 for stereo
         let mut input_buffer = vec![0.0f32; max_buffer_size];
         let mut output_buffer = vec![0.0f32; max_buffer_size];
+
+        // Create spectrum analyzer for visualization
+        let mut spectrum_analyzer = SpectrumAnalyzer::new(sample_rate);
+        // Counter for throttling spectrum updates (every N callbacks)
+        let mut spectrum_update_counter = 0u32;
 
         // Build the output stream
         let stream = device
@@ -560,6 +580,32 @@ impl AudioEngine {
                         let current = u32_to_f32(shared_clone.output_level_right.load(Ordering::Relaxed));
                         let new_level = current * (1.0 - level_smoothing) + peak_right * level_smoothing;
                         shared_clone.output_level_right.store(f32_to_u32(new_level), Ordering::Relaxed);
+                    }
+
+                    // Update spectrum analyzer (mono mix of L/R for analysis)
+                    // Update every 2 callbacks for smoother visuals (~6ms at 44.1kHz/512)
+                    spectrum_update_counter += 1;
+                    if spectrum_update_counter >= 2 {
+                        spectrum_update_counter = 0;
+
+                        // Create mono mix for analysis
+                        let mono_samples: Vec<f32> = if channels > 1 {
+                            data.chunks(2)
+                                .map(|chunk| (chunk[0] + chunk[1]) * 0.5)
+                                .collect()
+                        } else {
+                            data.to_vec()
+                        };
+
+                        // Push samples and compute FFT
+                        spectrum_analyzer.push_samples(&mono_samples);
+                        spectrum_analyzer.analyze();
+
+                        // Store spectrum data to shared state (lock-free)
+                        let magnitudes = spectrum_analyzer.get_magnitudes();
+                        for (i, &mag) in magnitudes.iter().enumerate() {
+                            shared_clone.spectrum_bands[i].store(f32_to_u32(mag), Ordering::Relaxed);
+                        }
                     }
                 },
                 move |err| {

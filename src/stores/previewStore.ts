@@ -36,6 +36,14 @@ export interface PluginParameter {
   unit?: string;
 }
 
+export interface OutputMetering {
+  left: number;
+  right: number;
+  leftDb: number;
+  rightDb: number;
+  spectrum: number[];
+}
+
 interface PreviewState {
   // Panel visibility
   isOpen: boolean;
@@ -59,8 +67,8 @@ interface PreviewState {
   isAutoReload: boolean;
   lastReloadTime: number | null;
 
-  // Output levels (for meters)
-  outputLevel: { left: number; right: number };
+  // Output metering (levels, dB, spectrum)
+  metering: OutputMetering;
 
   // Plugin parameters
   parameters: PluginParameter[];
@@ -82,7 +90,7 @@ interface PreviewState {
   setBuildStatus: (status: BuildStatus) => void;
   setAutoReload: (enabled: boolean) => void;
   setLastReloadTime: (time: number | null) => void;
-  setOutputLevel: (level: { left: number; right: number }) => void;
+  setMetering: (metering: OutputMetering) => void;
   setParameters: (params: PluginParameter[]) => void;
   updateParameter: (id: string, value: number) => void;
   setDemoSamples: (samples: DemoSample[]) => void;
@@ -99,6 +107,14 @@ const defaultInputSource: InputSource = {
   gateDuty: 0.5,
 };
 
+const defaultMetering: OutputMetering = {
+  left: 0,
+  right: 0,
+  leftDb: -60,
+  rightDb: -60,
+  spectrum: new Array(32).fill(0),
+};
+
 const initialState = {
   isOpen: false,
   isPlaying: false,
@@ -110,7 +126,7 @@ const initialState = {
   buildStatus: 'idle' as BuildStatus,
   isAutoReload: true,
   lastReloadTime: null as number | null,
-  outputLevel: { left: 0, right: 0 },
+  metering: defaultMetering,
   parameters: [] as PluginParameter[],
   demoSamples: [] as DemoSample[],
 };
@@ -140,7 +156,7 @@ export const usePreviewStore = create<PreviewState>()((set) => ({
   setAutoReload: (enabled) => set({ isAutoReload: enabled }),
   setLastReloadTime: (time) => set({ lastReloadTime: time }),
 
-  setOutputLevel: (level) => set({ outputLevel: level }),
+  setMetering: (metering) => set({ metering }),
 
   setParameters: (params) => set({ parameters: params }),
   updateParameter: (id, value) =>

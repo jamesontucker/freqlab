@@ -22,6 +22,30 @@ pub struct PreviewState {
     pub output_right: f32,
 }
 
+/// Audio metering data sent to frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeteringData {
+    /// Left channel level (0.0 - 1.0)
+    pub left: f32,
+    /// Right channel level (0.0 - 1.0)
+    pub right: f32,
+    /// Left channel level in dB (-60 to 0)
+    pub left_db: f32,
+    /// Right channel level in dB (-60 to 0)
+    pub right_db: f32,
+    /// Spectrum analyzer band magnitudes (0.0 - 1.0)
+    pub spectrum: Vec<f32>,
+}
+
+/// Convert linear level to dB
+fn level_to_db(level: f32) -> f32 {
+    if level <= 0.0 {
+        -60.0
+    } else {
+        (20.0 * level.log10()).max(-60.0)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DemoSample {
     pub id: String,
@@ -363,7 +387,7 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         log::debug!("Level meter thread started");
         while LEVEL_METER_RUNNING.load(Ordering::SeqCst) {
-            std::thread::sleep(std::time::Duration::from_millis(33)); // ~30fps
+            std::thread::sleep(std::time::Duration::from_millis(16)); // ~60fps
 
             // Check flag again after sleep (in case stop was called)
             if !LEVEL_METER_RUNNING.load(Ordering::SeqCst) {
@@ -372,7 +396,17 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
 
             if let Some(handle) = get_engine_handle() {
                 let (left, right) = handle.get_output_levels();
-                let _ = app_handle.emit("preview-levels", (left, right));
+                let spectrum = handle.get_spectrum_data();
+
+                // Send combined metering data with dB values
+                let metering = MeteringData {
+                    left,
+                    right,
+                    left_db: level_to_db(left),
+                    right_db: level_to_db(right),
+                    spectrum: spectrum.to_vec(),
+                };
+                let _ = app_handle.emit("preview-metering", &metering);
             } else {
                 // Engine was shut down, stop the meter
                 break;

@@ -165,13 +165,40 @@ export async function stopLevelMeter(): Promise<void> {
 }
 
 /**
- * Subscribe to level meter updates
+ * Subscribe to level meter updates (legacy)
  */
 export function onLevelUpdate(
   callback: (left: number, right: number) => void
 ): Promise<UnlistenFn> {
   return listen<[number, number]>('preview-levels', (event) => {
     callback(event.payload[0], event.payload[1]);
+  });
+}
+
+/**
+ * Metering data with levels, dB, and spectrum
+ */
+export interface MeteringData {
+  /** Left channel level (0.0 - 1.0) */
+  left: number;
+  /** Right channel level (0.0 - 1.0) */
+  right: number;
+  /** Left channel level in dB (-60 to 0) */
+  left_db: number;
+  /** Right channel level in dB (-60 to 0) */
+  right_db: number;
+  /** Spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands */
+  spectrum: number[];
+}
+
+/**
+ * Subscribe to metering updates (levels + spectrum + dB)
+ */
+export function onMeteringUpdate(
+  callback: (data: MeteringData) => void
+): Promise<UnlistenFn> {
+  return listen<MeteringData>('preview-metering', (event) => {
+    callback(event.payload);
   });
 }
 

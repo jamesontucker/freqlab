@@ -240,8 +240,8 @@ export function PreviewPanel() {
     setSignalFrequency,
     buildStatus,
     setBuildStatus,
-    outputLevel,
-    setOutputLevel,
+    metering,
+    setMetering,
     demoSamples,
     setDemoSamples,
     loadedPlugin,
@@ -257,6 +257,25 @@ export function PreviewPanel() {
   const [currentVersion, setCurrentVersion] = useState(1);
   // WebView projects need a fresh build after switching due to wry class name conflicts
   const [webviewNeedsFreshBuild, setWebviewNeedsFreshBuild] = useState(false);
+  // Spectrum analyzer toggle
+  const [showSpectrum, setShowSpectrum] = useState(true);
+  // Debounced dB values for smoother display (text only)
+  const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
+  const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
+  // Animated spectrum and levels for buttery smooth 60fps rendering
+  const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
+  const animatedLevelsRef = useRef({ left: 0, right: 0 });
+  const [animatedSpectrum, setAnimatedSpectrum] = useState<number[]>(new Array(32).fill(0));
+  const [animatedLevels, setAnimatedLevels] = useState({ left: 0, right: 0 });
+  const rafIdRef = useRef<number | null>(null);
+  // Collapsible section state
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
+    input: false,
+    transport: false,
+    output: false,  // Open by default (contains spectrum analyzer)
+    plugin: false,
+    build: true,    // Collapsed by default
+  });
   const levelListenerRef = useRef<(() => void) | null>(null);
   const pluginListenersRef = useRef<(() => void)[]>([]);
   // Refs to avoid stale closure issues in project-switching cleanup
@@ -268,6 +287,91 @@ export function PreviewPanel() {
   isPlayingRef.current = isPlaying;
   engineInitializedRef.current = engineInitialized;
   loadedPluginRef.current = loadedPlugin;
+
+  // Keep metering ref in sync for debounce access
+  const meteringRef = useRef(metering);
+  meteringRef.current = metering;
+
+  // Debounce dB display updates - only update when change is significant or periodically
+  // Only runs when panel is open to save CPU
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const interval = setInterval(() => {
+      const newLeft = meteringRef.current.leftDb;
+      const newRight = meteringRef.current.rightDb;
+      const currentLeft = dbUpdateRef.current.left;
+      const currentRight = dbUpdateRef.current.right;
+
+      // Only update if change is > 1dB or if dropping significantly
+      const leftDiff = Math.abs(newLeft - currentLeft);
+      const rightDiff = Math.abs(newRight - currentRight);
+
+      if (leftDiff > 1 || rightDiff > 1 || newLeft < currentLeft - 3 || newRight < currentRight - 3) {
+        dbUpdateRef.current = { left: newLeft, right: newRight };
+        setDisplayDb({ left: newLeft, right: newRight });
+      }
+    }, 100); // Update at most 10 times per second
+
+    return () => clearInterval(interval);
+  }, [isOpen]); // Only run when panel is open
+
+  // Smooth animation loop for spectrum and levels (requestAnimationFrame @ 60fps)
+  // Only runs when panel is open to save CPU
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const smoothingFactor = 0.25; // Lower = smoother but more laggy, higher = snappier
+
+    const animate = () => {
+      const targetSpectrum = meteringRef.current.spectrum;
+      const targetLeft = meteringRef.current.left;
+      const targetRight = meteringRef.current.right;
+
+      // Interpolate spectrum bands (handle array length mismatch)
+      const currentSpectrum = animatedSpectrumRef.current;
+      const numBands = Math.min(currentSpectrum.length, targetSpectrum?.length || 0);
+      let spectrumChanged = false;
+      for (let i = 0; i < numBands; i++) {
+        const target = targetSpectrum[i] || 0;
+        const current = currentSpectrum[i];
+        const diff = target - current;
+        if (Math.abs(diff) > 0.0001) {
+          currentSpectrum[i] = current + diff * smoothingFactor;
+          spectrumChanged = true;
+        }
+      }
+
+      // Interpolate levels
+      const currentLevels = animatedLevelsRef.current;
+      const leftDiff = (targetLeft || 0) - currentLevels.left;
+      const rightDiff = (targetRight || 0) - currentLevels.right;
+      let levelsChanged = false;
+      if (Math.abs(leftDiff) > 0.0001 || Math.abs(rightDiff) > 0.0001) {
+        currentLevels.left += leftDiff * smoothingFactor;
+        currentLevels.right += rightDiff * smoothingFactor;
+        levelsChanged = true;
+      }
+
+      // Only trigger re-render if values changed
+      if (spectrumChanged) {
+        setAnimatedSpectrum([...currentSpectrum]);
+      }
+      if (levelsChanged) {
+        setAnimatedLevels({ ...currentLevels });
+      }
+
+      rafIdRef.current = requestAnimationFrame(animate);
+    };
+
+    rafIdRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [isOpen]);
 
   // Initialize audio engine when panel opens
   useEffect(() => {
@@ -294,12 +398,19 @@ export function PreviewPanel() {
         // Mark current audio settings as "applied" (engine is using them)
         markAudioSettingsApplied();
 
-        // Start level meter updates
+        // Start level meter updates (includes spectrum data)
         await previewApi.startLevelMeter();
         if (isCancelled) return;
 
-        const unlisten = await previewApi.onLevelUpdate((left, right) => {
-          setOutputLevel({ left, right });
+        // Listen for combined metering data (levels + dB + spectrum)
+        const unlisten = await previewApi.onMeteringUpdate((data) => {
+          setMetering({
+            left: data.left,
+            right: data.right,
+            leftDb: data.left_db,
+            rightDb: data.right_db,
+            spectrum: data.spectrum,
+          });
         });
         if (isCancelled) {
           // Clean up immediately if cancelled
@@ -390,7 +501,7 @@ export function PreviewPanel() {
       pluginListenersRef.current.forEach(unlisten => unlisten());
       pluginListenersRef.current = [];
     };
-  }, [isOpen, setOutputLevel, setDemoSamples, setLoadedPlugin]);
+  }, [isOpen, setDemoSamples, setLoadedPlugin]);
 
   // Check if plugin is available when project changes
   useEffect(() => {
@@ -803,34 +914,6 @@ export function PreviewPanel() {
     }
   }, [engineInitialized, inputSource, setInputSource]);
 
-  // Load a custom CLAP plugin from file (fallback option)
-  const handleLoadCustomPlugin = useCallback(async () => {
-    if (!engineInitialized) return;
-
-    try {
-      const selected = await open({
-        multiple: false,
-        directory: true, // Select .clap bundle (which is a directory on macOS)
-        filters: [{
-          name: 'CLAP Plugins',
-          extensions: ['clap']
-        }]
-      });
-
-      if (selected && typeof selected === 'string') {
-        setPluginLoading(true);
-        try {
-          await previewApi.pluginLoad(selected);
-        } catch (err) {
-          console.error('Failed to load plugin:', err);
-          setPluginLoading(false);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to open plugin dialog:', err);
-    }
-  }, [engineInitialized]);
-
   // Open the plugin's editor window
   const handleOpenEditor = useCallback(async () => {
     if (!engineInitialized) return;
@@ -845,11 +928,40 @@ export function PreviewPanel() {
   // Determine plugin type from active project
   const effectivePluginType = activeProject?.template === 'instrument' ? 'instrument' : 'effect';
 
+  // Toggle section collapse
+  const toggleSection = useCallback((section: string) => {
+    setCollapsedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  }, []);
+
   if (!isOpen) return null;
+
+  // Helper to render section header
+  const renderSectionHeader = (id: string, title: string, icon: React.ReactNode) => (
+    <button
+      onClick={() => toggleSection(id)}
+      className="w-full flex items-center justify-between py-2 text-sm font-medium text-text-primary hover:text-accent transition-colors group"
+    >
+      <div className="flex items-center gap-2">
+        {icon}
+        <span>{title}</span>
+      </div>
+      <svg
+        className={`w-4 h-4 text-text-muted group-hover:text-accent transition-transform duration-200 ${
+          collapsedSections[id] ? '' : 'rotate-180'
+        }`}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2}
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  );
 
   return (
     <div
-      className={`fixed top-14 right-0 bottom-0 w-[420px] bg-bg-secondary border-l border-border shadow-2xl z-40 transform transition-transform duration-300 ease-in-out ${
+      className={`fixed top-14 right-0 bottom-0 w-[480px] bg-bg-secondary border-l border-border shadow-2xl z-40 transform transition-transform duration-300 ease-in-out ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
       }`}
     >
@@ -901,8 +1013,14 @@ export function PreviewPanel() {
               </div>
 
               {/* Input Source Section */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium text-text-primary">Input Source</h3>
+              <div className="border-b border-border pb-3">
+                {renderSectionHeader('input', 'Input Source',
+                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
+                  </svg>
+                )}
+                {!collapsedSections.input && (
+                <div className="space-y-3 pt-2">
 
                 {effectivePluginType === 'effect' && (
                   <>
@@ -1105,6 +1223,8 @@ export function PreviewPanel() {
                     </p>
                   </div>
                 )}
+                </div>
+                )}
               </div>
 
               {/* Engine Error */}
@@ -1121,8 +1241,14 @@ export function PreviewPanel() {
 
               {/* Transport Controls - only for effects */}
               {effectivePluginType === 'effect' && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-medium text-text-primary">Transport</h3>
+                <div className="border-b border-border pb-3">
+                  {renderSectionHeader('transport', 'Transport',
+                    <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                    </svg>
+                  )}
+                  {!collapsedSections.transport && (
+                  <div className="space-y-3 pt-2">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleTogglePlaying}
@@ -1166,37 +1292,228 @@ export function PreviewPanel() {
                       </svg>
                     </button>
                   </div>
+                  </div>
+                  )}
                 </div>
               )}
 
-              {/* Output Meter */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium text-text-primary">Output</h3>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-text-muted w-4">L</span>
-                    <div className="flex-1 h-3 bg-bg-tertiary rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-accent to-accent-hover transition-all duration-75"
-                        style={{ width: `${outputLevel.left * 100}%` }}
-                      />
+              {/* Output Meter & Spectrum */}
+              <div className="border-b border-border pb-3">
+                {renderSectionHeader('output', 'Output',
+                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+                  </svg>
+                )}
+                {!collapsedSections.output && (
+                <div className="space-y-3 pt-2">
+                  {/* Level meters with dB readings (using animated values for smooth 60fps) */}
+                  <div className="space-y-2">
+                    {(() => {
+                      // Convert animated linear levels to dB for smooth bar rendering
+                      const animLeftDb = animatedLevels.left > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.left)) : -60;
+                      const animRightDb = animatedLevels.right > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.right)) : -60;
+                      return (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-text-muted w-3 font-mono">L</span>
+                            <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
+                              <div
+                                className={`h-full ${
+                                  metering.leftDb > -6 ? 'bg-gradient-to-r from-accent to-yellow-500' :
+                                  metering.leftDb > -3 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
+                                  metering.leftDb > -1 ? 'bg-gradient-to-r from-orange-500 to-red-500' :
+                                  'bg-gradient-to-r from-accent to-accent-hover'
+                                }`}
+                                style={{ width: `${Math.max(0, (animLeftDb + 60) / 60 * 100)}%` }}
+                              />
+                              {/* dB notches */}
+                              <div className="absolute inset-0 pointer-events-none">
+                                <div className="absolute left-[50%] w-px h-full bg-white/20" title="-30dB" />
+                                <div className="absolute left-[70%] w-px h-full bg-white/20" title="-18dB" />
+                                <div className="absolute left-[80%] w-px h-full bg-white/25" title="-12dB" />
+                                <div className="absolute left-[90%] w-px h-full bg-yellow-400/40" title="-6dB" />
+                                <div className="absolute left-[100%] w-px h-full bg-red-400/50" title="0dB" />
+                              </div>
+                            </div>
+                            <span className="text-[10px] text-text-muted w-14 text-right font-mono tabular-nums">
+                              {displayDb.left > -60 ? `${displayDb.left.toFixed(1)}` : '-∞'} dB
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-text-muted w-3 font-mono">R</span>
+                            <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
+                              <div
+                                className={`h-full ${
+                                  metering.rightDb > -6 ? 'bg-gradient-to-r from-accent to-yellow-500' :
+                                  metering.rightDb > -3 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
+                                  metering.rightDb > -1 ? 'bg-gradient-to-r from-orange-500 to-red-500' :
+                                  'bg-gradient-to-r from-accent to-accent-hover'
+                                }`}
+                                style={{ width: `${Math.max(0, (animRightDb + 60) / 60 * 100)}%` }}
+                              />
+                              {/* dB notches */}
+                              <div className="absolute inset-0 pointer-events-none">
+                                <div className="absolute left-[50%] w-px h-full bg-white/20" title="-30dB" />
+                                <div className="absolute left-[70%] w-px h-full bg-white/20" title="-18dB" />
+                                <div className="absolute left-[80%] w-px h-full bg-white/25" title="-12dB" />
+                                <div className="absolute left-[90%] w-px h-full bg-yellow-400/40" title="-6dB" />
+                                <div className="absolute left-[100%] w-px h-full bg-red-400/50" title="0dB" />
+                              </div>
+                            </div>
+                            <span className="text-[10px] text-text-muted w-14 text-right font-mono tabular-nums">
+                              {displayDb.right > -60 ? `${displayDb.right.toFixed(1)}` : '-∞'} dB
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                    {/* dB scale labels */}
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="w-3"></span>
+                      <div className="flex-1 flex justify-between text-[8px] text-text-muted/60 px-0.5">
+                        <span>-60</span>
+                        <span>-30</span>
+                        <span>-18</span>
+                        <span>-12</span>
+                        <span>-6</span>
+                        <span>0</span>
+                      </div>
+                      <span className="w-14"></span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-text-muted w-4">R</span>
-                    <div className="flex-1 h-3 bg-bg-tertiary rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-accent to-accent-hover transition-all duration-75"
-                        style={{ width: `${outputLevel.right * 100}%` }}
-                      />
+
+                  {/* Spectrum Analyzer */}
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-text-muted font-medium">Spectrum</span>
+                      <button
+                        onClick={() => setShowSpectrum(!showSpectrum)}
+                        className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                          showSpectrum
+                            ? 'bg-accent/20 text-accent'
+                            : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
+                        }`}
+                      >
+                        {showSpectrum ? 'On' : 'Off'}
+                      </button>
                     </div>
+                    {showSpectrum && (
+                    <div className="bg-bg-tertiary rounded-lg border border-border overflow-hidden">
+                      {/* Smooth curve spectrum like FabFilter Pro-Q */}
+                      <svg
+                        viewBox="0 0 400 100"
+                        className="w-full h-28"
+                        preserveAspectRatio="none"
+                      >
+                        {/* Grid lines */}
+                        <defs>
+                          {/* Using accent color #2DA86E directly since CSS vars don't work in SVG */}
+                          <linearGradient id="spectrumGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#2DA86E" stopOpacity="0.7" />
+                            <stop offset="50%" stopColor="#2DA86E" stopOpacity="0.3" />
+                            <stop offset="100%" stopColor="#2DA86E" stopOpacity="0.05" />
+                          </linearGradient>
+                          <linearGradient id="spectrumStroke" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#36C07E" stopOpacity="1" />
+                            <stop offset="100%" stopColor="#2DA86E" stopOpacity="0.7" />
+                          </linearGradient>
+                        </defs>
+                        {/* Horizontal grid lines for dB */}
+                        <line x1="0" y1="16.67" x2="400" y2="16.67" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="0" y1="50" x2="400" y2="50" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="0" y1="83.33" x2="400" y2="83.33" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        {/* Vertical grid lines for frequencies */}
+                        <line x1="50" y1="0" x2="50" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="125" y1="0" x2="125" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="225" y1="0" x2="225" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="325" y1="0" x2="325" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+
+                        {/* Spectrum curve - smooth bezier path */}
+                        {(() => {
+                          // Safety check for empty or too-small spectrum
+                          if (!animatedSpectrum || animatedSpectrum.length < 2) {
+                            return null;
+                          }
+
+                          const numBands = animatedSpectrum.length;
+                          const width = 400;
+                          const height = 100;
+
+                          // Convert magnitudes to Y positions (using animated values for smooth 60fps)
+                          const points = animatedSpectrum.map((mag, i) => {
+                            // Handle edge cases: NaN, undefined, negative
+                            const safeMag = (typeof mag === 'number' && !isNaN(mag) && mag > 0) ? mag : 0;
+                            const db = safeMag > 0 ? 20 * Math.log10(safeMag) : -60;
+                            const normalizedDb = Math.max(0, Math.min(1, (db + 60) / 60));
+                            const x = (i / (numBands - 1)) * width;
+                            const y = height - (normalizedDb * height);
+                            return { x: isNaN(x) ? 0 : x, y: isNaN(y) ? height : y };
+                          });
+
+                          // Create smooth bezier curve path
+                          let pathD = `M ${points[0].x} ${points[0].y}`;
+
+                          for (let i = 0; i < points.length - 1; i++) {
+                            const p0 = points[Math.max(0, i - 1)];
+                            const p1 = points[i];
+                            const p2 = points[i + 1];
+                            const p3 = points[Math.min(points.length - 1, i + 2)];
+
+                            // Catmull-Rom to Bezier conversion
+                            const tension = 0.3;
+                            const cp1x = p1.x + (p2.x - p0.x) * tension;
+                            const cp1y = p1.y + (p2.y - p0.y) * tension;
+                            const cp2x = p2.x - (p3.x - p1.x) * tension;
+                            const cp2y = p2.y - (p3.y - p1.y) * tension;
+
+                            pathD += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+                          }
+
+                          // Create filled area path
+                          const areaD = pathD + ` L ${width} ${height} L 0 ${height} Z`;
+
+                          return (
+                            <>
+                              {/* Filled area under curve */}
+                              <path
+                                d={areaD}
+                                fill="url(#spectrumGradient)"
+                              />
+                              {/* Curve line */}
+                              <path
+                                d={pathD}
+                                fill="none"
+                                stroke="url(#spectrumStroke)"
+                                strokeWidth="1.5"
+                              />
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      {/* Frequency labels */}
+                      <div className="flex justify-between px-2 py-1 border-t border-border/50 bg-bg-primary/30">
+                        <span className="text-[9px] text-text-muted">20Hz</span>
+                        <span className="text-[9px] text-text-muted">100</span>
+                        <span className="text-[9px] text-text-muted">1k</span>
+                        <span className="text-[9px] text-text-muted">10k</span>
+                        <span className="text-[9px] text-text-muted">20k</span>
+                      </div>
+                    </div>
+                    )}
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Plugin Viewer */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium text-text-primary">Plugin Viewer</h3>
+              <div className="border-b border-border pb-3">
+                {renderSectionHeader('plugin', 'Plugin Viewer',
+                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                )}
+                {!collapsedSections.plugin && (
+                <div className="space-y-3 pt-2">
 
                 {/* No build available */}
                 {!pluginAvailable && loadedPlugin.status === 'unloaded' && (
@@ -1389,20 +1706,19 @@ export function PreviewPanel() {
                     )}
                   </div>
                 )}
-
-                {/* Load custom plugin fallback */}
-                <button
-                  onClick={handleLoadCustomPlugin}
-                  disabled={!engineInitialized || pluginLoading}
-                  className="w-full px-3 py-1.5 text-xs text-text-muted border border-dashed border-border rounded-md hover:text-text-secondary hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Load a different .clap file...
-                </button>
+                </div>
+                )}
               </div>
 
               {/* Build Status */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium text-text-primary">Build Status</h3>
+              <div className="pb-3">
+                {renderSectionHeader('build', 'Build Status',
+                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
+                  </svg>
+                )}
+                {!collapsedSections.build && (
+                <div className="space-y-3 pt-2">
                 {/* Status indicator */}
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-text-secondary">Status:</span>
@@ -1451,6 +1767,8 @@ export function PreviewPanel() {
                       <span>Source code changed. Build to update the plugin.</span>
                     </div>
                   </div>
+                )}
+                </div>
                 )}
               </div>
 

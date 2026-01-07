@@ -11,3 +11,4 @@ pub mod engine;
 pub mod plugin;
 pub mod samples;
 pub mod signals;
+pub mod spectrum;
