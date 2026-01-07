@@ -255,6 +255,8 @@ export function PreviewPanel() {
   const [pluginLoading, setPluginLoading] = useState(false);
   const [pluginAvailable, setPluginAvailable] = useState(false);
   const [currentVersion, setCurrentVersion] = useState(1);
+  // WebView projects need a fresh build after switching due to wry class name conflicts
+  const [webviewNeedsFreshBuild, setWebviewNeedsFreshBuild] = useState(false);
   const levelListenerRef = useRef<(() => void) | null>(null);
   const pluginListenersRef = useRef<(() => void)[]>([]);
   // Refs to avoid stale closure issues in project-switching cleanup
@@ -550,6 +552,8 @@ export function PreviewPanel() {
           setCurrentVersion(version);
           // Build succeeded - update status to ready
           setBuildStatus('ready');
+          // Clear the WebView fresh build requirement since we just built
+          setWebviewNeedsFreshBuild(false);
         } else {
           console.log('[PreviewPanel] No plugin found at path, pluginAvailable stays false');
         }
@@ -608,6 +612,17 @@ export function PreviewPanel() {
       cleanupAsync();
     };
   }, [activeProject?.name, setPlaying]);
+
+  // Track when WebView projects need a fresh build (due to wry class name conflicts)
+  // When switching to a WebView project, require a fresh build before opening editor
+  useEffect(() => {
+    if (activeProject?.uiFramework === 'webview') {
+      // WebView projects need a fresh build after switching to ensure unique class names
+      setWebviewNeedsFreshBuild(true);
+    } else {
+      setWebviewNeedsFreshBuild(false);
+    }
+  }, [activeProject?.name, activeProject?.uiFramework]);
 
   // Handle play/stop
   const handleTogglePlaying = useCallback(async () => {
@@ -1197,6 +1212,23 @@ export function PreviewPanel() {
                 {/* Plugin available - show viewer toggle */}
                 {(pluginAvailable || loadedPlugin.status !== 'unloaded') && (
                   <div className="p-3 bg-bg-tertiary rounded-lg border border-border space-y-3">
+                    {/* WebView fresh build warning */}
+                    {webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded' && (
+                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
+                        <div className="flex items-start gap-2">
+                          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <div>
+                            <div className="font-medium">Fresh build required</div>
+                            <div className="text-amber-400/80 mt-1">
+                              WebView plugins need a fresh build after switching projects to avoid class name conflicts with the host app. Build the project to enable the plugin viewer.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Viewer Toggle */}
                     <div className="flex items-center justify-between">
                       <div>
@@ -1226,22 +1258,24 @@ export function PreviewPanel() {
                             setPluginLoading(true);
                             try {
                               await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
-                              // Auto-open editor after load (if plugin has one)
-                              // Use setTimeout to allow state to update
-                              setTimeout(async () => {
-                                try {
-                                  // Verify plugin is still active before opening editor
-                                  const state = await previewApi.pluginGetState();
-                                  if (state.status === 'active') {
-                                    const hasEditor = await previewApi.pluginHasEditor();
-                                    if (hasEditor) {
-                                      await previewApi.pluginOpenEditor();
+                              // Auto-open editor after load (if plugin has one) - but not if webview needs fresh build
+                              if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
+                                // Use setTimeout to allow state to update
+                                setTimeout(async () => {
+                                  try {
+                                    // Verify plugin is still active before opening editor
+                                    const state = await previewApi.pluginGetState();
+                                    if (state.status === 'active') {
+                                      const hasEditor = await previewApi.pluginHasEditor();
+                                      if (hasEditor) {
+                                        await previewApi.pluginOpenEditor();
+                                      }
                                     }
+                                  } catch (err) {
+                                    console.error('Failed to open editor:', err);
                                   }
-                                } catch (err) {
-                                  console.error('Failed to open editor:', err);
-                                }
-                              }, 100);
+                                }, 100);
+                              }
                             } catch (err) {
                               console.error('Failed to load plugin:', err);
                             } finally {
@@ -1249,12 +1283,12 @@ export function PreviewPanel() {
                             }
                           }
                         }}
-                        disabled={!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading'}
+                        disabled={!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded')}
                         className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
                           loadedPlugin.status === 'active'
                             ? 'bg-accent'
                             : 'bg-bg-elevated border border-border'
-                        } ${(!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        } ${(!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded')) ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <span
                           className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
@@ -1296,15 +1330,31 @@ export function PreviewPanel() {
 
                         {/* Editor controls */}
                         {loadedPlugin.has_editor ? (
-                          <button
-                            onClick={handleOpenEditor}
-                            className="w-full px-3 py-2 text-xs bg-accent text-white rounded-md hover:bg-accent-hover transition-colors flex items-center justify-center gap-2"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                            </svg>
-                            Open Plugin Window
-                          </button>
+                          webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' ? (
+                            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs space-y-2">
+                              <div className="flex items-start gap-2">
+                                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                <div>
+                                  <div className="font-medium">Fresh build required</div>
+                                  <div className="text-amber-400/80 mt-1">
+                                    WebView plugins need a fresh build after switching projects to avoid conflicts with the host app.
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={handleOpenEditor}
+                              className="w-full px-3 py-2 text-xs bg-accent text-white rounded-md hover:bg-accent-hover transition-colors flex items-center justify-center gap-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                              Open Plugin Window
+                            </button>
+                          )
                         ) : (
                           <div className="text-xs text-text-muted text-center py-2 bg-bg-primary rounded">
                             This plugin has no GUI (headless)
