@@ -617,6 +617,9 @@ pub fn init_engine(device_name: Option<&str>, config: AudioConfig) -> Result<(),
         }
     }
 
+    // Clean up any stale temp plugin bundles from previous sessions
+    super::plugin::cleanup_temp_bundles();
+
     let engine = AudioEngine::new(device_name, config)?;
     let handle = engine.handle();
 

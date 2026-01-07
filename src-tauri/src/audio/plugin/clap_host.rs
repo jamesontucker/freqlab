@@ -78,6 +78,9 @@ pub struct PluginInstance {
     // Plugin path (needed for editor host)
     plugin_path: PathBuf,
 
+    // Temp bundle path (if we copied to avoid dylib caching)
+    temp_bundle_path: Option<PathBuf>,
+
     // Editor process state (out-of-process hosting)
     editor_process: Option<Arc<Mutex<Child>>>,
     editor_open: bool,
@@ -123,13 +126,41 @@ struct ClapHost_ {
 unsafe impl Send for PluginInstance {}
 unsafe impl Sync for PluginInstance {}
 
+/// Clean up all stale temp plugin bundles
+/// Call this on engine initialization to remove orphaned temp bundles from previous sessions
+pub fn cleanup_temp_bundles() {
+    let temp_dir = std::env::temp_dir().join("freqlab-plugins");
+    if !temp_dir.exists() {
+        return;
+    }
+
+    log::info!("Cleaning up stale temp plugin bundles in {:?}", temp_dir);
+
+    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "clap").unwrap_or(false) {
+                log::info!("Removing stale temp bundle: {:?}", path);
+                if let Err(e) = std::fs::remove_dir_all(&path) {
+                    log::warn!("Failed to remove temp bundle {:?}: {}", path, e);
+                }
+            }
+        }
+    }
+}
+
 impl PluginInstance {
     /// Load a CLAP plugin from a .clap bundle path
     pub fn load(bundle_path: &Path, sample_rate: f64, max_frames: u32) -> Result<Self, String> {
         log::info!("Loading CLAP plugin from: {:?}", bundle_path);
 
+        // Copy the bundle to a temp location to avoid macOS dylib caching
+        // This ensures hot reload always loads the fresh version
+        let (actual_bundle_path, temp_bundle_path) = Self::copy_to_temp(bundle_path)?;
+        log::info!("Using bundle path: {:?}", actual_bundle_path);
+
         // Resolve the dylib path inside the bundle
-        let dylib_path = Self::resolve_dylib_path(bundle_path)?;
+        let dylib_path = Self::resolve_dylib_path(&actual_bundle_path)?;
         log::info!("Resolved dylib path: {:?}", dylib_path);
 
         // Load the library
@@ -349,6 +380,7 @@ impl PluginInstance {
             input_data,
             output_data,
             plugin_path: bundle_path.to_path_buf(),
+            temp_bundle_path,
             editor_process: None,
             editor_open: false,
             last_editor_position: None,
@@ -367,23 +399,115 @@ impl PluginInstance {
         Ok(host_instance)
     }
 
-    /// Resolve the dylib path inside a .clap bundle
-    fn resolve_dylib_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
-        // On macOS, .clap bundles are like .app bundles:
-        // MyPlugin.clap/Contents/MacOS/MyPlugin
+    /// Copy the .clap bundle to a temp location with a unique suffix
+    /// This bypasses macOS's dylib caching which can cause hot reload to show old versions
+    fn copy_to_temp(bundle_path: &Path) -> Result<(PathBuf, Option<PathBuf>), String> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate a unique suffix using timestamp
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
 
         let bundle_name = bundle_path
             .file_stem()
             .ok_or("Invalid bundle path")?
             .to_string_lossy();
 
-        let dylib_path = bundle_path
-            .join("Contents")
-            .join("MacOS")
-            .join(bundle_name.as_ref());
+        // Create temp directory for plugin bundles
+        let temp_dir = std::env::temp_dir().join("freqlab-plugins");
+        std::fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
+        // Clean up old temp bundles for this plugin (keep only the most recent)
+        if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+            let prefix = format!("{}_", bundle_name);
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&prefix) && name.ends_with(".clap") {
+                    log::info!("Cleaning up old temp bundle: {:?}", entry.path());
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+
+        // Create unique temp bundle name
+        let temp_bundle_name = format!("{}_{}.clap", bundle_name, timestamp);
+        let temp_bundle_path = temp_dir.join(&temp_bundle_name);
+
+        log::info!(
+            "Copying plugin bundle to temp: {:?} -> {:?}",
+            bundle_path,
+            temp_bundle_path
+        );
+
+        // Copy the entire bundle directory
+        Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
+
+        Ok((temp_bundle_path.clone(), Some(temp_bundle_path)))
+    }
+
+    /// Recursively copy a directory
+    fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(dst)
+            .map_err(|e| format!("Failed to create directory {:?}: {}", dst, e))?;
+
+        for entry in std::fs::read_dir(src)
+            .map_err(|e| format!("Failed to read directory {:?}: {}", src, e))?
+        {
+            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+            let ty = entry
+                .file_type()
+                .map_err(|e| format!("Failed to get file type: {}", e))?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+
+            if ty.is_dir() {
+                Self::copy_dir_all(&src_path, &dst_path)?;
+            } else {
+                std::fs::copy(&src_path, &dst_path)
+                    .map_err(|e| format!("Failed to copy {:?}: {}", src_path, e))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve the dylib path inside a .clap bundle
+    fn resolve_dylib_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
+        // On macOS, .clap bundles are like .app bundles:
+        // MyPlugin.clap/Contents/MacOS/MyPlugin
+
+        let macos_dir = bundle_path.join("Contents").join("MacOS");
+
+        // First try: use the bundle name (standard case)
+        let bundle_name = bundle_path
+            .file_stem()
+            .ok_or("Invalid bundle path")?
+            .to_string_lossy();
+
+        let dylib_path = macos_dir.join(bundle_name.as_ref());
         if dylib_path.exists() {
             return Ok(dylib_path);
+        }
+
+        // Second try: scan the MacOS directory for any executable
+        // This handles temp bundles where the bundle name differs from the dylib name
+        if macos_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&macos_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    // Skip obvious non-executables
+                    if path.extension().is_some() {
+                        continue; // executables typically have no extension on macOS
+                    }
+                    if path.is_file() {
+                        log::info!("Found dylib via scan: {:?}", path);
+                        return Ok(path);
+                    }
+                }
+            }
         }
 
         // Fallback: try the bundle path directly (for non-bundle dylibs)
@@ -1035,6 +1159,13 @@ impl Drop for PluginInstance {
         let entry_ref = unsafe { &*self.entry };
         if let Some(deinit) = entry_ref.deinit {
             unsafe { deinit() };
+        }
+
+        // Clean up temp bundle (after library is dropped)
+        // Note: The library (_library field) will be dropped automatically after this
+        // The temp bundle can be deleted on next load, so we just log here
+        if let Some(ref temp_path) = self.temp_bundle_path {
+            log::info!("Temp bundle at {:?} will be cleaned up on next load", temp_path);
         }
 
         log::info!("Plugin unloaded");

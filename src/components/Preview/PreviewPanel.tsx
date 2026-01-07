@@ -516,23 +516,33 @@ export function PreviewPanel() {
 
     const handleBuildComplete = async (event: { payload: BuildStreamEvent }) => {
       const data = event.payload;
+      console.log('[PreviewPanel] build-stream event received:', data.type, data.success);
 
       // Only act on successful build completions
       if (data.type !== 'done' || !data.success) return;
+
+      console.log('[PreviewPanel] Build completed successfully, checking plugin availability...');
+      console.log('[PreviewPanel] activeProject:', activeProject?.name, activeProject?.path);
 
       // Check if plugin is now available
       try {
         const version = await invoke<number>('get_current_version', {
           projectPath: activeProject.path,
         });
+        console.log('[PreviewPanel] Got version:', version);
+
         const pluginPath = await previewApi.getProjectPluginPath(activeProject.name, version);
+        console.log('[PreviewPanel] Plugin path result:', pluginPath);
+
         if (pluginPath) {
-          console.log('Build completed, plugin now available');
+          console.log('[PreviewPanel] Setting pluginAvailable=true, currentVersion=', version);
           setPluginAvailable(true);
           setCurrentVersion(version);
+        } else {
+          console.log('[PreviewPanel] No plugin found at path, pluginAvailable stays false');
         }
       } catch (err) {
-        console.error('Failed to check plugin availability after build:', err);
+        console.error('[PreviewPanel] Failed to check plugin availability after build:', err);
       }
     };
 
@@ -1189,6 +1199,7 @@ export function PreviewPanel() {
                       </div>
                       <button
                         onClick={async () => {
+                          console.log('[PreviewPanel] Toggle clicked - status:', loadedPlugin.status, 'pluginAvailable:', pluginAvailable, 'currentVersion:', currentVersion);
                           if (loadedPlugin.status === 'active') {
                             // Disable - close editor and unload
                             try {
@@ -1199,6 +1210,7 @@ export function PreviewPanel() {
                             }
                           } else if (loadedPlugin.status === 'unloaded' && pluginAvailable && activeProject) {
                             // Enable - load plugin and open editor
+                            console.log('[PreviewPanel] Loading plugin for project:', activeProject.name, 'v', currentVersion);
                             setPluginLoading(true);
                             try {
                               await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
