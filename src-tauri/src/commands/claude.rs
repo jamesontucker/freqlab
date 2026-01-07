@@ -75,9 +75,20 @@ fn extract_session_id(json_str: &str) -> Option<String> {
     event.session_id
 }
 
-/// Parse a JSON event and return a human-readable string
-fn parse_claude_event(json_str: &str) -> Option<String> {
-    let event: ClaudeJsonEvent = serde_json::from_str(json_str).ok()?;
+/// Result of parsing a Claude JSON event
+struct ParsedEvent {
+    /// Human-readable text to display during streaming
+    display_text: Option<String>,
+    /// If this is an assistant message, the full text content (for final message extraction)
+    assistant_content: Option<String>,
+}
+
+/// Parse a JSON event and return display text and assistant content
+fn parse_claude_event(json_str: &str) -> ParsedEvent {
+    let event: ClaudeJsonEvent = match serde_json::from_str(json_str) {
+        Ok(e) => e,
+        Err(_) => return ParsedEvent { display_text: None, assistant_content: None },
+    };
 
     match event.event_type.as_str() {
         "assistant" => {
@@ -85,8 +96,8 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
             if let Some(msg) = &event.message {
                 if let Some(content) = &msg.content {
                     // Content can be a string or array of content blocks
-                    if let Some(text) = content.as_str() {
-                        return Some(text.to_string());
+                    let text = if let Some(text) = content.as_str() {
+                        Some(text.to_string())
                     } else if let Some(arr) = content.as_array() {
                         let texts: Vec<String> = arr
                             .iter()
@@ -99,24 +110,33 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
                             })
                             .collect();
                         if !texts.is_empty() {
-                            return Some(texts.join("\n"));
+                            Some(texts.join("\n"))
+                        } else {
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
+
+                    return ParsedEvent {
+                        display_text: text.clone(),
+                        assistant_content: text,
+                    };
                 }
             }
-            None
+            ParsedEvent { display_text: None, assistant_content: None }
         }
         "tool_use" => {
             let tool = event.tool.as_deref().unwrap_or("unknown");
-            match tool {
+            let display = match tool {
                 "Read" => {
                     if let Some(input) = &event.tool_input {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        Some(format!("📖 Reading: {}", file))
+                        format!("📖 Reading: {}", file)
                     } else {
-                        Some("📖 Reading file...".to_string())
+                        "📖 Reading file...".to_string()
                     }
                 }
                 "Edit" => {
@@ -124,9 +144,9 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        Some(format!("✏️  Editing: {}", file))
+                        format!("✏️  Editing: {}", file)
                     } else {
-                        Some("✏️  Editing file...".to_string())
+                        "✏️  Editing file...".to_string()
                     }
                 }
                 "Write" => {
@@ -134,9 +154,9 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        Some(format!("📝 Writing: {}", file))
+                        format!("📝 Writing: {}", file)
                     } else {
-                        Some("📝 Writing file...".to_string())
+                        "📝 Writing file...".to_string()
                     }
                 }
                 "Bash" => {
@@ -150,31 +170,33 @@ fn parse_claude_event(json_str: &str) -> Option<String> {
                         } else {
                             cmd.to_string()
                         };
-                        Some(format!("💻 Running: {}", display_cmd))
+                        format!("💻 Running: {}", display_cmd)
                     } else {
-                        Some("💻 Running command...".to_string())
+                        "💻 Running command...".to_string()
                     }
                 }
-                _ => Some(format!("🔧 Using tool: {}", tool)),
-            }
+                _ => format!("🔧 Using tool: {}", tool),
+            };
+            ParsedEvent { display_text: Some(display), assistant_content: None }
         }
         "tool_result" => {
             // Tool completed - could show result summary
-            Some("   ✓ Done".to_string())
+            ParsedEvent { display_text: Some("   ✓ Done".to_string()), assistant_content: None }
         }
         "result" => {
-            // Final result - skip this as it duplicates the assistant message content
+            // Final result - skip display as it duplicates the assistant message content
             // The "assistant" event already captures the response text
-            None
+            ParsedEvent { display_text: None, assistant_content: None }
         }
         "error" => {
-            if let Some(content) = &event.content {
-                Some(format!("❌ Error: {}", content))
+            let display = if let Some(content) = &event.content {
+                format!("❌ Error: {}", content)
             } else {
-                Some("❌ An error occurred".to_string())
-            }
+                "❌ An error occurred".to_string()
+            };
+            ParsedEvent { display_text: Some(display), assistant_content: None }
         }
-        _ => None,
+        _ => ParsedEvent { display_text: None, assistant_content: None },
     }
 }
 
@@ -379,6 +401,10 @@ pub async fn send_to_claude(
     let mut full_output = String::new();
     let mut error_output = String::new();
     let mut captured_session_id: Option<String> = None;
+    // Track assistant messages for final content extraction
+    // We prefer the last substantial message, but fall back to last non-empty if needed
+    let mut last_substantial_content: Option<String> = None;  // >10 chars, likely a real response
+    let mut last_nonempty_content: Option<String> = None;     // Fallback for short but valid responses
 
     // Read stdout and stderr concurrently
     loop {
@@ -392,7 +418,23 @@ pub async fn send_to_claude(
                         }
 
                         // Try to parse as JSON event for display
-                        if let Some(display_text) = parse_claude_event(&json_line) {
+                        let parsed = parse_claude_event(&json_line);
+
+                        // Track assistant messages for final content extraction
+                        if let Some(ref content) = parsed.assistant_content {
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                // Always track the last non-empty message as fallback
+                                last_nonempty_content = Some(content.clone());
+                                // Track substantial messages (>10 chars) as preferred final content
+                                if trimmed.len() > 10 {
+                                    last_substantial_content = Some(content.clone());
+                                }
+                            }
+                        }
+
+                        // Display text during streaming (includes all thinking + tool use)
+                        if let Some(display_text) = parsed.display_text {
                             full_output.push_str(&display_text);
                             full_output.push('\n');
                             let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
@@ -443,10 +485,59 @@ pub async fn send_to_claude(
         return Err(format!("Claude CLI failed: {}", error_output));
     }
 
+    // Helper to check if text looks like a "done" message
+    let is_done_like = |text: &str| -> bool {
+        let trimmed = text.trim().to_lowercase();
+        trimmed.len() <= 15 && (
+            trimmed == "done" ||
+            trimmed == "done!" ||
+            trimmed == "done." ||
+            trimmed == "finished" ||
+            trimmed == "finished!" ||
+            trimmed == "complete" ||
+            trimmed == "complete!" ||
+            trimmed.starts_with("all done") ||
+            trimmed.starts_with("that's it") ||
+            trimmed.starts_with("thats it") ||
+            trimmed.contains("✓ done") ||
+            trimmed.contains("✓done") ||
+            // Catch variations like "Done!", "I'm done", etc.
+            (trimmed.len() < 15 && trimmed.contains("done"))
+        )
+    };
+
+    // Check if streaming output ends with a "done" indicator (from tool_result events)
+    let streaming_ends_with_done = full_output
+        .lines()
+        .last()
+        .map(|line| is_done_like(line))
+        .unwrap_or(false);
+
+    // Use the last assistant message as the final content (instead of all streaming output)
+    // This gives the user a clean summary rather than all the thinking
+    let final_content = if streaming_ends_with_done {
+        // Streaming ended with "done" - use friendly response
+        "All done! What would you like to do next?".to_string()
+    } else if let Some(ref last) = last_nonempty_content {
+        if is_done_like(last) {
+            // Last assistant message was just "done" - use friendly response
+            "All done! What would you like to do next?".to_string()
+        } else if last.trim().len() > 10 {
+            // Last message is substantial, use it
+            last.clone()
+        } else {
+            // Last message is short but not "done", try substantial or use it
+            last_substantial_content.unwrap_or_else(|| last.clone())
+        }
+    } else {
+        // No assistant messages at all, use streaming output as fallback
+        full_output.clone()
+    };
+
     // Emit done event
     let _ = window.emit("claude-stream", ClaudeStreamEvent::Done {
         project_path: project_path.clone(),
-        content: full_output.clone(),
+        content: final_content.clone(),
     });
 
     // Save session ID for next conversation (if we got one)
@@ -467,7 +558,7 @@ pub async fn send_to_claude(
     let commit_hash = super::git::commit_changes(&project_path, &commit_msg).ok();
 
     Ok(ClaudeResponse {
-        content: full_output,
+        content: final_content,
         session_id: captured_session_id,
         commit_hash,
     })
