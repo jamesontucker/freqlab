@@ -8,3 +8,4 @@ pub mod publish;
 pub mod logging;
 pub mod files;
 pub mod share;
+pub mod preview;

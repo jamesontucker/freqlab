@@ -122,3 +122,142 @@ cd src-tauri && cargo check
 - Projects: `~/VSTWorkshop/projects/{name}/`
 - Built plugins: `~/VSTWorkshop/output/`
 - App config: Zustand persisted to localStorage
+
+---
+
+## Plugin Development Best Practices
+
+**IMPORTANT**: When helping users develop audio plugins, always follow these patterns based on the UI framework.
+
+### Documentation References
+
+| Framework | Guide | Platform |
+|-----------|-------|----------|
+| **WebView (Advanced UI)** | `.docs/nih-plug-webview-guide.md` | macOS only |
+| **egui (Standard UI)** | `.docs/nih-plug-egui-guide.md` | All platforms |
+| **Headless** | No UI, DAW controls only | All platforms |
+
+### WebView Plugin Pattern (macOS only)
+
+**Always use these imports and patterns:**
+
+```rust
+use nih_plug_webview::{WebViewEditor, HTMLSource, EventStatus};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
+```
+
+**Define typed messages with serde's tag attribute:**
+```rust
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum UIMessage {
+    Init,
+    SetGain { value: f32 },
+}
+```
+
+**Use AtomicBool flags for parameter sync from host automation:**
+```rust
+#[derive(Params)]
+struct MyParams {
+    #[id = "gain"]
+    pub gain: FloatParam,
+    #[persist = ""]
+    gain_changed: Arc<AtomicBool>,
+}
+
+// In Default, add callback to parameter:
+.with_callback(Arc::new(move |_| {
+    gain_changed_clone.store(true, Ordering::Relaxed);
+}))
+```
+
+**Use builder pattern for editor:**
+```rust
+WebViewEditor::new(HTMLSource::String(include_str!("ui.html")), (400, 300))
+    .with_background_color((26, 26, 46, 255))
+    .with_developer_mode(true)
+    .with_event_loop(move |ctx, setter, _window| {
+        while let Ok(msg) = ctx.next_event() {
+            // Handle UIMessage
+        }
+        if gain_changed.swap(false, Ordering::Relaxed) {
+            ctx.send_json(json!({ "type": "param_change", ... }));
+        }
+    })
+```
+
+**JavaScript IPC:**
+```javascript
+// Send to plugin
+window.ipc.postMessage(JSON.stringify({ type: 'SetGain', value: 0.5 }));
+
+// Receive from plugin
+window.onPluginMessage = function(msg) { /* handle msg.type */ };
+
+// Init on load
+window.addEventListener('DOMContentLoaded', () => {
+    window.ipc.postMessage(JSON.stringify({ type: 'Init' }));
+});
+```
+
+### egui Plugin Pattern (Cross-platform)
+
+**Always use these imports:**
+```rust
+use nih_plug_egui::{create_egui_editor, egui, widgets, EguiState};
+```
+
+**Store editor state with persistence:**
+```rust
+#[derive(Params)]
+struct MyParams {
+    #[persist = "editor-state"]
+    editor_state: Arc<EguiState>,
+}
+```
+
+**Create editor with create_egui_editor:**
+```rust
+create_egui_editor(
+    self.params.editor_state.clone(),
+    (),
+    |_, _| {},
+    move |egui_ctx, setter, _| {
+        egui::CentralPanel::default().show(egui_ctx, |ui| {
+            ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+        });
+    },
+)
+```
+
+### Safety Requirement (ALL plugins)
+
+**ALWAYS include a safety limiter:**
+```rust
+#[inline]
+fn safety_limit(sample: f32) -> f32 {
+    sample.clamp(-1.0, 1.0)
+}
+
+// In process():
+*sample = safety_limit(*sample);
+```
+
+### Template Location
+
+Plugin templates are in `src-tauri/src/commands/projects.rs`:
+- `generate_effect_webview_template()` / `generate_instrument_webview_template()`
+- `generate_effect_egui_template()` / `generate_instrument_egui_template()`
+- `generate_effect_headless_template()` / `generate_instrument_headless_template()`
+- `generate_webview_ui_html()`
+
+### Native WebView Library
+
+The native nih-plug-webview files (for avoiding Tauri/wry conflicts):
+- `src-tauri/src/audio/plugin/native_webview_lib.rs`
+- `src-tauri/src/audio/plugin/native_webview.rs`
+
+Copied to `~/VSTWorkshop/.nih-plug-webview/` when workspace is created.

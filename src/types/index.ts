@@ -57,6 +57,7 @@ export interface ProjectMeta {
   name: string;
   description: string;
   template?: PluginTemplate;
+  uiFramework?: UIFramework;
   components?: string[];  // Starter components selected
   created_at: string;
   updated_at: string;
@@ -65,17 +66,17 @@ export interface ProjectMeta {
 
 export type PluginTemplate = 'effect' | 'instrument';
 
-// Starter components for Effect plugins
+export type UIFramework = 'webview' | 'egui' | 'headless';
+
+// Starter components for Effect plugins (custom_gui removed - handled by uiFramework)
 export type EffectComponent =
-  | 'custom_gui'
   | 'preset_system'
   | 'param_smoothing'
   | 'sidechain_input'
   | 'oversampling';
 
-// Starter components for Instrument plugins
+// Starter components for Instrument plugins (custom_gui removed - handled by uiFramework)
 export type InstrumentComponent =
-  | 'custom_gui'
   | 'preset_system'
   | 'polyphony'
   | 'velocity_layers'
@@ -86,6 +87,7 @@ export interface CreateProjectInput {
   name: string;
   description: string;
   template: PluginTemplate;
+  uiFramework: UIFramework;
   vendorName?: string;
   vendorUrl?: string;
   vendorEmail?: string;

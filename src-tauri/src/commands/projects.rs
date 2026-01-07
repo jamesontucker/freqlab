@@ -8,6 +8,8 @@ pub struct ProjectMeta {
     pub name: String,
     pub description: String,
     pub template: Option<String>, // "effect" or "instrument"
+    #[serde(rename = "uiFramework")]
+    pub ui_framework: Option<String>, // "webview", "egui", or "headless"
     pub components: Option<Vec<String>>, // Starter components selected
     pub created_at: String,
     pub updated_at: String,
@@ -19,6 +21,8 @@ pub struct CreateProjectInput {
     pub name: String,
     pub description: String,
     pub template: String, // "effect" or "instrument"
+    #[serde(rename = "uiFramework")]
+    pub ui_framework: String, // "webview", "egui", or "headless"
     #[serde(rename = "vendorName")]
     pub vendor_name: Option<String>,
     #[serde(rename = "vendorUrl")]
@@ -90,16 +94,14 @@ pub fn ensure_workspace() -> Result<(), String> {
     fs::create_dir_all(&output).map_err(|e| format!("Failed to create output dir: {}", e))?;
     fs::create_dir_all(&xtask_dir).map_err(|e| format!("Failed to create xtask dir: {}", e))?;
 
-    // Create workspace root Cargo.toml if it doesn't exist
+    // Create or update workspace root Cargo.toml
     let workspace_cargo = workspace.join("Cargo.toml");
-    if !workspace_cargo.exists() {
-        let cargo_content = r#"[workspace]
-members = ["projects/*", "xtask"]
+    let cargo_content = r#"[workspace]
+members = ["projects/*", "xtask", ".nih-plug-webview"]
 resolver = "2"
 "#;
-        fs::write(&workspace_cargo, cargo_content)
-            .map_err(|e| format!("Failed to create workspace Cargo.toml: {}", e))?;
-    }
+    fs::write(&workspace_cargo, cargo_content)
+        .map_err(|e| format!("Failed to create workspace Cargo.toml: {}", e))?;
 
     // Create shared xtask Cargo.toml if it doesn't exist
     let xtask_cargo = workspace.join("xtask/Cargo.toml");
@@ -110,7 +112,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }
 "#;
         fs::write(&xtask_cargo, xtask_content)
             .map_err(|e| format!("Failed to create xtask Cargo.toml: {}", e))?;
@@ -143,6 +145,64 @@ xtask = "run --package xtask --release --"
 
     // Clone nih-plug repo for local documentation (non-blocking on failure)
     let _ = ensure_nih_plug_docs();
+
+    // Set up native nih-plug-webview for macOS (avoids Tauri/wry conflicts)
+    let _ = ensure_native_webview_lib(&workspace);
+
+    Ok(())
+}
+
+/// Set up the native nih-plug-webview library in the workspace
+/// This is our fork that uses native WKWebView instead of wry to avoid conflicts with Tauri
+fn ensure_native_webview_lib(workspace: &std::path::Path) -> Result<(), String> {
+    let webview_dir = workspace.join(".nih-plug-webview");
+    let src_dir = webview_dir.join("src");
+
+    // Create directory structure
+    fs::create_dir_all(&src_dir)
+        .map_err(|e| format!("Failed to create nih-plug-webview dir: {}", e))?;
+
+    // Write Cargo.toml
+    let cargo_toml = webview_dir.join("Cargo.toml");
+    if !cargo_toml.exists() {
+        let content = r#"[package]
+name = "nih_plug_webview"
+version = "0.1.0"
+edition = "2021"
+description = "Native WKWebView for nih-plug (macOS only, avoids Tauri/wry conflicts)"
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }
+parking_lot = "0.12"
+serde_json = "1.0"
+baseview = { git = "https://github.com/RustAudio/baseview" }
+raw-window-handle = "0.5"
+crossbeam = "0.8"
+keyboard-types = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+"#;
+        fs::write(&cargo_toml, content)
+            .map_err(|e| format!("Failed to write webview Cargo.toml: {}", e))?;
+    }
+
+    // Write lib.rs
+    let lib_rs = src_dir.join("lib.rs");
+    if !lib_rs.exists() {
+        let content = include_str!("../audio/plugin/native_webview_lib.rs");
+        fs::write(&lib_rs, content)
+            .map_err(|e| format!("Failed to write webview lib.rs: {}", e))?;
+    }
+
+    // Write native_webview.rs
+    let native_webview_rs = src_dir.join("native_webview.rs");
+    if !native_webview_rs.exists() {
+        let content = include_str!("../audio/plugin/native_webview.rs");
+        fs::write(&native_webview_rs, content)
+            .map_err(|e| format!("Failed to write native_webview.rs: {}", e))?;
+    }
 
     Ok(())
 }
@@ -219,9 +279,22 @@ pub async fn create_project(input: CreateProjectInput) -> Result<ProjectMeta, St
     let pascal_name = to_pascal_case(&input.name);
     let vst3_id = generate_vst3_id(&input.name);
 
+    // Generate dependencies based on UI framework
+    // Note: webview uses our native WKWebView fork (macOS only) to avoid Tauri conflicts
+    let ui_deps = match input.ui_framework.as_str() {
+        "webview" => r#"# Native WKWebView (macOS only) - avoids conflicts with Tauri
+nih_plug_webview = { path = "../../.nih-plug-webview" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0""#,
+        "egui" => r#"nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }
+egui = "0.24""#,
+        _ => "", // headless - no additional deps
+    };
+
     // Write Cargo.toml (project is a workspace member, no [workspace] section needed)
-    let cargo_toml = format!(
-        r#"[package]
+    let cargo_toml = if ui_deps.is_empty() {
+        format!(
+            r#"[package]
 name = "{snake_name}"
 version = "0.1.0"
 edition = "2021"
@@ -232,19 +305,44 @@ description = "{description}"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git" }}
+nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }}
 
 [profile.release]
 lto = "thin"
 strip = "symbols"
 "#,
-        snake_name = snake_name,
-        description = input.description.replace('"', "\\\"")
-    );
+            snake_name = snake_name,
+            description = input.description.replace('"', "\\\"")
+        )
+    } else {
+        format!(
+            r#"[package]
+name = "{snake_name}"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "{description}"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }}
+{ui_deps}
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+"#,
+            snake_name = snake_name,
+            description = input.description.replace('"', "\\\""),
+            ui_deps = ui_deps
+        )
+    };
     fs::write(project_path.join("Cargo.toml"), cargo_toml)
         .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
 
-    // Generate template based on type
+    // Generate template based on type and UI framework
     let vendor_name = input.vendor_name.as_deref().unwrap_or("freqlab");
     let vendor_id: String = vendor_name
         .to_lowercase()
@@ -255,32 +353,43 @@ strip = "symbols"
     let vendor_email = input.vendor_email.as_deref().unwrap_or("");
     let description_escaped = input.description.replace('"', "\\\"");
 
-    let lib_rs = if input.template == "instrument" {
-        generate_instrument_template(
-            &pascal_name,
-            &snake_name,
-            &description_escaped,
-            &vst3_id,
-            vendor_name,
-            &vendor_id,
-            vendor_url,
-            vendor_email,
-        )
-    } else {
-        generate_effect_template(
-            &pascal_name,
-            &snake_name,
-            &description_escaped,
-            &vst3_id,
-            vendor_name,
-            &vendor_id,
-            vendor_url,
-            vendor_email,
-        )
+    // Select template based on plugin type and UI framework
+    let lib_rs = match (input.template.as_str(), input.ui_framework.as_str()) {
+        ("instrument", "webview") => generate_instrument_webview_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
+        ("instrument", "egui") => generate_instrument_egui_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
+        ("instrument", _) => generate_instrument_headless_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
+        ("effect", "webview") => generate_effect_webview_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
+        ("effect", "egui") => generate_effect_egui_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
+        _ => generate_effect_headless_template(
+            &pascal_name, &snake_name, &description_escaped, &vst3_id,
+            vendor_name, &vendor_id, vendor_url, vendor_email,
+        ),
     };
 
     fs::write(project_path.join("src/lib.rs"), lib_rs)
         .map_err(|e| format!("Failed to write lib.rs: {}", e))?;
+
+    // Create ui.html for webview projects
+    if input.ui_framework == "webview" {
+        let ui_html = generate_webview_ui_html(&pascal_name);
+        fs::write(project_path.join("src/ui.html"), ui_html)
+            .map_err(|e| format!("Failed to write ui.html: {}", e))?;
+    }
 
     // Create metadata
     let now = chrono::Utc::now().to_rfc3339();
@@ -291,6 +400,7 @@ strip = "symbols"
         name: input.name.clone(),
         description: input.description.clone(),
         template: Some(input.template.clone()),
+        ui_framework: Some(input.ui_framework.clone()),
         components: input.components.clone(),
         created_at: now.clone(),
         updated_at: now,
@@ -401,8 +511,8 @@ pub async fn get_workspace_path_string() -> String {
     get_workspace_path().to_string_lossy().to_string()
 }
 
-/// Generate an effect plugin template (processes audio input)
-fn generate_effect_template(
+/// Generate a headless effect plugin template (no custom UI)
+fn generate_effect_headless_template(
     pascal_name: &str,
     snake_name: &str,
     description: &str,
@@ -529,8 +639,8 @@ nih_export_vst3!({pascal_name});
     )
 }
 
-/// Generate an instrument plugin template (synthesizer that generates sound from MIDI)
-fn generate_instrument_template(
+/// Generate a headless instrument plugin template (no custom UI)
+fn generate_instrument_headless_template(
     pascal_name: &str,
     snake_name: &str,
     description: &str,
@@ -713,5 +823,915 @@ nih_export_vst3!({pascal_name});
         vendor_id = vendor_id,
         vendor_url = vendor_url,
         vendor_email = vendor_email
+    )
+}
+
+/// Generate an effect plugin template with WebView UI (macOS only)
+fn generate_effect_webview_template(
+    pascal_name: &str,
+    snake_name: &str,
+    description: &str,
+    vst3_id: &str,
+    vendor_name: &str,
+    vendor_id: &str,
+    vendor_url: &str,
+    vendor_email: &str,
+) -> String {
+    format!(
+        r#"use nih_plug::prelude::*;
+use nih_plug_webview::{{WebViewEditor, HTMLSource}};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::Arc;
+use std::sync::atomic::{{AtomicBool, Ordering}};
+
+/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
+#[inline]
+fn safety_limit(sample: f32) -> f32 {{
+    sample.clamp(-1.0, 1.0)
+}}
+
+/// Messages from the WebView UI
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum UIMessage {{
+    Init,
+    SetGain {{ value: f32 }},
+}}
+
+/// {description}
+struct {pascal_name} {{
+    params: Arc<{pascal_name}Params>,
+}}
+
+#[derive(Params)]
+struct {pascal_name}Params {{
+    #[id = "gain"]
+    pub gain: FloatParam,
+    /// Flag to notify UI when gain changes from host automation
+    #[persist = ""]
+    gain_changed: Arc<AtomicBool>,
+}}
+
+impl Default for {pascal_name} {{
+    fn default() -> Self {{
+        Self {{
+            params: Arc::new({pascal_name}Params::default()),
+        }}
+    }}
+}}
+
+impl Default for {pascal_name}Params {{
+    fn default() -> Self {{
+        let gain_changed = Arc::new(AtomicBool::new(false));
+        let gain_changed_clone = gain_changed.clone();
+
+        Self {{
+            gain: FloatParam::new(
+                "Gain",
+                util::db_to_gain(0.0),
+                FloatRange::Skewed {{
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(30.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 30.0),
+                }},
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db())
+            .with_callback(Arc::new(move |_| {{
+                gain_changed_clone.store(true, Ordering::Relaxed);
+            }})),
+            gain_changed,
+        }}
+    }}
+}}
+
+impl Plugin for {pascal_name} {{
+    const NAME: &'static str = "{pascal_name}";
+    const VENDOR: &'static str = "{vendor_name}";
+    const URL: &'static str = "{vendor_url}";
+    const EMAIL: &'static str = "{vendor_email}";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {{
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }}];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {{
+        self.params.clone()
+    }}
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {{
+        let params = self.params.clone();
+        let gain_changed = self.params.gain_changed.clone();
+
+        let editor = WebViewEditor::new(HTMLSource::String(include_str!("ui.html")), (400, 300))
+            .with_background_color((26, 26, 46, 255))
+            .with_developer_mode(true)
+            .with_event_loop(move |ctx, setter, _window| {{
+                // Handle messages from WebView
+                while let Ok(msg) = ctx.next_event() {{
+                    if let Ok(ui_msg) = serde_json::from_value::<UIMessage>(msg) {{
+                        match ui_msg {{
+                            UIMessage::Init => {{
+                                // Send initial state to UI
+                                ctx.send_json(json!({{
+                                    "type": "param_change",
+                                    "param": "gain",
+                                    "value": params.gain.unmodulated_normalized_value(),
+                                    "text": params.gain.to_string()
+                                }}));
+                            }}
+                            UIMessage::SetGain {{ value }} => {{
+                                setter.begin_set_parameter(&params.gain);
+                                setter.set_parameter_normalized(&params.gain, value);
+                                setter.end_set_parameter(&params.gain);
+                            }}
+                        }}
+                    }}
+                }}
+
+                // Sync UI when parameter changes from host automation
+                if gain_changed.swap(false, Ordering::Relaxed) {{
+                    ctx.send_json(json!({{
+                        "type": "param_change",
+                        "param": "gain",
+                        "value": params.gain.unmodulated_normalized_value(),
+                        "text": params.gain.to_string()
+                    }}));
+                }}
+            }});
+
+        Some(Box::new(editor))
+    }}
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        _context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {{
+        for channel_samples in buffer.iter_samples() {{
+            let gain = self.params.gain.smoothed.next();
+            for sample in channel_samples {{
+                *sample *= gain;
+                *sample = safety_limit(*sample);
+            }}
+        }}
+        ProcessStatus::Normal
+    }}
+}}
+
+impl ClapPlugin for {pascal_name} {{
+    const CLAP_ID: &'static str = "com.{vendor_id}.{snake_name}";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("{description}");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
+}}
+
+impl Vst3Plugin for {pascal_name} {{
+    const VST3_CLASS_ID: [u8; 16] = *b"{vst3_id}";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx];
+}}
+
+nih_export_clap!({pascal_name});
+nih_export_vst3!({pascal_name});
+"#,
+        pascal_name = pascal_name,
+        snake_name = snake_name,
+        description = description,
+        vst3_id = vst3_id,
+        vendor_name = vendor_name,
+        vendor_id = vendor_id,
+        vendor_url = vendor_url,
+        vendor_email = vendor_email
+    )
+}
+
+/// Generate an effect plugin template with egui UI
+fn generate_effect_egui_template(
+    pascal_name: &str,
+    snake_name: &str,
+    description: &str,
+    vst3_id: &str,
+    vendor_name: &str,
+    vendor_id: &str,
+    vendor_url: &str,
+    vendor_email: &str,
+) -> String {
+    format!(
+        r#"use nih_plug::prelude::*;
+use nih_plug_egui::{{create_egui_editor, egui, widgets, EguiState}};
+use std::sync::Arc;
+
+/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
+#[inline]
+fn safety_limit(sample: f32) -> f32 {{
+    sample.clamp(-1.0, 1.0)
+}}
+
+/// {description}
+struct {pascal_name} {{
+    params: Arc<{pascal_name}Params>,
+}}
+
+#[derive(Params)]
+struct {pascal_name}Params {{
+    #[persist = "editor-state"]
+    editor_state: Arc<EguiState>,
+
+    #[id = "gain"]
+    pub gain: FloatParam,
+}}
+
+impl Default for {pascal_name} {{
+    fn default() -> Self {{
+        Self {{
+            params: Arc::new({pascal_name}Params::default()),
+        }}
+    }}
+}}
+
+impl Default for {pascal_name}Params {{
+    fn default() -> Self {{
+        Self {{
+            editor_state: EguiState::from_size(400, 300),
+            gain: FloatParam::new(
+                "Gain",
+                util::db_to_gain(0.0),
+                FloatRange::Skewed {{
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(30.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 30.0),
+                }},
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+        }}
+    }}
+}}
+
+impl Plugin for {pascal_name} {{
+    const NAME: &'static str = "{pascal_name}";
+    const VENDOR: &'static str = "{vendor_name}";
+    const URL: &'static str = "{vendor_url}";
+    const EMAIL: &'static str = "{vendor_email}";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {{
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }}];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {{
+        self.params.clone()
+    }}
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {{
+        let params = self.params.clone();
+        create_egui_editor(
+            self.params.editor_state.clone(),
+            (),
+            |_, _| {{}},
+            move |egui_ctx, setter, _state| {{
+                egui::CentralPanel::default().show(egui_ctx, |ui| {{
+                    ui.heading("{pascal_name}");
+                    ui.add_space(10.0);
+
+                    ui.label("Gain");
+                    ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+                }});
+            }},
+        )
+    }}
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        _context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {{
+        for channel_samples in buffer.iter_samples() {{
+            let gain = self.params.gain.smoothed.next();
+            for sample in channel_samples {{
+                *sample *= gain;
+                *sample = safety_limit(*sample);
+            }}
+        }}
+        ProcessStatus::Normal
+    }}
+}}
+
+impl ClapPlugin for {pascal_name} {{
+    const CLAP_ID: &'static str = "com.{vendor_id}.{snake_name}";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("{description}");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
+}}
+
+impl Vst3Plugin for {pascal_name} {{
+    const VST3_CLASS_ID: [u8; 16] = *b"{vst3_id}";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx];
+}}
+
+nih_export_clap!({pascal_name});
+nih_export_vst3!({pascal_name});
+"#,
+        pascal_name = pascal_name,
+        snake_name = snake_name,
+        description = description,
+        vst3_id = vst3_id,
+        vendor_name = vendor_name,
+        vendor_id = vendor_id,
+        vendor_url = vendor_url,
+        vendor_email = vendor_email
+    )
+}
+
+/// Generate an instrument plugin template with WebView UI (macOS only)
+fn generate_instrument_webview_template(
+    pascal_name: &str,
+    snake_name: &str,
+    description: &str,
+    vst3_id: &str,
+    vendor_name: &str,
+    vendor_id: &str,
+    vendor_url: &str,
+    vendor_email: &str,
+) -> String {
+    format!(
+        r#"use nih_plug::prelude::*;
+use nih_plug_webview::{{WebViewEditor, HTMLSource}};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::Arc;
+use std::sync::atomic::{{AtomicBool, Ordering}};
+
+/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
+#[inline]
+fn safety_limit(sample: f32) -> f32 {{
+    sample.clamp(-1.0, 1.0)
+}}
+
+/// Messages from the WebView UI
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum UIMessage {{
+    Init,
+    SetGain {{ value: f32 }},
+}}
+
+/// {description}
+struct {pascal_name} {{
+    params: Arc<{pascal_name}Params>,
+    sample_rate: f32,
+    phase: f32,
+    note_freq: f32,
+    velocity: f32,
+}}
+
+#[derive(Params)]
+struct {pascal_name}Params {{
+    #[id = "gain"]
+    pub gain: FloatParam,
+    /// Flag to notify UI when gain changes from host automation
+    #[persist = ""]
+    gain_changed: Arc<AtomicBool>,
+}}
+
+impl Default for {pascal_name} {{
+    fn default() -> Self {{
+        Self {{
+            params: Arc::new({pascal_name}Params::default()),
+            sample_rate: 44100.0,
+            phase: 0.0,
+            note_freq: 0.0,
+            velocity: 0.0,
+        }}
+    }}
+}}
+
+impl Default for {pascal_name}Params {{
+    fn default() -> Self {{
+        let gain_changed = Arc::new(AtomicBool::new(false));
+        let gain_changed_clone = gain_changed.clone();
+
+        Self {{
+            gain: FloatParam::new(
+                "Gain",
+                util::db_to_gain(-6.0),
+                FloatRange::Skewed {{
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(6.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 6.0),
+                }},
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db())
+            .with_callback(Arc::new(move |_| {{
+                gain_changed_clone.store(true, Ordering::Relaxed);
+            }})),
+            gain_changed,
+        }}
+    }}
+}}
+
+impl {pascal_name} {{
+    fn midi_note_to_freq(note: u8) -> f32 {{
+        440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+    }}
+}}
+
+impl Plugin for {pascal_name} {{
+    const NAME: &'static str = "{pascal_name}";
+    const VENDOR: &'static str = "{vendor_name}";
+    const URL: &'static str = "{vendor_url}";
+    const EMAIL: &'static str = "{vendor_email}";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {{
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }}];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {{
+        self.params.clone()
+    }}
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {{
+        let params = self.params.clone();
+        let gain_changed = self.params.gain_changed.clone();
+
+        let editor = WebViewEditor::new(HTMLSource::String(include_str!("ui.html")), (400, 300))
+            .with_background_color((26, 26, 46, 255))
+            .with_developer_mode(true)
+            .with_event_loop(move |ctx, setter, _window| {{
+                // Handle messages from WebView
+                while let Ok(msg) = ctx.next_event() {{
+                    if let Ok(ui_msg) = serde_json::from_value::<UIMessage>(msg) {{
+                        match ui_msg {{
+                            UIMessage::Init => {{
+                                // Send initial state to UI
+                                ctx.send_json(json!({{
+                                    "type": "param_change",
+                                    "param": "gain",
+                                    "value": params.gain.unmodulated_normalized_value(),
+                                    "text": params.gain.to_string()
+                                }}));
+                            }}
+                            UIMessage::SetGain {{ value }} => {{
+                                setter.begin_set_parameter(&params.gain);
+                                setter.set_parameter_normalized(&params.gain, value);
+                                setter.end_set_parameter(&params.gain);
+                            }}
+                        }}
+                    }}
+                }}
+
+                // Sync UI when parameter changes from host automation
+                if gain_changed.swap(false, Ordering::Relaxed) {{
+                    ctx.send_json(json!({{
+                        "type": "param_change",
+                        "param": "gain",
+                        "value": params.gain.unmodulated_normalized_value(),
+                        "text": params.gain.to_string()
+                    }}));
+                }}
+            }});
+
+        Some(Box::new(editor))
+    }}
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {{
+        self.sample_rate = buffer_config.sample_rate;
+        true
+    }}
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {{
+        while let Some(event) = context.next_event() {{
+            match event {{
+                NoteEvent::NoteOn {{ note, velocity, .. }} => {{
+                    self.note_freq = Self::midi_note_to_freq(note);
+                    self.velocity = velocity;
+                }}
+                NoteEvent::NoteOff {{ note, .. }} => {{
+                    if Self::midi_note_to_freq(note) == self.note_freq {{
+                        self.note_freq = 0.0;
+                        self.velocity = 0.0;
+                    }}
+                }}
+                _ => {{}}
+            }}
+        }}
+
+        let gain = self.params.gain.smoothed.next();
+        let phase_delta = self.note_freq / self.sample_rate;
+
+        for channel_samples in buffer.iter_samples() {{
+            let sample = if self.note_freq > 0.0 {{
+                let sine = (self.phase * std::f32::consts::TAU).sin();
+                self.phase = (self.phase + phase_delta) % 1.0;
+                sine * self.velocity * gain
+            }} else {{
+                0.0
+            }};
+
+            for output_sample in channel_samples {{
+                *output_sample = safety_limit(sample);
+            }}
+        }}
+
+        ProcessStatus::Normal
+    }}
+}}
+
+impl ClapPlugin for {pascal_name} {{
+    const CLAP_ID: &'static str = "com.{vendor_id}.{snake_name}";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("{description}");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];
+}}
+
+impl Vst3Plugin for {pascal_name} {{
+    const VST3_CLASS_ID: [u8; 16] = *b"{vst3_id}";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Synth, Vst3SubCategory::Instrument];
+}}
+
+nih_export_clap!({pascal_name});
+nih_export_vst3!({pascal_name});
+"#,
+        pascal_name = pascal_name,
+        snake_name = snake_name,
+        description = description,
+        vst3_id = vst3_id,
+        vendor_name = vendor_name,
+        vendor_id = vendor_id,
+        vendor_url = vendor_url,
+        vendor_email = vendor_email
+    )
+}
+
+/// Generate an instrument plugin template with egui UI
+fn generate_instrument_egui_template(
+    pascal_name: &str,
+    snake_name: &str,
+    description: &str,
+    vst3_id: &str,
+    vendor_name: &str,
+    vendor_id: &str,
+    vendor_url: &str,
+    vendor_email: &str,
+) -> String {
+    format!(
+        r#"use nih_plug::prelude::*;
+use nih_plug_egui::{{create_egui_editor, egui, widgets, EguiState}};
+use std::sync::Arc;
+
+/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
+#[inline]
+fn safety_limit(sample: f32) -> f32 {{
+    sample.clamp(-1.0, 1.0)
+}}
+
+/// {description}
+struct {pascal_name} {{
+    params: Arc<{pascal_name}Params>,
+    sample_rate: f32,
+    phase: f32,
+    note_freq: f32,
+    velocity: f32,
+}}
+
+#[derive(Params)]
+struct {pascal_name}Params {{
+    #[persist = "editor-state"]
+    editor_state: Arc<EguiState>,
+
+    #[id = "gain"]
+    pub gain: FloatParam,
+}}
+
+impl Default for {pascal_name} {{
+    fn default() -> Self {{
+        Self {{
+            params: Arc::new({pascal_name}Params::default()),
+            sample_rate: 44100.0,
+            phase: 0.0,
+            note_freq: 0.0,
+            velocity: 0.0,
+        }}
+    }}
+}}
+
+impl Default for {pascal_name}Params {{
+    fn default() -> Self {{
+        Self {{
+            editor_state: EguiState::from_size(400, 300),
+            gain: FloatParam::new(
+                "Gain",
+                util::db_to_gain(-6.0),
+                FloatRange::Skewed {{
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(6.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 6.0),
+                }},
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+        }}
+    }}
+}}
+
+impl {pascal_name} {{
+    fn midi_note_to_freq(note: u8) -> f32 {{
+        440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+    }}
+}}
+
+impl Plugin for {pascal_name} {{
+    const NAME: &'static str = "{pascal_name}";
+    const VENDOR: &'static str = "{vendor_name}";
+    const URL: &'static str = "{vendor_url}";
+    const EMAIL: &'static str = "{vendor_email}";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {{
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }}];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {{
+        self.params.clone()
+    }}
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {{
+        let params = self.params.clone();
+        create_egui_editor(
+            self.params.editor_state.clone(),
+            (),
+            |_, _| {{}},
+            move |egui_ctx, setter, _state| {{
+                egui::CentralPanel::default().show(egui_ctx, |ui| {{
+                    ui.heading("{pascal_name}");
+                    ui.add_space(10.0);
+
+                    ui.label("Gain");
+                    ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+                }});
+            }},
+        )
+    }}
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {{
+        self.sample_rate = buffer_config.sample_rate;
+        true
+    }}
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {{
+        while let Some(event) = context.next_event() {{
+            match event {{
+                NoteEvent::NoteOn {{ note, velocity, .. }} => {{
+                    self.note_freq = Self::midi_note_to_freq(note);
+                    self.velocity = velocity;
+                }}
+                NoteEvent::NoteOff {{ note, .. }} => {{
+                    if Self::midi_note_to_freq(note) == self.note_freq {{
+                        self.note_freq = 0.0;
+                        self.velocity = 0.0;
+                    }}
+                }}
+                _ => {{}}
+            }}
+        }}
+
+        let gain = self.params.gain.smoothed.next();
+        let phase_delta = self.note_freq / self.sample_rate;
+
+        for channel_samples in buffer.iter_samples() {{
+            let sample = if self.note_freq > 0.0 {{
+                let sine = (self.phase * std::f32::consts::TAU).sin();
+                self.phase = (self.phase + phase_delta) % 1.0;
+                sine * self.velocity * gain
+            }} else {{
+                0.0
+            }};
+
+            for output_sample in channel_samples {{
+                *output_sample = safety_limit(sample);
+            }}
+        }}
+
+        ProcessStatus::Normal
+    }}
+}}
+
+impl ClapPlugin for {pascal_name} {{
+    const CLAP_ID: &'static str = "com.{vendor_id}.{snake_name}";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("{description}");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];
+}}
+
+impl Vst3Plugin for {pascal_name} {{
+    const VST3_CLASS_ID: [u8; 16] = *b"{vst3_id}";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Synth, Vst3SubCategory::Instrument];
+}}
+
+nih_export_clap!({pascal_name});
+nih_export_vst3!({pascal_name});
+"#,
+        pascal_name = pascal_name,
+        snake_name = snake_name,
+        description = description,
+        vst3_id = vst3_id,
+        vendor_name = vendor_name,
+        vendor_id = vendor_id,
+        vendor_url = vendor_url,
+        vendor_email = vendor_email
+    )
+}
+
+/// Generate the HTML file for WebView UI
+fn generate_webview_ui_html(pascal_name: &str) -> String {
+    format!(
+        r##"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{pascal_name}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e4e4e4;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        h1 {{
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #fff;
+        }}
+        .control {{
+            width: 100%;
+            max-width: 300px;
+            margin-bottom: 20px;
+        }}
+        label {{
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        input[type="range"] {{
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #333;
+            outline: none;
+            -webkit-appearance: none;
+        }}
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #6366f1;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+        }}
+        .value {{
+            text-align: center;
+            font-size: 14px;
+            color: #6366f1;
+            margin-top: 8px;
+            font-weight: 500;
+        }}
+    </style>
+</head>
+<body>
+    <h1>{pascal_name}</h1>
+
+    <div class="control">
+        <label for="gain">Gain</label>
+        <input type="range" id="gain" min="0" max="1" value="0.5" step="0.001">
+        <div class="value" id="gain-value">0.0 dB</div>
+    </div>
+
+    <script>
+        // Send message to plugin
+        function sendToPlugin(msg) {{
+            if (window.ipc) {{
+                window.ipc.postMessage(JSON.stringify(msg));
+            }}
+        }}
+
+        // Gain control - uses normalized value (0-1)
+        const gainSlider = document.getElementById('gain');
+        const gainValue = document.getElementById('gain-value');
+
+        // Track if we're being updated from plugin (to avoid feedback loops)
+        let updatingFromPlugin = false;
+
+        gainSlider.addEventListener('input', (e) => {{
+            if (updatingFromPlugin) return;
+            const normalized = parseFloat(e.target.value);
+            // Send normalized value to plugin
+            sendToPlugin({{ type: 'SetGain', value: normalized }});
+        }});
+
+        // Handle messages from the plugin
+        window.onPluginMessage = function(msg) {{
+            if (msg.type === 'param_change' && msg.param === 'gain') {{
+                updatingFromPlugin = true;
+                gainSlider.value = msg.value;
+                gainValue.textContent = msg.text;
+                updatingFromPlugin = false;
+            }}
+        }};
+
+        // Request initial state when loaded
+        window.addEventListener('DOMContentLoaded', () => {{
+            sendToPlugin({{ type: 'Init' }});
+        }});
+    </script>
+</body>
+</html>
+"##,
+        pascal_name = pascal_name
     )
 }

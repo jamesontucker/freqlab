@@ -7,10 +7,16 @@ license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "freqlab"
 
 [lib]
 name = "freqlab_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Editor host binary - runs in separate process to avoid webview conflicts
+[[bin]]
+name = "freqlab-editor-host"
+path = "src/bin/editor_host.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.3", features = [] }
@@ -30,3 +36,19 @@ chrono = { version = "0.4", features = ["serde"] }
 once_cell = "1.19"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
+
+# Audio engine
+cpal = "0.15"
+ringbuf = "0.4"
+parking_lot = "0.12"
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "mp3", "aac"] }
+libloading = "0.8"
+notify = "7"
+rand = "0.8"
+env_logger = "0.11"
+base64 = "0.22"
+
+# macOS native UI for plugin editor windows
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"

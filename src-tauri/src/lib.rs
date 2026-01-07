@@ -1,3 +1,4 @@
+pub mod audio;
 mod commands;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,6 +48,38 @@ pub fn run() {
             commands::share::export_project,
             commands::share::import_project,
             commands::share::check_import_conflict,
+            // Preview/Audio commands
+            commands::preview::init_audio_engine,
+            commands::preview::shutdown_audio_engine,
+            commands::preview::get_audio_devices,
+            commands::preview::preview_play,
+            commands::preview::preview_stop,
+            commands::preview::preview_pause,
+            commands::preview::preview_set_signal,
+            commands::preview::preview_set_frequency,
+            commands::preview::preview_set_amplitude,
+            commands::preview::preview_set_gate,
+            commands::preview::preview_load_sample,
+            commands::preview::preview_set_looping,
+            commands::preview::preview_get_state,
+            commands::preview::preview_get_levels,
+            commands::preview::get_demo_samples,
+            commands::preview::start_level_meter,
+            commands::preview::stop_level_meter,
+            // Plugin commands
+            commands::preview::plugin_load,
+            commands::preview::plugin_unload,
+            commands::preview::plugin_get_state,
+            commands::preview::plugin_has_plugin,
+            commands::preview::plugin_has_editor,
+            commands::preview::plugin_scan_directory,
+            commands::preview::get_project_plugin_path,
+            commands::preview::plugin_load_for_project,
+            commands::preview::plugin_open_editor,
+            commands::preview::plugin_close_editor,
+            commands::preview::plugin_is_editor_open,
+            commands::preview::plugin_idle,
+            commands::preview::plugin_reload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

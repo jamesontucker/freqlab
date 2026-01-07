@@ -8,11 +8,12 @@ interface ProjectCardProps {
   isActive: boolean;
   isBusy: boolean;
   busyType: 'claude' | 'build' | null;
+  collapsed?: boolean;
   onClick: () => void;
   onDelete: () => Promise<void>;
 }
 
-export function ProjectCard({ project, isActive, isBusy, busyType, onClick, onDelete }: ProjectCardProps) {
+export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = false, onClick, onDelete }: ProjectCardProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const timeAgo = (dateStr: string) => {
@@ -45,6 +46,41 @@ export function ProjectCard({ project, isActive, isBusy, busyType, onClick, onDe
       setIsDeleting(false);
     }
   };
+
+  // Collapsed view - icon only
+  if (collapsed) {
+    return (
+      <div
+        onClick={onClick}
+        className={`w-12 h-12 rounded-xl transition-all duration-200 cursor-pointer flex items-center justify-center ${
+          isActive
+            ? 'bg-accent-subtle border border-accent/30'
+            : 'hover:bg-bg-tertiary border border-transparent'
+        }`}
+        title={project.name}
+      >
+        {isBusy ? (
+          <Spinner size="sm" className={isActive ? 'text-accent' : 'text-text-muted'} />
+        ) : project.template === 'instrument' ? (
+          <svg className={`w-5 h-5 ${isActive ? 'text-accent' : 'text-text-muted'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M6 4v10M10 4v10M14 4v10M18 4v10" />
+            <rect x="5" y="4" width="2" height="6" fill="currentColor" />
+            <rect x="9" y="4" width="2" height="6" fill="currentColor" />
+            <rect x="13" y="4" width="2" height="6" fill="currentColor" />
+            <rect x="17" y="4" width="2" height="6" fill="currentColor" />
+          </svg>
+        ) : (
+          <svg className={`w-5 h-5 ${isActive ? 'text-accent' : 'text-text-muted'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" d="M6 4v16M12 4v16M18 4v16" />
+            <rect x="4" y="6" width="4" height="3" rx="1" fill="currentColor" />
+            <rect x="10" y="12" width="4" height="3" rx="1" fill="currentColor" />
+            <rect x="16" y="9" width="4" height="3" rx="1" fill="currentColor" />
+          </svg>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>

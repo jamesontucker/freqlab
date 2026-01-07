@@ -7,6 +7,7 @@ import { OutputPanel } from './OutputPanel';
 import { NewProjectModal } from '../Projects';
 import { PublishModal } from '../Publish';
 import { ChatPanel } from '../Chat';
+import { PreviewPanel } from '../Preview';
 import { ToastContainer } from '../Common/Toast';
 import { Modal } from '../Common/Modal';
 import { useProjectStore } from '../../stores/projectStore';
@@ -14,6 +15,7 @@ import { useProjectOutput } from '../../stores/outputStore';
 import { useToastStore } from '../../stores/toastStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
+import { usePreviewStore } from '../../stores/previewStore';
 
 interface AvailableFormats {
   vst3: boolean;
@@ -45,6 +47,7 @@ export function MainLayout() {
   const { addToast } = useToastStore();
   const { queueMessage } = useChatStore();
   const { buildingPath, setBuildingPath, clearBuildingIfMatch, claudeBusyPath } = useProjectBusyStore();
+  const { isOpen: isPreviewOpen } = usePreviewStore();
 
   // Per-project output - use activeProject's path
   const { addLine, setActive, clear } = useProjectOutput(activeProject?.path ?? null);
@@ -206,7 +209,7 @@ export function MainLayout() {
       <Header />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar onNewPlugin={() => setIsNewProjectModalOpen(true)} />
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isPreviewOpen ? 'mr-[420px]' : ''}`}>
           <div className="flex-1 overflow-auto p-6">
             {activeProject ? (
               <div className="h-full flex flex-col">
@@ -411,6 +414,7 @@ export function MainLayout() {
         </div>
       </Modal>
 
+      <PreviewPanel />
       <ToastContainer />
     </div>
   );

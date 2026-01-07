@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { SettingsModal } from '../Settings/SettingsModal';
 import { ShareImportModal } from '../Share';
 import { AboutModal } from '../About';
+import { usePreviewStore } from '../../stores/previewStore';
 
 interface HeaderProps {
   title?: string;
@@ -28,6 +29,7 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showShareImport, setShowShareImport] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const { isOpen: isPreviewOpen, toggleOpen: togglePreview } = usePreviewStore();
 
   return (
     <>
@@ -37,6 +39,19 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
           <h1 className="text-lg font-semibold gradient-text">{title}</h1>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={togglePreview}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+              isPreviewOpen
+                ? 'bg-accent/10 text-accent'
+                : 'text-text-muted hover:text-text-primary hover:bg-bg-tertiary'
+            }`}
+            title={isPreviewOpen ? 'Close Preview' : 'Open Preview'}
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+            </svg>
+          </button>
           <button
             onClick={() => setShowShareImport(true)}
             className="px-3 py-1.5 rounded-lg text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-all duration-200"
