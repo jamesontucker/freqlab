@@ -112,7 +112,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
 "#;
         fs::write(&xtask_cargo, xtask_content)
             .map_err(|e| format!("Failed to create xtask Cargo.toml: {}", e))?;
@@ -121,7 +121,17 @@ nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", branch =
     // Create shared xtask main.rs if it doesn't exist
     let xtask_main = workspace.join("xtask/src/main.rs");
     if !xtask_main.exists() {
-        let main_content = r#"fn main() -> nih_plug_xtask::Result<()> {
+        let main_content = r#"use std::time::{SystemTime, UNIX_EPOCH};
+
+fn main() -> nih_plug_xtask::Result<()> {
+    // Set unique build suffix for wry class names (enables hot reload of webview plugins)
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let suffix = format!("{}", timestamp % 100_000_000);
+    std::env::set_var("WRY_BUILD_SUFFIX", &suffix);
+
     nih_plug_xtask::main()
 }
 "#;
@@ -227,7 +237,7 @@ pub async fn create_project(input: CreateProjectInput) -> Result<ProjectMeta, St
 nih_plug_webview = { git = "https://github.com/jamesontucker/nih-plug-webview" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0""#,
-        "egui" => r#"nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }
+        "egui" => r#"nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
 egui = "0.24""#,
         _ => "", // headless - no additional deps
     };
@@ -246,7 +256,7 @@ description = "{description}"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }}
+nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }}
 
 [profile.release]
 lto = "thin"
@@ -268,7 +278,7 @@ description = "{description}"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", branch = "master" }}
+nih_plug = {{ git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }}
 {ui_deps}
 
 [profile.release]

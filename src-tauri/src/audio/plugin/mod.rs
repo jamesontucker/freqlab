@@ -10,9 +10,6 @@ pub mod clap_sys;
 pub mod editor;
 pub mod file_watcher;
 
-#[cfg(target_os = "macos")]
-pub mod native_webview;
-
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

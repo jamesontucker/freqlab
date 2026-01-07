@@ -1,25 +1,24 @@
 # nih-plug-webview Development Guide
 
-This guide documents how to develop WebView-based audio plugins using freqlab's native `nih-plug-webview` library. This library uses native macOS WKWebView instead of wry to avoid Objective-C class name conflicts with Tauri.
+This guide documents how to develop WebView-based audio plugins using the forked `nih-plug-webview` library. This fork includes patches for Tauri compatibility and hot reload support.
 
-## Platform Support
+## Key Features
 
-**macOS only** - The native WKWebView implementation currently only supports macOS. Windows and Linux support may be added in the future.
+- **Tauri compatibility**: Uses prefixed Objective-C class names to avoid conflicts with Tauri's wry
+- **Hot reload support**: Dynamic class name suffix via `WRY_BUILD_SUFFIX` env var enables reloading plugins without restarting the host
+- **Cross-platform**: Uses wry for WebView (same as Tauri)
 
 ## Project Setup
 
-When creating a WebView plugin in freqlab:
-
-1. The workspace automatically sets up `~/.nih-plug-webview/` with the native library
-2. Plugin Cargo.toml uses a path dependency: `nih_plug_webview = { path = "../.nih-plug-webview" }`
-3. Additional dependencies: `serde` with `derive` feature and `serde_json`
+When creating a WebView plugin in freqlab, the template automatically uses the forked repository.
 
 ### Cargo.toml Dependencies
 
 ```toml
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-nih_plug_webview = { path = "../.nih-plug-webview" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
+# Forked nih-plug-webview with Tauri compatibility and hot reload support
+nih_plug_webview = { git = "https://github.com/jamesontucker/nih-plug-webview" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```

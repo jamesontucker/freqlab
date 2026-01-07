@@ -254,10 +254,10 @@ Plugin templates are in `src-tauri/src/commands/projects.rs`:
 - `generate_effect_headless_template()` / `generate_instrument_headless_template()`
 - `generate_webview_ui_html()`
 
-### Native WebView Library
+### WebView Plugin Compatibility
 
-The native nih-plug-webview files (for avoiding Tauri/wry conflicts):
-- `src-tauri/src/audio/plugin/native_webview_lib.rs`
-- `src-tauri/src/audio/plugin/native_webview.rs`
+WebView plugins use a forked `nih-plug-webview` (github.com/jamesontucker/nih-plug-webview) that includes:
+- Prefixed Objective-C class names to avoid conflicts with Tauri's wry
+- Dynamic class suffix via `WRY_BUILD_SUFFIX` env var for hot reload support
 
-Copied to `~/VSTWorkshop/.nih-plug-webview/` when workspace is created.
+The fork is used automatically when creating WebView plugins via the template system.

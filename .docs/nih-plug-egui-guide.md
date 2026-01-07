@@ -12,8 +12,8 @@ This guide documents how to develop egui-based audio plugins using nih-plug's `n
 
 ```toml
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
 egui = "0.24"
 ```
 
