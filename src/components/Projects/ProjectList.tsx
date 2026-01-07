@@ -10,7 +10,7 @@ interface ProjectListProps {
 
 export function ProjectList({ collapsed = false }: ProjectListProps) {
   const { projects, activeProject, loading, error, loadProjects, selectProject, deleteProject } = useProjectStore();
-  const { claudeBusyPath, buildingPath } = useProjectBusyStore();
+  const { isClaudeBusy, buildingPath } = useProjectBusyStore();
 
   useEffect(() => {
     loadProjects();
@@ -58,7 +58,7 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
   }
 
   const getBusyState = (projectPath: string): { isBusy: boolean; busyType: 'claude' | 'build' | null } => {
-    if (claudeBusyPath === projectPath) {
+    if (isClaudeBusy(projectPath)) {
       return { isBusy: true, busyType: 'claude' };
     }
     if (buildingPath === projectPath) {

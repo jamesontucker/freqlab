@@ -56,10 +56,10 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const streamingContentRef = useRef('');
   const { addLine, setActive, clear } = useProjectOutput(project.path);
   const { pendingMessage, clearPendingMessage } = useChatStore();
-  const { claudeBusyPath, setClaudeBusy, clearClaudeBusyIfMatch, isProjectBusy } = useProjectBusyStore();
+  const { isClaudeBusy, setClaudeBusy, clearClaudeBusy, isProjectBusy } = useProjectBusyStore();
 
   // Check if THIS project is currently busy with Claude
-  const isLoading = claudeBusyPath === project.path;
+  const isLoading = isClaudeBusy(project.path);
   // Check if project is busy with anything (Claude or building)
   const isBusy = isProjectBusy(project.path);
 
@@ -371,14 +371,14 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     } finally {
       unlisten();
       // Only clear if we're still the active Claude session (prevents race with other projects)
-      clearClaudeBusyIfMatch(project.path);
+      clearClaudeBusy(project.path);
       setStreamingContent('');
       streamingContentRef.current = '';
       setActive(false);
       addLine('');
       addLine('[Done]');
     }
-  }, [project, addLine, setActive, clear, setClaudeBusy, clearClaudeBusyIfMatch]);
+  }, [project, addLine, setActive, clear, setClaudeBusy, clearClaudeBusy]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {
@@ -416,9 +416,9 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     } catch (err) {
       addLine(`[ERROR] Failed to change version: ${err}`);
     } finally {
-      clearClaudeBusyIfMatch(project.path);
+      clearClaudeBusy(project.path);
     }
-  }, [project.path, messages, activeVersion, addLine, setClaudeBusy, clearClaudeBusyIfMatch]);
+  }, [project.path, messages, activeVersion, addLine, setClaudeBusy, clearClaudeBusy]);
 
   // Calculate current effective version for header display
   const latestVersionForHeader = messages.reduce((max, m) =>

@@ -46,7 +46,7 @@ export function MainLayout() {
   const { activeProject, createProject, projects, deleteProject, selectProject } = useProjectStore();
   const { addToast } = useToastStore();
   const { queueMessage } = useChatStore();
-  const { buildingPath, setBuildingPath, clearBuildingIfMatch, claudeBusyPath } = useProjectBusyStore();
+  const { buildingPath, setBuildingPath, clearBuildingIfMatch, isClaudeBusy } = useProjectBusyStore();
   const { isOpen: isPreviewOpen } = usePreviewStore();
 
   // Per-project output - use activeProject's path
@@ -55,7 +55,7 @@ export function MainLayout() {
   // Check if current project is building
   const isBuilding = activeProject ? buildingPath === activeProject.path : false;
   // Check if THIS project has Claude working (project-specific)
-  const thisProjectClaudeBusy = activeProject ? claudeBusyPath === activeProject.path : false;
+  const thisProjectClaudeBusy = activeProject ? isClaudeBusy(activeProject.path) : false;
   // Check if ANY build is happening (global - can't have two builds at once)
   const anyBuildInProgress = buildingPath !== null;
   // Build disabled if: this project has Claude working OR any build in progress

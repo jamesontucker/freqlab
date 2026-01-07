@@ -1,16 +1,16 @@
 import { create } from 'zustand';
 
 interface ProjectBusyState {
-  // Track which project is busy with Claude
-  claudeBusyPath: string | null;
-  setClaudeBusy: (path: string | null) => void;
-  // Clear Claude busy only if it matches the given path (prevents race conditions)
-  clearClaudeBusyIfMatch: (path: string) => void;
+  // Track which projects are busy with Claude (supports multiple concurrent)
+  claudeBusyPaths: Set<string>;
+  setClaudeBusy: (path: string) => void;
+  clearClaudeBusy: (path: string) => void;
+  isClaudeBusy: (path: string) => boolean;
+  getClaudeBusyPaths: () => string[];
 
-  // Track which project is building
+  // Track which project is building (only one at a time)
   buildingPath: string | null;
   setBuildingPath: (path: string | null) => void;
-  // Clear build busy only if it matches the given path
   clearBuildingIfMatch: (path: string) => void;
 
   // Check if a specific project is busy (either Claude or building)
@@ -18,16 +18,32 @@ interface ProjectBusyState {
 
   // Check if ANY project is busy
   isAnyBusy: () => boolean;
+
+  // Check if any project (other than the given one) has Claude busy
+  hasOtherClaudeBusy: (currentPath: string) => boolean;
 }
 
 export const useProjectBusyStore = create<ProjectBusyState>((set, get) => ({
-  claudeBusyPath: null,
-  setClaudeBusy: (path) => set({ claudeBusyPath: path }),
-  clearClaudeBusyIfMatch: (path) => {
-    const state = get();
-    if (state.claudeBusyPath === path) {
-      set({ claudeBusyPath: null });
-    }
+  claudeBusyPaths: new Set<string>(),
+
+  setClaudeBusy: (path) => set((state) => {
+    const newPaths = new Set(state.claudeBusyPaths);
+    newPaths.add(path);
+    return { claudeBusyPaths: newPaths };
+  }),
+
+  clearClaudeBusy: (path) => set((state) => {
+    const newPaths = new Set(state.claudeBusyPaths);
+    newPaths.delete(path);
+    return { claudeBusyPaths: newPaths };
+  }),
+
+  isClaudeBusy: (path) => {
+    return get().claudeBusyPaths.has(path);
+  },
+
+  getClaudeBusyPaths: () => {
+    return Array.from(get().claudeBusyPaths);
   },
 
   buildingPath: null,
@@ -41,11 +57,21 @@ export const useProjectBusyStore = create<ProjectBusyState>((set, get) => ({
 
   isProjectBusy: (path) => {
     const state = get();
-    return state.claudeBusyPath === path || state.buildingPath === path;
+    return state.claudeBusyPaths.has(path) || state.buildingPath === path;
   },
 
   isAnyBusy: () => {
     const state = get();
-    return state.claudeBusyPath !== null || state.buildingPath !== null;
+    return state.claudeBusyPaths.size > 0 || state.buildingPath !== null;
+  },
+
+  hasOtherClaudeBusy: (currentPath) => {
+    const state = get();
+    for (const path of state.claudeBusyPaths) {
+      if (path !== currentPath) {
+        return true;
+      }
+    }
+    return false;
   },
 }));
