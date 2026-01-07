@@ -1,127 +1,139 @@
 # freqlab
 
-Describe it. Build it. Hear it.
+**A macOS app for creating VST3/CLAP audio plugins through conversation.**
 
-A macOS app for creating VST3/CLAP audio plugins through conversation.
+> This is a personal side project and is not consistently maintained. Use as-is.
 
-> **Note**: This is a personal side project and is not consistently maintained. Use as-is.
+---
 
-## About
+## What is freqlab?
 
-freqlab is a desktop application that combines the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) with [nih-plug](https://github.com/robbert-vdh/nih-plug) to let you build audio plugins through conversation. Instead of writing boilerplate Rust code, describe your plugin idea and iterate through chat.
+freqlab combines [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with [nih-plug](https://github.com/robbert-vdh/nih-plug) to let you build audio plugins by describing what you want. Each plugin project gets its own Claude session that remembers your plugin's architecture, parameters, and history—so you can iterate naturally over time.
 
-**How it works:**
-1. Create a new plugin project (effect or instrument)
-2. Chat with Claude to describe what you want
-3. Claude modifies the code, freqlab builds it
-4. Preview the result in real-time with the built-in audio engine
-5. Publish to your DAW
+### The Workflow
+
+```
+Describe → Build → Preview → Iterate
+```
+
+1. Create a plugin project and choose a template
+2. Chat to describe what you want—Claude writes the Rust code
+3. One-click build compiles your plugin
+4. Hot reload lets you hear changes instantly
+5. Revert to any version if something breaks
+6. Publish directly to your DAW
+
+---
 
 ## Features
 
-**AI-Powered Development**
-- Natural language plugin creation via Claude Code CLI
-- Streaming responses with real-time feedback
-- Automatic git commits after each change
-- Revert to any previous version with one click
-- File attachments for context
+### Conversational Development
 
-**Plugin Templates**
-- Effect or Instrument starting points
-- WebView, egui, or Headless UI options
-- All templates work cross-platform
+| Feature | Description |
+|---------|-------------|
+| **Per-project Claude sessions** | Each plugin has its own Claude agent with full context of your codebase |
+| **Streaming responses** | See Claude's work in real-time as it writes code |
+| **Automatic versioning** | Every change is git-committed with one-click revert |
+| **File attachments** | Drop in reference files, specs, or examples |
 
-**Audio Preview**
-- Real-time CLAP plugin hosting
-- Hot reload on code changes
-- Test signals: sine, noise, sweep, impulse, chirp
-- Sample file playback (WAV, MP3, AAC)
-- Level metering
+### Audio Preview
 
-**Build & Publish**
-- One-click builds with streaming output
-- Versioned output folders
-- Copy plugins directly to DAW folders
-- Export/import projects as ZIP
+| Feature | Description |
+|---------|-------------|
+| **Hot reload** | Plugin reloads automatically when code changes—no restart needed |
+| **Test signals** | Built-in sine, noise, sweep, impulse, and chirp generators |
+| **Sample playback** | Load WAV, MP3, or AAC files as input |
+| **Level metering** | Real-time output monitoring |
+
+### Build System
+
+| Feature | Description |
+|---------|-------------|
+| **One-click builds** | Compile VST3 + CLAP with a single button |
+| **Streaming output** | Watch the build in real-time, catch errors early |
+| **Versioned artifacts** | Each build saves to `output/{name}/v{version}/` |
+| **DAW publishing** | Copy plugins directly to your DAW's plugin folder |
+
+### Plugin Templates
+
+Choose your starting point:
+
+| Type | UI Framework | Description |
+|------|--------------|-------------|
+| **Effect** | WebView / egui / Headless | Process incoming audio |
+| **Instrument** | WebView / egui / Headless | Generate audio from MIDI |
+
+---
 
 ## Prerequisites
 
-- **macOS 12+** (Monterey or later) - the app currently runs on macOS only
-- **Xcode Command Line Tools** - `xcode-select --install`
-- **Rust** - via [rustup](https://rustup.rs/)
-- **Claude Code CLI** - with an active Anthropic subscription
+- **macOS 12+** (Monterey or later)
+- **Xcode Command Line Tools** — `xcode-select --install`
+- **Rust** — via [rustup](https://rustup.rs/)
+- **Claude Code CLI** — requires an active Anthropic subscription
 
-freqlab will check these requirements on first launch.
+freqlab checks these on first launch.
+
+---
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/jamesontucker/freqlab.git
 cd freqlab
-
-# Install dependencies
 npm install
-
-# Run in development mode
 npm run tauri dev
+```
 
-# Or build a release
+Or build a release:
+
+```bash
 npm run tauri build
 ```
 
-## Quick Start
-
-1. **Launch freqlab** and complete the prerequisites check
-2. **Create a new project** - give it a name and choose a template
-3. **Start chatting** - describe what you want your plugin to do
-4. **Build** - click the build button to compile your plugin
-5. **Preview** - use the audio preview panel to hear your plugin in action
-6. **Iterate** - keep chatting to refine your plugin
-7. **Publish** - copy the built plugin to your DAW's plugin folder
+---
 
 ## Known Issues
 
-### macOS Only (Currently)
+### Unsigned Plugins
 
-freqlab currently runs on macOS only. Cross-platform support may come in the future.
+Plugins are unsigned, so macOS Gatekeeper may block them. Remove the quarantine flag:
 
-### Unsigned Plugins & Gatekeeper
-
-Plugins built with freqlab are unsigned. Your DAW may block them or show security warnings.
-
-**To remove the quarantine flag:**
 ```bash
 xattr -cr /path/to/YourPlugin.clap
 xattr -cr /path/to/YourPlugin.vst3
 ```
 
-This is a limitation of unsigned code distribution, not specific to nih-plug.
+### Code Review
 
-### AI-Generated Code
-
-Claude generates the plugin code. While it follows safety practices (like output limiting), always review generated code before distributing plugins. freqlab is provided as-is without warranty.
-
-## License
-
-freqlab is licensed under **GPL-3.0**. See [LICENSE](LICENSE) for details.
-
-### Plugin Licensing
-
-Plugins created with freqlab use [nih-plug](https://github.com/robbert-vdh/nih-plug):
-
-- The **nih-plug framework** is licensed under the permissive **ISC license**
-- The **VST3 bindings** are licensed under **GPL-3.0**
-
-This means:
-- **VST3 plugins** must comply with GPL-3.0 (source must be available on request)
-- **CLAP-only plugins** are not subject to this requirement
-- You **can sell** your plugins, but must provide source code if requested
-
-## Contributing
-
-Contributions are welcome, but keep in mind this is a side project with irregular maintenance. Feel free to open issues or PRs on [GitHub](https://github.com/jamesontucker/freqlab).
+Claude generates the plugin code. While templates include safety limiters, always review generated code before distributing.
 
 ---
 
-Built with [Tauri](https://tauri.app/), [nih-plug](https://github.com/robbert-vdh/nih-plug), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+## License
+
+freqlab is **GPL-3.0**. See [LICENSE](LICENSE).
+
+### Plugin Licensing
+
+Plugins use [nih-plug](https://github.com/robbert-vdh/nih-plug):
+
+- **nih-plug framework** — ISC license (permissive)
+- **VST3 bindings** — GPL-3.0
+
+**What this means:**
+- VST3 plugins must be GPL-3.0 (provide source on request)
+- CLAP-only plugins have no such requirement
+- You can sell plugins, but must share source if asked
+
+---
+
+## Contributing
+
+Contributions welcome, but this is a side project with irregular maintenance.
+
+---
+
+<p align="center">
+  Built with <a href="https://tauri.app/">Tauri</a> · <a href="https://github.com/robbert-vdh/nih-plug">nih-plug</a> · <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>
+</p>
