@@ -34,13 +34,13 @@ const UI_FRAMEWORK_OPTIONS: UIFrameworkOption[] = [
   {
     id: 'webview',
     name: 'Advanced UI',
-    tagline: 'Maximum visual flexibility (macOS only)',
-    description: 'Best for plugins where appearance and user experience are top priorities. Currently macOS only—Windows/Linux support coming soon.',
+    tagline: 'Maximum visual flexibility',
+    description: 'Best for plugins where appearance and user experience are top priorities.',
     performance: 2.5,
     uiQuality: 5,
     customization: 5,
     previewSupport: 'full',
-    previewNote: 'macOS only • Test and preview your plugin in real-time within freqlab',
+    previewNote: 'Test and preview your plugin in real-time within freqlab',
   },
   {
     id: 'egui',
