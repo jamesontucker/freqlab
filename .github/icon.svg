@@ -1,0 +1,32 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="200" fill="#1a1a2e"/>
+
+  <!-- Gradient definition -->
+  <defs>
+    <linearGradient id="waveGrad" x1="200" y1="200" x2="824" y2="824" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2DA86E"/>
+      <stop offset="1" stop-color="#36C07E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Waveform bars - upper half -->
+  <path d="M256 512V400" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M336 512V320" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M416 512V240" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M496 512V180" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M576 512V240" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M656 512V320" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M736 512V400" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M816 512V360" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+
+  <!-- Waveform bars - lower half -->
+  <path d="M256 512V624" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M336 512V704" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M416 512V784" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M496 512V844" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M576 512V784" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M656 512V704" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M736 512V624" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+  <path d="M816 512V664" stroke="url(#waveGrad)" stroke-width="48" stroke-linecap="round"/>
+</svg>

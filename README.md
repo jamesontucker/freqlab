@@ -1,6 +1,11 @@
-# freqlab
+<p align="center">
+  <img src=".github/icon.svg" alt="freqlab icon" height="80">
+</p>
+<h1 align="center">freqlab</h1>
 
-**A macOS app for creating VST3/CLAP audio plugins through conversation.**
+<p align="center">
+  <strong>A macOS app for creating VST3/CLAP audio plugins through conversation.</strong>
+</p>
 
 > This is a personal side project and is not consistently maintained. Use as-is.
 
