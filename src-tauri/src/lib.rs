@@ -33,6 +33,7 @@ pub fn run() {
             commands::projects::get_project,
             commands::projects::delete_project,
             commands::projects::open_project_folder,
+            commands::projects::open_in_editor,
             commands::projects::get_workspace_path_string,
             commands::claude::send_to_claude,
             commands::claude::test_claude_cli,

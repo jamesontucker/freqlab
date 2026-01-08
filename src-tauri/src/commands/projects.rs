@@ -469,6 +469,18 @@ pub async fn open_project_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn open_in_editor(path: String, editor: Option<String>) -> Result<(), String> {
+    let editor_cmd = editor.unwrap_or_else(|| "code".to_string());
+
+    std::process::Command::new(&editor_cmd)
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open in {}: {}. Make sure it's installed and in your PATH.", editor_cmd, e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_workspace_path_string() -> String {
     get_workspace_path().to_string_lossy().to_string()
 }

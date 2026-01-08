@@ -100,6 +100,19 @@ export function MainLayout() {
     }
   };
 
+  const handleOpenInEditor = async () => {
+    if (activeProject?.path) {
+      try {
+        await invoke('open_in_editor', { path: activeProject.path });
+      } catch (err) {
+        addToast({
+          type: 'error',
+          message: `${err}`,
+        });
+      }
+    }
+  };
+
   const handleDelete = async () => {
     if (!activeProject) return;
     try {
@@ -209,7 +222,7 @@ export function MainLayout() {
       <Header />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar onNewPlugin={() => setIsNewProjectModalOpen(true)} />
-        <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isPreviewOpen ? 'mr-[420px]' : ''}`}>
+        <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isPreviewOpen ? 'mr-[480px]' : ''}`}>
           <div className="flex-1 overflow-auto p-6">
             {activeProject ? (
               <div className="h-full flex flex-col">
@@ -295,6 +308,15 @@ export function MainLayout() {
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={handleOpenInEditor}
+                      className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent hover:border-border transition-colors"
+                      title="Open in VS Code"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
                       </svg>
                     </button>
                     <button
