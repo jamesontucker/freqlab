@@ -259,13 +259,17 @@ export function PreviewPanel() {
   const [webviewNeedsFreshBuild, setWebviewNeedsFreshBuild] = useState(false);
   // Spectrum analyzer toggle
   const [showSpectrum, setShowSpectrum] = useState(false);
+  // Waveform display toggle
+  const [showWaveform, setShowWaveform] = useState(false);
   // Debounced dB values for smoother display (text only)
   const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
   const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
-  // Animated spectrum and levels for buttery smooth 60fps rendering
+  // Animated spectrum, waveform, and levels for buttery smooth 60fps rendering
   const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
+  const animatedWaveformRef = useRef<number[]>(new Array(256).fill(0));
   const animatedLevelsRef = useRef({ left: 0, right: 0 });
   const [animatedSpectrum, setAnimatedSpectrum] = useState<number[]>(new Array(32).fill(0));
+  const [animatedWaveform, setAnimatedWaveform] = useState<number[]>(new Array(256).fill(0));
   const [animatedLevels, setAnimatedLevels] = useState({ left: 0, right: 0 });
   const rafIdRef = useRef<number | null>(null);
   // Clipping indicator with hold (stays lit for 1 second after clip)
@@ -345,6 +349,22 @@ export function PreviewPanel() {
         }
       }
 
+      // Interpolate waveform (use faster smoothing for time-domain to capture transients)
+      const targetWaveform = meteringRef.current.waveform;
+      const currentWaveform = animatedWaveformRef.current;
+      const numSamples = Math.min(currentWaveform.length, targetWaveform?.length || 0);
+      const waveformSmoothing = 0.5; // Faster response for time-domain
+      let waveformChanged = false;
+      for (let i = 0; i < numSamples; i++) {
+        const target = targetWaveform[i] || 0;
+        const current = currentWaveform[i];
+        const diff = target - current;
+        if (Math.abs(diff) > 0.0001) {
+          currentWaveform[i] = current + diff * waveformSmoothing;
+          waveformChanged = true;
+        }
+      }
+
       // Interpolate levels
       const currentLevels = animatedLevelsRef.current;
       const leftDiff = (targetLeft || 0) - currentLevels.left;
@@ -359,6 +379,9 @@ export function PreviewPanel() {
       // Only trigger re-render if values changed
       if (spectrumChanged) {
         setAnimatedSpectrum([...currentSpectrum]);
+      }
+      if (waveformChanged) {
+        setAnimatedWaveform([...currentWaveform]);
       }
       if (levelsChanged) {
         setAnimatedLevels({ ...currentLevels });
@@ -441,7 +464,7 @@ export function PreviewPanel() {
         await previewApi.startLevelMeter();
         if (isCancelled) return;
 
-        // Listen for combined metering data (levels + dB + spectrum + clipping)
+        // Listen for combined metering data (levels + dB + spectrum + waveform + clipping)
         const unlisten = await previewApi.onMeteringUpdate((data) => {
           setMetering({
             left: data.left,
@@ -449,6 +472,7 @@ export function PreviewPanel() {
             leftDb: data.left_db,
             rightDb: data.right_db,
             spectrum: data.spectrum,
+            waveform: data.waveform,
             clippingLeft: data.clipping_left,
             clippingRight: data.clipping_right,
           });
@@ -1550,6 +1574,105 @@ export function PreviewPanel() {
                         <span className="text-[9px] text-text-muted">1k</span>
                         <span className="text-[9px] text-text-muted">10k</span>
                         <span className="text-[9px] text-text-muted">20k</span>
+                      </div>
+                    </div>
+                    )}
+                  </div>
+
+                  {/* Waveform Display (Time-Domain) */}
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-text-muted font-medium">Waveform</span>
+                      <button
+                        onClick={() => setShowWaveform(!showWaveform)}
+                        className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                          showWaveform
+                            ? 'bg-accent/20 text-accent'
+                            : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
+                        }`}
+                      >
+                        {showWaveform ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                    {showWaveform && (
+                    <div className="bg-bg-tertiary rounded-lg border border-border overflow-hidden">
+                      {/* Time-domain waveform display */}
+                      <svg
+                        viewBox="0 0 400 100"
+                        className="w-full h-28"
+                        preserveAspectRatio="none"
+                      >
+                        {/* Grid lines */}
+                        <defs>
+                          <linearGradient id="waveformGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#2DA86E" stopOpacity="0.3" />
+                            <stop offset="50%" stopColor="#2DA86E" stopOpacity="0.05" />
+                            <stop offset="100%" stopColor="#2DA86E" stopOpacity="0.3" />
+                          </linearGradient>
+                          <linearGradient id="waveformStroke" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#2DA86E" stopOpacity="0.7" />
+                            <stop offset="50%" stopColor="#36C07E" stopOpacity="1" />
+                            <stop offset="100%" stopColor="#2DA86E" stopOpacity="0.7" />
+                          </linearGradient>
+                        </defs>
+                        {/* Center line (0 amplitude) */}
+                        <line x1="0" y1="50" x2="400" y2="50" stroke="currentColor" strokeOpacity="0.2" strokeWidth="0.5" />
+                        {/* Amplitude grid lines (+/-0.5) */}
+                        <line x1="0" y1="25" x2="400" y2="25" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        <line x1="0" y1="75" x2="400" y2="75" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+                        {/* Clipping threshold lines */}
+                        <line x1="0" y1="5" x2="400" y2="5" stroke="#ef4444" strokeOpacity="0.2" strokeWidth="0.5" />
+                        <line x1="0" y1="95" x2="400" y2="95" stroke="#ef4444" strokeOpacity="0.2" strokeWidth="0.5" />
+
+                        {/* Waveform path */}
+                        {(() => {
+                          if (!animatedWaveform || animatedWaveform.length < 2) {
+                            return null;
+                          }
+
+                          const numSamples = animatedWaveform.length;
+                          const width = 400;
+                          const height = 100;
+
+                          // Convert samples to Y positions (samples are -1 to 1, center is 0.5)
+                          const points = animatedWaveform.map((sample, i) => {
+                            const safeSample = (typeof sample === 'number' && !isNaN(sample)) ? sample : 0;
+                            // Clamp to -1, 1 and convert to y position (center = 50)
+                            const clampedSample = Math.max(-1, Math.min(1, safeSample));
+                            const x = (i / (numSamples - 1)) * width;
+                            const y = 50 - (clampedSample * 45); // 45 gives a bit of padding from edges
+                            return { x: isNaN(x) ? 0 : x, y: isNaN(y) ? 50 : y };
+                          });
+
+                          // Create polyline path (faster than bezier for waveform)
+                          const pathD = `M ${points.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+
+                          // Create filled area (from center line)
+                          const areaD = `M 0 50 L ${points.map(p => `${p.x} ${p.y}`).join(' L ')} L ${width} 50 Z`;
+
+                          return (
+                            <>
+                              {/* Filled area */}
+                              <path
+                                d={areaD}
+                                fill="url(#waveformGradient)"
+                              />
+                              {/* Waveform line */}
+                              <path
+                                d={pathD}
+                                fill="none"
+                                stroke="url(#waveformStroke)"
+                                strokeWidth="1.5"
+                                strokeLinejoin="round"
+                              />
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      {/* Amplitude labels */}
+                      <div className="flex justify-between px-2 py-1 border-t border-border/50 bg-bg-primary/30">
+                        <span className="text-[9px] text-text-muted">Time →</span>
+                        <span className="text-[9px] text-text-muted">-1.0 to +1.0</span>
                       </div>
                     </div>
                     )}

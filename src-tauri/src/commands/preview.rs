@@ -35,6 +35,8 @@ pub struct MeteringData {
     pub right_db: f32,
     /// Spectrum analyzer band magnitudes (0.0 - 1.0)
     pub spectrum: Vec<f32>,
+    /// Waveform display buffer (time-domain samples, -1.0 to 1.0)
+    pub waveform: Vec<f32>,
     /// Left channel clipping indicator
     pub clipping_left: bool,
     /// Right channel clipping indicator
@@ -401,15 +403,17 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
             if let Some(handle) = get_engine_handle() {
                 let (left, right) = handle.get_output_levels();
                 let spectrum = handle.get_spectrum_data();
+                let waveform = handle.get_waveform_data();
                 let (clipping_left, clipping_right) = handle.get_clipping();
 
-                // Send combined metering data with dB values and clipping indicators
+                // Send combined metering data with dB values, waveform, and clipping indicators
                 let metering = MeteringData {
                     left,
                     right,
                     left_db: level_to_db(left),
                     right_db: level_to_db(right),
                     spectrum: spectrum.to_vec(),
+                    waveform,
                     clipping_left,
                     clipping_right,
                 };

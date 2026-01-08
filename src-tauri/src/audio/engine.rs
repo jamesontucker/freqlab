@@ -52,6 +52,9 @@ const CROSSFADE_IN: u8 = 2;
 /// Crossfade duration in samples (at 44.1kHz: 4410 = 100ms)
 const CROSSFADE_SAMPLES: u32 = 4410;
 
+/// Number of samples in waveform display buffer
+const WAVEFORM_SAMPLES: usize = 256;
+
 /// Shared state between engine and audio thread
 struct SharedState {
     input_source: RwLock<InputSource>,
@@ -67,6 +70,9 @@ struct SharedState {
     clipping_right: AtomicBool,
     // Spectrum analyzer data - stored as AtomicU32 array for lock-free access
     spectrum_bands: [AtomicU32; NUM_BANDS],
+    // Waveform display buffer (downsampled stereo samples as mono)
+    waveform_buffer: [AtomicU32; WAVEFORM_SAMPLES],
+    waveform_write_pos: AtomicU32,
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
@@ -216,6 +222,19 @@ impl AudioEngineHandle {
         let left = self.shared.clipping_left.swap(false, Ordering::Relaxed);
         let right = self.shared.clipping_right.swap(false, Ordering::Relaxed);
         (left, right)
+    }
+
+    /// Get waveform display buffer (circular buffer of recent samples)
+    pub fn get_waveform_data(&self) -> Vec<f32> {
+        let write_pos = self.shared.waveform_write_pos.load(Ordering::Relaxed) as usize;
+        let mut waveform = Vec::with_capacity(WAVEFORM_SAMPLES);
+
+        // Read from write_pos to end, then from start to write_pos (circular buffer order)
+        for i in 0..WAVEFORM_SAMPLES {
+            let idx = (write_pos + i) % WAVEFORM_SAMPLES;
+            waveform.push(u32_to_f32(self.shared.waveform_buffer[idx].load(Ordering::Relaxed)));
+        }
+        waveform
     }
 
     pub fn get_state(&self) -> EngineState {
@@ -397,8 +416,9 @@ impl AudioEngine {
         );
 
         // Create shared state
-        // Initialize spectrum bands array with zeros
+        // Initialize spectrum bands and waveform arrays with zeros
         const INIT_BAND: AtomicU32 = AtomicU32::new(0);
+        const INIT_WAVEFORM: AtomicU32 = AtomicU32::new(0);
         let shared = Arc::new(SharedState {
             input_source: RwLock::new(InputSource::None),
             signal_generator: RwLock::new(SignalGenerator::new(sample_rate)),
@@ -410,6 +430,8 @@ impl AudioEngine {
             clipping_left: AtomicBool::new(false),
             clipping_right: AtomicBool::new(false),
             spectrum_bands: [INIT_BAND; NUM_BANDS],
+            waveform_buffer: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
+            waveform_write_pos: AtomicU32::new(0),
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
             crossfade_state: AtomicU8::new(CROSSFADE_NONE),
@@ -633,6 +655,26 @@ impl AudioEngine {
                         let new_level = current * (1.0 - level_smoothing) + peak_right * level_smoothing;
                         shared_clone.output_level_right.store(f32_to_u32(new_level), Ordering::Relaxed);
                     }
+
+                    // Update waveform display buffer (downsample to fit display)
+                    // Take every Nth frame to capture a longer time window
+                    let frames = data.len() / channels;
+                    let downsample_factor = (frames / 8).max(1); // Capture ~8 samples per callback
+                    let mut write_pos = shared_clone.waveform_write_pos.load(Ordering::Relaxed) as usize;
+
+                    for (i, chunk) in data.chunks(channels).enumerate() {
+                        if i % downsample_factor == 0 {
+                            // Store mono mix of L/R
+                            let mono = if channels > 1 {
+                                (chunk[0] + chunk[1]) * 0.5
+                            } else {
+                                chunk[0]
+                            };
+                            shared_clone.waveform_buffer[write_pos].store(f32_to_u32(mono), Ordering::Relaxed);
+                            write_pos = (write_pos + 1) % WAVEFORM_SAMPLES;
+                        }
+                    }
+                    shared_clone.waveform_write_pos.store(write_pos as u32, Ordering::Relaxed);
 
                     // Update spectrum analyzer (mono mix of L/R for analysis)
                     // Update every 2 callbacks for smoother visuals (~6ms at 44.1kHz/512)

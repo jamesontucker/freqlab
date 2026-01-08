@@ -176,7 +176,7 @@ export function onLevelUpdate(
 }
 
 /**
- * Metering data with levels, dB, and spectrum
+ * Metering data with levels, dB, spectrum, and waveform
  */
 export interface MeteringData {
   /** Left channel level (0.0 - 1.0) */
@@ -189,6 +189,8 @@ export interface MeteringData {
   right_db: number;
   /** Spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands */
   spectrum: number[];
+  /** Waveform display buffer (time-domain samples, -1.0 to 1.0), 256 samples */
+  waveform: number[];
   /** Left channel clipping indicator */
   clipping_left: boolean;
   /** Right channel clipping indicator */

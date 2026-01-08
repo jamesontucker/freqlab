@@ -42,6 +42,7 @@ export interface OutputMetering {
   leftDb: number;
   rightDb: number;
   spectrum: number[];
+  waveform: number[];
   clippingLeft: boolean;
   clippingRight: boolean;
 }
@@ -115,6 +116,7 @@ const defaultMetering: OutputMetering = {
   leftDb: -60,
   rightDb: -60,
   spectrum: new Array(32).fill(0),
+  waveform: new Array(256).fill(0),
   clippingLeft: false,
   clippingRight: false,
 };
