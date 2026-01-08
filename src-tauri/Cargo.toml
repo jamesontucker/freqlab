@@ -1,6 +1,6 @@
 [package]
 name = "freqlab"
-version = "0.1.0"
+version = "0.1.1"
 description = "VST Plugin Development Workshop"
 authors = ["Jameson"]
 license = "MIT"
@@ -30,6 +30,7 @@ tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"

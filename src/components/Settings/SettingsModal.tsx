@@ -1,22 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '../Common/Modal';
 import { ThemePicker } from './ThemePicker';
 import { BrandingSettings } from './BrandingSettings';
 import { DawPathsSettings } from './DawPathsSettings';
 import { AudioSettings } from './AudioSettings';
 import { DevSettings } from './DevSettings';
+import { UpdateSettings } from './UpdateSettings';
+import { useUpdateStore } from '../../stores/updateStore';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: string;
 }
 
-type TabId = 'general' | 'audio' | 'branding' | 'daw-paths' | 'dev';
+type TabId = 'general' | 'audio' | 'branding' | 'daw-paths' | 'updates' | 'dev';
 
 interface Tab {
   id: TabId;
   label: string;
   icon: JSX.Element;
+  badge?: boolean;
 }
 
 const tabs: Tab[] = [
@@ -58,6 +62,15 @@ const tabs: Tab[] = [
     ),
   },
   {
+    id: 'updates',
+    label: 'Updates',
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+    ),
+  },
+  {
     id: 'dev',
     label: 'Developer',
     icon: (
@@ -68,8 +81,28 @@ const tabs: Tab[] = [
   },
 ];
 
-export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>('general');
+  const updateStatus = useUpdateStore((state) => state.status);
+  const hasUpdate = updateStatus === 'available';
+
+  // Helper to validate tab ID
+  const isValidTabId = (id: string): id is TabId => {
+    return ['general', 'audio', 'branding', 'daw-paths', 'updates', 'dev'].includes(id);
+  };
+
+  // Set initial tab when modal opens
+  useEffect(() => {
+    if (isOpen && initialTab && isValidTabId(initialTab)) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
+
+  // Build tabs with dynamic badge
+  const tabsWithBadge = tabs.map((tab) => ({
+    ...tab,
+    badge: tab.id === 'updates' ? hasUpdate : undefined,
+  }));
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings" size="xl">
@@ -77,11 +110,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         {/* Sidebar tabs */}
         <div className="w-48 flex-shrink-0 border-r border-border pr-4">
           <nav className="space-y-1">
-            {tabs.map((tab) => (
+            {tabsWithBadge.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative ${
                   activeTab === tab.id
                     ? 'bg-accent/10 text-accent'
                     : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
@@ -89,6 +122,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               >
                 {tab.icon}
                 {tab.label}
+                {tab.badge && (
+                  <span className="absolute right-2 w-2 h-2 bg-accent rounded-full" />
+                )}
               </button>
             ))}
           </nav>
@@ -100,6 +136,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           {activeTab === 'audio' && <AudioSettings />}
           {activeTab === 'branding' && <BrandingSettings />}
           {activeTab === 'daw-paths' && <DawPathsSettings />}
+          {activeTab === 'updates' && <UpdateSettings />}
           {activeTab === 'dev' && <DevSettings />}
         </div>
       </div>

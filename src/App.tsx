@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { check } from '@tauri-apps/plugin-updater';
 import { useSettingsStore } from './stores/settingsStore';
 import { useProjectStore } from './stores/projectStore';
 import { useToastStore } from './stores/toastStore';
+import { useUpdateStore } from './stores/updateStore';
 import { WelcomeWizard } from './components/Setup/WelcomeWizard';
 import { MainLayout } from './components/Layout/MainLayout';
 import { applyTheme } from './components/Settings/ThemePicker';
@@ -14,7 +16,9 @@ function App() {
   const customColors = useSettingsStore((state) => state.customColors);
   const loadProjects = useProjectStore((state) => state.loadProjects);
   const { addToast } = useToastStore();
+  const { setStatus, setUpdateInfo, setLastChecked } = useUpdateStore();
   const [hasCheckedPrereqs, setHasCheckedPrereqs] = useState(false);
+  const [hasCheckedUpdates, setHasCheckedUpdates] = useState(false);
 
   // Apply theme on startup and when it changes
   useEffect(() => {
@@ -59,6 +63,53 @@ function App() {
 
     checkPrereqs();
   }, [setupComplete, hasCheckedPrereqs, addToast]);
+
+  // Silent update check on startup
+  useEffect(() => {
+    if (!setupComplete || hasCheckedUpdates) return;
+
+    async function checkForUpdates() {
+      try {
+        const update = await check();
+        setLastChecked(new Date().toISOString());
+
+        if (update) {
+          setUpdateInfo({
+            version: update.version,
+            currentVersion: update.currentVersion,
+            date: update.date,
+            body: update.body,
+          });
+          setStatus('available');
+
+          // Show toast notification with action to open settings
+          addToast({
+            type: 'info',
+            message: `Update v${update.version} available`,
+            action: {
+              label: 'View',
+              onClick: () => {
+                window.dispatchEvent(
+                  new CustomEvent('open-settings', { detail: 'updates' })
+                );
+              },
+            },
+          });
+        } else {
+          setStatus('not-available');
+        }
+      } catch (err) {
+        // Silently fail on startup - don't show error toast
+        console.warn('Silent update check failed:', err);
+        setStatus('idle');
+      }
+      setHasCheckedUpdates(true);
+    }
+
+    // Delay update check slightly to not compete with other startup tasks
+    const timer = setTimeout(checkForUpdates, 2000);
+    return () => clearTimeout(timer);
+  }, [setupComplete, hasCheckedUpdates, addToast, setStatus, setUpdateInfo, setLastChecked]);
 
   if (!setupComplete) {
     return <WelcomeWizard />;

@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: macOS ARM64
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            name: macOS Intel
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.name }})
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'freqlab v__VERSION__'
+          releaseBody: |
+            See the assets below to download freqlab for your platform.
+
+            **macOS ARM64 (Apple Silicon):** Download the `_aarch64.dmg` file
+            **macOS Intel:** Download the `_x64.dmg` file
+
+            ## Installation
+            1. Download the `.dmg` file for your Mac
+            2. Open the DMG and drag freqlab to Applications
+            3. First launch: Right-click → Open (to bypass Gatekeeper)
+
+            ## What's Changed
+            <!-- Add release notes here before publishing -->
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }}

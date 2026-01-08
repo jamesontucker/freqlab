@@ -30,7 +30,7 @@ src/                          # React frontend
     Preview/                  # PreviewPanel (audio engine UI)
     Projects/                 # ProjectList, ProjectCard, NewProjectModal
     Publish/                  # PublishModal (copy to DAW folders)
-    Settings/                 # SettingsModal, AudioSettings, BrandingSettings, DawPathsSettings, DevSettings, ThemePicker
+    Settings/                 # SettingsModal, AudioSettings, BrandingSettings, DawPathsSettings, DevSettings, UpdateSettings, ThemePicker
     Setup/                    # WelcomeWizard, PrerequisitesCheck
     Share/                    # ShareImportModal (zip export/import)
   stores/
@@ -42,6 +42,7 @@ src/                          # React frontend
     layoutStore.ts            # Sidebar collapsed state
     previewStore.ts           # Audio engine state, plugin params, input sources, levels
     toastStore.ts             # Toast notifications
+    updateStore.ts            # Auto-update state and progress
   types/index.ts              # TypeScript interfaces
   api/preview.ts              # Audio preview command wrappers
 
@@ -109,6 +110,7 @@ src-tauri/                    # Rust backend
 13. **Publish** - Copy built plugins to DAW plugin folders
 14. **Share** - Export/import projects as zip archives
 15. **Attachments** - Attach files to chat messages
+16. **Auto-Updates** - Check for updates on launch, download and install from GitHub Releases
 
 ### Data Flow
 
