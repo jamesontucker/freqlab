@@ -40,6 +40,34 @@ fn expand_tilde(path: &str) -> PathBuf {
     }
 }
 
+/// Remove macOS quarantine attribute from a file/directory (Gatekeeper bypass for local plugins)
+/// This runs `xattr -cr <path>` to clear all extended attributes recursively
+#[cfg(target_os = "macos")]
+fn clear_quarantine(path: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("xattr")
+        .args(["-cr", &path.to_string_lossy()])
+        .output()
+        .map_err(|e| format!("Failed to run xattr: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Don't fail on xattr errors - it's not critical if it fails
+        log_message("WARN", "publish", &format!("xattr -cr failed (non-fatal): {}", stderr));
+    } else {
+        log_message("DEBUG", "publish", &format!("Cleared quarantine attribute from {:?}", path));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clear_quarantine(_path: &std::path::Path) -> Result<(), String> {
+    // No-op on non-macOS platforms
+    Ok(())
+}
+
 /// Recursively copy a directory
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -148,6 +176,8 @@ pub async fn publish_to_daw(
                 if !copy_verified {
                     log_message("WARN", "publish", "dest.exists() returned false after copy!");
                 }
+                // Clear macOS quarantine attribute so Gatekeeper doesn't block the plugin
+                let _ = clear_quarantine(&dest);
                 copied.push(CopiedFile {
                     format: "VST3".to_string(),
                     daw: target.daw.clone(),
@@ -193,6 +223,8 @@ pub async fn publish_to_daw(
                 if !copy_verified {
                     log_message("WARN", "publish", "dest.exists() returned false after copy!");
                 }
+                // Clear macOS quarantine attribute so Gatekeeper doesn't block the plugin
+                let _ = clear_quarantine(&dest);
                 copied.push(CopiedFile {
                     format: "CLAP".to_string(),
                     daw: target.daw.clone(),

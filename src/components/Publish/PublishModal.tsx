@@ -357,33 +357,23 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
           </div>
         )}
 
-        {/* Gatekeeper Warning */}
-        <div className="p-3 rounded-lg bg-warning-subtle border border-warning/20">
+        {/* Gatekeeper Info */}
+        <div className="p-3 rounded-lg bg-bg-tertiary border border-border">
           <div className="flex items-start gap-2">
-            <svg className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <svg className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
             <div className="text-xs">
-              <p className="text-warning font-medium">macOS Gatekeeper</p>
+              <p className="text-text-primary font-medium">macOS Gatekeeper</p>
               <p className="text-text-secondary mt-0.5">
-                Plugins may be blocked by macOS security. Run in Terminal to allow:
+                Quarantine attributes are automatically cleared when publishing, so plugins should load without Gatekeeper issues.
               </p>
-              <div className="mt-1.5 space-y-1">
-                <code className="block px-2 py-1 bg-bg-primary rounded text-[11px] text-text-primary font-mono">
-                  xattr -cr ~/Library/Audio/Plug-Ins/VST3/plugin.vst3
-                </code>
-                <code className="block px-2 py-1 bg-bg-primary rounded text-[11px] text-text-primary font-mono">
-                  xattr -cr ~/Library/Audio/Plug-Ins/CLAP/plugin.clap
-                </code>
-              </div>
-              <a
-                href="https://disable-gatekeeper.github.io/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block mt-1.5 text-accent hover:text-accent-hover"
-              >
-                More details →
-              </a>
+              <p className="text-text-muted mt-1">
+                If you still have issues, run in Terminal:
+              </p>
+              <code className="block mt-1 px-2 py-1 bg-bg-primary rounded text-[11px] text-text-primary font-mono">
+                xattr -cr ~/Library/Audio/Plug-Ins/VST3/ ~/Library/Audio/Plug-Ins/CLAP/
+              </code>
             </div>
           </div>
         </div>
