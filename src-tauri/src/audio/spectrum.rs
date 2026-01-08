@@ -14,6 +14,8 @@ pub struct SpectrumAnalyzer {
     fft: Arc<dyn RealToComplex<f32>>,
     input_buffer: Vec<f32>,
     spectrum_buffer: Vec<realfft::num_complex::Complex<f32>>,
+    /// Pre-allocated scratch buffer for windowed samples (avoids allocation in hot path)
+    windowed_buffer: Vec<f32>,
     window: Vec<f32>,
     sample_rate: u32,
     write_pos: usize,
@@ -32,6 +34,8 @@ impl SpectrumAnalyzer {
 
         let input_buffer = vec![0.0f32; FFT_SIZE];
         let spectrum_buffer = fft.make_output_vec();
+        // Pre-allocate scratch buffer for windowed samples
+        let windowed_buffer = vec![0.0f32; FFT_SIZE];
 
         // Create Hann window for smooth frequency response
         let window: Vec<f32> = (0..FFT_SIZE)
@@ -58,6 +62,7 @@ impl SpectrumAnalyzer {
             fft,
             input_buffer,
             spectrum_buffer,
+            windowed_buffer,
             window,
             sample_rate,
             write_pos: 0,
@@ -82,16 +87,13 @@ impl SpectrumAnalyzer {
 
     /// Compute FFT and update band magnitudes
     pub fn analyze(&mut self) {
-        // Apply window and copy to scratch buffer
-        let mut windowed: Vec<f32> = self
-            .input_buffer
-            .iter()
-            .zip(&self.window)
-            .map(|(&s, &w)| s * w)
-            .collect();
+        // Apply window to pre-allocated scratch buffer (no allocation in hot path)
+        for (i, (&s, &w)) in self.input_buffer.iter().zip(&self.window).enumerate() {
+            self.windowed_buffer[i] = s * w;
+        }
 
         // Perform FFT
-        if self.fft.process(&mut windowed, &mut self.spectrum_buffer).is_err() {
+        if self.fft.process(&mut self.windowed_buffer, &mut self.spectrum_buffer).is_err() {
             return;
         }
 

@@ -462,27 +462,72 @@ export async function previewGetMasterVolume(): Promise<number> {
 // MIDI API (for instrument plugins)
 // =============================================================================
 
+// MIDI event batching - collect events and send in batches to reduce IPC overhead
+interface MidiEvent {
+  type: 'on' | 'off';
+  note: number;
+  velocity?: number;
+}
+
+let midiEventQueue: MidiEvent[] = [];
+let midiFlushScheduled = false;
+let midiFlushPromise: Promise<void> | null = null;
+
+// Flush queued MIDI events in a single batched invoke call
+async function flushMidiEvents(): Promise<void> {
+  if (midiEventQueue.length === 0) return;
+
+  const events = midiEventQueue;
+  midiEventQueue = [];
+  midiFlushScheduled = false;
+
+  try {
+    await invoke('midi_batch', { events });
+  } catch (err) {
+    console.error('Failed to send MIDI batch:', err);
+  }
+}
+
+// Schedule a flush on the next microtask (batches all events in current call stack)
+function scheduleMidiFlush(): void {
+  if (midiFlushScheduled) return;
+  midiFlushScheduled = true;
+
+  // Use queueMicrotask for fastest possible batching
+  queueMicrotask(() => {
+    midiFlushPromise = flushMidiEvents();
+  });
+}
+
 /**
  * Send a MIDI note on event to the loaded plugin
+ * Events are batched and sent together to reduce IPC overhead
  * @param note - MIDI note number (0-127, 60 = middle C)
  * @param velocity - Note velocity (0-127)
  */
-export async function midiNoteOn(note: number, velocity: number): Promise<void> {
-  await invoke('midi_note_on', { note, velocity });
+export function midiNoteOn(note: number, velocity: number): void {
+  midiEventQueue.push({ type: 'on', note, velocity });
+  scheduleMidiFlush();
 }
 
 /**
  * Send a MIDI note off event to the loaded plugin
+ * Events are batched and sent together to reduce IPC overhead
  * @param note - MIDI note number (0-127)
  */
-export async function midiNoteOff(note: number): Promise<void> {
-  await invoke('midi_note_off', { note });
+export function midiNoteOff(note: number): void {
+  midiEventQueue.push({ type: 'off', note });
+  scheduleMidiFlush();
 }
 
 /**
  * Send all notes off to the loaded plugin (panic button)
  */
 export async function midiAllNotesOff(): Promise<void> {
+  // Wait for any pending batch to complete first
+  if (midiFlushPromise) {
+    await midiFlushPromise;
+  }
   await invoke('midi_all_notes_off');
 }
 
@@ -492,4 +537,82 @@ export async function midiAllNotesOff(): Promise<void> {
  */
 export async function setPluginIsInstrument(isInstrument: boolean): Promise<void> {
   await invoke('set_plugin_is_instrument', { isInstrument });
+}
+
+// =============================================================================
+// Pattern Playback API
+// =============================================================================
+
+export type PatternCategory = 'Melodic' | 'Bass' | 'Drums';
+
+export interface PatternInfo {
+  id: string;
+  name: string;
+  category: PatternCategory;
+  length_beats: number;
+}
+
+/**
+ * List all available patterns
+ */
+export async function patternList(): Promise<PatternInfo[]> {
+  return await invoke('pattern_list');
+}
+
+/**
+ * List patterns by category
+ */
+export async function patternListByCategory(category: PatternCategory): Promise<PatternInfo[]> {
+  return await invoke('pattern_list_by_category', { category });
+}
+
+/**
+ * Start playing a pattern
+ * @param patternId - ID of the pattern to play
+ * @param bpm - Tempo in beats per minute (20-400)
+ * @param octaveShift - Octave shift (-2 to +2)
+ * @param looping - Whether to loop the pattern
+ */
+export async function patternPlay(
+  patternId: string,
+  bpm: number,
+  octaveShift: number,
+  looping: boolean
+): Promise<void> {
+  await invoke('pattern_play', { patternId, bpm, octaveShift, looping });
+}
+
+/**
+ * Stop pattern playback
+ */
+export async function patternStop(): Promise<void> {
+  await invoke('pattern_stop');
+}
+
+/**
+ * Set pattern BPM (takes effect immediately)
+ */
+export async function patternSetBpm(bpm: number): Promise<void> {
+  await invoke('pattern_set_bpm', { bpm });
+}
+
+/**
+ * Set pattern octave shift (takes effect on next loop)
+ */
+export async function patternSetOctaveShift(shift: number): Promise<void> {
+  await invoke('pattern_set_octave_shift', { shift });
+}
+
+/**
+ * Set pattern looping
+ */
+export async function patternSetLooping(looping: boolean): Promise<void> {
+  await invoke('pattern_set_looping', { looping });
+}
+
+/**
+ * Check if pattern is playing
+ */
+export async function patternIsPlaying(): Promise<boolean> {
+  return await invoke('pattern_is_playing');
 }

@@ -1,10 +1,12 @@
+import { memo } from 'react';
+
 interface SpectrumAnalyzerProps {
   animatedSpectrum: number[];
   showSpectrum: boolean;
   onToggle: () => void;
 }
 
-export function SpectrumAnalyzer({
+export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
   animatedSpectrum,
   showSpectrum,
   onToggle,
@@ -75,7 +77,7 @@ export function SpectrumAnalyzer({
       )}
     </div>
   );
-}
+});
 
 function renderSpectrumCurve(animatedSpectrum: number[]) {
   // Safety check for empty or too-small spectrum

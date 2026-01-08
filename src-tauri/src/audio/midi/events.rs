@@ -1,4 +1,8 @@
 //! MIDI event types and queue for passing events to plugins
+//!
+//! Uses a lock-free ring buffer for high-performance MIDI event passing.
+//! Producer side has a Mutex for multi-producer access (UI, patterns, devices).
+//! Consumer side uses try_lock to avoid blocking the audio thread.
 
 use ringbuf::{traits::*, HeapRb};
 use std::sync::Arc;
@@ -31,6 +35,7 @@ pub enum MidiEvent {
 
 impl MidiEvent {
     /// Create a note on event on channel 0
+    #[inline]
     pub fn note_on(note: u8, velocity: u8) -> Self {
         Self::NoteOn {
             note,
@@ -40,6 +45,7 @@ impl MidiEvent {
     }
 
     /// Create a note off event on channel 0
+    #[inline]
     pub fn note_off(note: u8) -> Self {
         Self::NoteOff {
             note,
@@ -52,12 +58,14 @@ impl MidiEvent {
 /// Thread-safe MIDI event queue using lock-free ring buffer
 ///
 /// Producer side pushes events (from commands, patterns, devices)
-/// Consumer side is read by the audio thread
+/// Consumer side is read by the audio thread using try_lock to avoid blocking
 pub struct MidiEventQueue {
-    /// Producer side - wrapped in mutex for multi-producer access
+    /// Producer side - Mutex for multi-producer access
     producer: Mutex<ringbuf::HeapProd<MidiEvent>>,
-    /// Consumer side - only accessed by audio thread
+    /// Consumer side - Mutex but always use try_lock from audio thread
     consumer: Mutex<ringbuf::HeapCons<MidiEvent>>,
+    /// Capacity for logging overflow warnings
+    capacity: usize,
 }
 
 impl MidiEventQueue {
@@ -68,52 +76,84 @@ impl MidiEventQueue {
         Self {
             producer: Mutex::new(producer),
             consumer: Mutex::new(consumer),
+            capacity,
         }
     }
 
     /// Push an event to the queue (called from command handlers)
+    /// Returns true if successful, false if queue is full
+    #[inline]
     pub fn push(&self, event: MidiEvent) -> bool {
-        self.producer.lock().try_push(event).is_ok()
+        // Use try_lock to avoid blocking if consumer is draining
+        // If we can't get the lock immediately, the event is dropped
+        // This is acceptable for real-time audio - better to drop than block
+        if let Some(mut producer) = self.producer.try_lock() {
+            if producer.try_push(event).is_ok() {
+                return true;
+            }
+            // Queue full - log at debug level to avoid spam
+            log::debug!("MIDI queue full (capacity: {}), event dropped", self.capacity);
+        }
+        false
     }
 
     /// Push a note on event
+    #[inline]
     pub fn note_on(&self, note: u8, velocity: u8) -> bool {
         self.push(MidiEvent::note_on(note, velocity))
     }
 
     /// Push a note off event
+    #[inline]
     pub fn note_off(&self, note: u8) -> bool {
         self.push(MidiEvent::note_off(note))
     }
 
     /// Send all notes off
+    #[inline]
     pub fn all_notes_off(&self) -> bool {
         self.push(MidiEvent::AllNotesOff)
     }
 
-    /// Pop an event from the queue (called from audio thread)
-    pub fn pop(&self) -> Option<MidiEvent> {
-        self.consumer.lock().try_pop()
-    }
+    /// Drain all events into a pre-allocated buffer (called from audio thread)
+    ///
+    /// This method clears the buffer and fills it with pending events.
+    /// Uses try_lock to never block the audio thread - if lock is held,
+    /// returns 0 events (they'll be picked up next callback).
+    ///
+    /// Returns the number of events drained.
+    #[inline]
+    pub fn drain_into(&self, buffer: &mut Vec<MidiEvent>) -> usize {
+        buffer.clear();
 
-    /// Drain all events into a vector (called from audio thread)
-    pub fn drain(&self) -> Vec<MidiEvent> {
-        let mut events = Vec::new();
-        let mut consumer = self.consumer.lock();
-        while let Some(event) = consumer.try_pop() {
-            events.push(event);
+        // CRITICAL: Use try_lock to avoid blocking audio thread
+        // If producer is currently pushing, we skip this cycle
+        // Events will be picked up on next audio callback (~1ms later)
+        if let Some(mut consumer) = self.consumer.try_lock() {
+            while let Some(event) = consumer.try_pop() {
+                buffer.push(event);
+            }
         }
-        events
+
+        buffer.len()
     }
 
-    /// Check if the queue is empty
+    /// Pop a single event (for pattern player which processes one at a time)
+    #[inline]
+    pub fn pop(&self) -> Option<MidiEvent> {
+        self.consumer.try_lock()?.try_pop()
+    }
+
+    /// Check if the queue is empty (non-blocking)
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        self.consumer.lock().is_empty()
+        self.consumer.try_lock().map(|c| c.is_empty()).unwrap_or(true)
     }
 
-    /// Get number of events in queue
+    /// Get number of events in queue (non-blocking)
+    #[inline]
     pub fn len(&self) -> usize {
-        self.consumer.lock().occupied_len()
+        self.consumer.try_lock().map(|c| c.occupied_len()).unwrap_or(0)
     }
 }
 
@@ -121,9 +161,14 @@ impl MidiEventQueue {
 unsafe impl Send for MidiEventQueue {}
 unsafe impl Sync for MidiEventQueue {}
 
-/// Create a shared MIDI event queue
+/// Create a shared MIDI event queue with adequate capacity
 pub fn create_midi_queue() -> Arc<MidiEventQueue> {
-    Arc::new(MidiEventQueue::new(256)) // 256 events should be plenty
+    // 1024 events provides headroom for:
+    // - Rapid piano input (~100 events/second)
+    // - Pattern playback (~50 events/second at fast tempos)
+    // - Multiple simultaneous sources
+    // At 48kHz with 512 sample buffers (~93 callbacks/sec), this is ~11 events per callback max
+    Arc::new(MidiEventQueue::new(1024))
 }
 
 #[cfg(test)]
@@ -139,16 +184,37 @@ mod tests {
         assert!(queue.note_on(64, 80));
         assert!(queue.note_off(60));
 
-        // Drain and check
-        let events = queue.drain();
-        assert_eq!(events.len(), 3);
+        // Drain into pre-allocated buffer
+        let mut buffer = Vec::with_capacity(64);
+        let count = queue.drain_into(&mut buffer);
+        assert_eq!(count, 3);
+        assert_eq!(buffer.len(), 3);
 
-        match events[0] {
+        match buffer[0] {
             MidiEvent::NoteOn { note, velocity, .. } => {
                 assert_eq!(note, 60);
                 assert_eq!(velocity, 100);
             }
             _ => panic!("Expected NoteOn"),
         }
+    }
+
+    #[test]
+    fn test_queue_overflow() {
+        let queue = MidiEventQueue::new(4);
+
+        // Fill the queue
+        assert!(queue.note_on(60, 100));
+        assert!(queue.note_on(61, 100));
+        assert!(queue.note_on(62, 100));
+        assert!(queue.note_on(63, 100));
+
+        // This should fail (queue full)
+        assert!(!queue.note_on(64, 100));
+
+        // Drain and verify we got 4 events
+        let mut buffer = Vec::with_capacity(8);
+        let count = queue.drain_into(&mut buffer);
+        assert_eq!(count, 4);
     }
 }

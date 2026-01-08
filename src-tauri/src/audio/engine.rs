@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::buffer::StereoSample;
 use super::device::{get_output_device, get_supported_config, AudioConfig};
 use super::input::{get_input_handle, start_input_capture, stop_input_capture};
+use super::midi::MidiEventQueue;
 use super::plugin::{PluginInstance, PluginState};
 use super::samples::{AudioSample, SamplePlayer};
 use super::signals::{GatePattern, SignalConfig, SignalGenerator};
@@ -204,6 +205,9 @@ struct SharedState {
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
+    // MIDI queue reference (separate from plugin lock for lock-free MIDI access)
+    // Updated when plugin is loaded/unloaded
+    midi_queue: RwLock<Option<Arc<MidiEventQueue>>>,
     // Whether the loaded plugin is an instrument (needs MIDI processing even when not "playing")
     is_instrument_plugin: AtomicBool,
     // Crossfade for hot reload
@@ -499,7 +503,12 @@ impl AudioEngineHandle {
                 let has_editor = plugin.has_gui();
                 let path_str = path.display().to_string();
 
+                // Get MIDI queue reference before storing plugin
+                let midi_queue = plugin.midi_queue();
+
                 *self.shared.plugin_instance.write() = Some(plugin);
+                // Store MIDI queue reference separately for lock-free access
+                *self.shared.midi_queue.write() = Some(midi_queue);
                 *self.shared.plugin_state.write() = PluginState::Active {
                     name: name.clone(),
                     path: path_str,
@@ -520,6 +529,9 @@ impl AudioEngineHandle {
 
     /// Unload the current plugin
     pub fn unload_plugin(&self) {
+        // Clear MIDI queue reference first (allows immediate MIDI rejection)
+        *self.shared.midi_queue.write() = None;
+
         let mut plugin_lock = self.shared.plugin_instance.write();
         if let Some(mut plugin) = plugin_lock.take() {
             plugin.stop_processing();
@@ -599,28 +611,32 @@ impl AudioEngineHandle {
     }
 
     // MIDI methods (for instrument plugins)
+    // These use a separate midi_queue reference to avoid plugin lock contention
 
     /// Send a MIDI note on event to the loaded plugin
+    /// Uses lock-free queue access - never blocks the audio thread
+    #[inline]
     pub fn midi_note_on(&self, note: u8, velocity: u8) {
-        let plugin_lock = self.shared.plugin_instance.read();
-        if let Some(plugin) = plugin_lock.as_ref() {
-            plugin.send_note_on(note, velocity);
+        // Use the separate midi_queue reference to avoid plugin lock
+        if let Some(queue) = self.shared.midi_queue.read().as_ref() {
+            queue.note_on(note, velocity);
         }
     }
 
     /// Send a MIDI note off event to the loaded plugin
+    /// Uses lock-free queue access - never blocks the audio thread
+    #[inline]
     pub fn midi_note_off(&self, note: u8) {
-        let plugin_lock = self.shared.plugin_instance.read();
-        if let Some(plugin) = plugin_lock.as_ref() {
-            plugin.send_note_off(note);
+        if let Some(queue) = self.shared.midi_queue.read().as_ref() {
+            queue.note_off(note);
         }
     }
 
     /// Send all notes off to the loaded plugin
+    #[inline]
     pub fn midi_all_notes_off(&self) {
-        let plugin_lock = self.shared.plugin_instance.read();
-        if let Some(plugin) = plugin_lock.as_ref() {
-            plugin.send_all_notes_off();
+        if let Some(queue) = self.shared.midi_queue.read().as_ref() {
+            queue.all_notes_off();
         }
     }
 
@@ -628,6 +644,12 @@ impl AudioEngineHandle {
     /// Instrument plugins are processed even when not "playing" for MIDI input
     pub fn set_is_instrument(&self, is_instrument: bool) {
         self.shared.is_instrument_plugin.store(is_instrument, Ordering::SeqCst);
+    }
+
+    /// Get the current plugin's MIDI queue (for pattern player)
+    /// Uses the separate midi_queue reference to avoid plugin lock
+    pub fn get_plugin_midi_queue(&self) -> Option<Arc<MidiEventQueue>> {
+        self.shared.midi_queue.read().clone()
     }
 
     /// Start crossfade out (for hot reload)
@@ -698,6 +720,7 @@ impl AudioEngine {
             waveform_write_pos: AtomicU32::new(0),
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
+            midi_queue: RwLock::new(None),
             is_instrument_plugin: AtomicBool::new(false),
             crossfade_state: AtomicU8::new(CROSSFADE_NONE),
             crossfade_position: AtomicU32::new(0),

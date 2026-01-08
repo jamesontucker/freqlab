@@ -23,6 +23,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -99,10 +100,20 @@ pub fn run() {
             commands::preview::preview_set_master_volume,
             commands::preview::preview_get_master_volume,
             // MIDI commands (for instrument plugins)
+            commands::preview::midi_batch,
             commands::preview::midi_note_on,
             commands::preview::midi_note_off,
             commands::preview::midi_all_notes_off,
             commands::preview::set_plugin_is_instrument,
+            // Pattern playback commands
+            commands::preview::pattern_list,
+            commands::preview::pattern_list_by_category,
+            commands::preview::pattern_play,
+            commands::preview::pattern_stop,
+            commands::preview::pattern_set_bpm,
+            commands::preview::pattern_set_octave_shift,
+            commands::preview::pattern_set_looping,
+            commands::preview::pattern_is_playing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

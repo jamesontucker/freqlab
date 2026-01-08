@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 interface LevelMetersProps {
   animatedLevels: { left: number; right: number };
   metering: {
@@ -8,7 +10,7 @@ interface LevelMetersProps {
   clipHold: { left: boolean; right: boolean };
 }
 
-export function LevelMeters({
+export const LevelMeters = memo(function LevelMeters({
   animatedLevels,
   metering,
   displayDb,
@@ -99,4 +101,4 @@ export function LevelMeters({
       </div>
     </div>
   );
-}
+});

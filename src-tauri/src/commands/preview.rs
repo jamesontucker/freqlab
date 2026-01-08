@@ -79,7 +79,14 @@ pub fn init_audio_engine(
         channels: 2,
         buffer_size: buffer_size.unwrap_or(512),
     };
-    init_engine(device_name.as_deref(), config)
+    let result = init_engine(device_name.as_deref(), config);
+
+    // Pre-initialize MIDI player to avoid warm-up lag on first use
+    if result.is_ok() {
+        init_midi_player();
+    }
+
+    result
 }
 
 /// Shutdown the audio engine
@@ -456,6 +463,23 @@ pub fn stop_level_meter() -> Result<(), String> {
 // Plugin Commands
 // =============================================================================
 
+/// Pre-warm MIDI code paths by sending silent events through the system
+/// This exercises JIT compilation and caches without producing sound
+fn prewarm_midi_paths(handle: &crate::audio::engine::AudioEngineHandle) {
+    // Send a few silent note on/off pairs to warm up:
+    // - Tauri IPC serialization
+    // - MIDI queue push/drain
+    // - Plugin MIDI processing
+    // Velocity 0 = silent, won't produce audible output
+    for note in [60u8, 64, 67] {
+        handle.midi_note_on(note, 0);
+        handle.midi_note_off(note);
+    }
+    // Also trigger an all-notes-off to warm that path
+    handle.midi_all_notes_off();
+    log::debug!("MIDI code paths pre-warmed");
+}
+
 /// Load a CLAP plugin from a .clap bundle path
 #[tauri::command]
 pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
@@ -468,6 +492,10 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
+            // Update MIDI player queue for pattern playback
+            update_midi_player_queue();
+            // Pre-warm MIDI code paths to reduce initial lag
+            prewarm_midi_paths(&handle);
             Ok(())
         }
         Err(e) => {
@@ -481,6 +509,8 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
 #[tauri::command]
 pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    // Clear MIDI player queue before unloading
+    clear_midi_player_queue();
     handle.unload_plugin();
     let _ = app_handle.emit("plugin-unloaded", ());
     Ok(())
@@ -589,6 +619,10 @@ pub fn plugin_load_for_project(
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
+            // Update MIDI player queue for pattern playback
+            update_midi_player_queue();
+            // Pre-warm MIDI code paths to reduce initial lag
+            prewarm_midi_paths(&handle);
             Ok(())
         }
         Err(e) => {
@@ -678,6 +712,10 @@ pub fn plugin_reload(
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
+            // Update MIDI player queue for pattern playback
+            update_midi_player_queue();
+            // Pre-warm MIDI code paths to reduce initial lag
+            prewarm_midi_paths(&handle);
             log::info!("Plugin hot reload successful");
             Ok(())
         }
@@ -748,6 +786,36 @@ pub fn preview_get_master_volume() -> Result<f32, String> {
 // MIDI Commands (for instrument plugins)
 // =============================================================================
 
+/// MIDI event for batched processing
+#[derive(serde::Deserialize)]
+pub struct MidiEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub note: u8,
+    pub velocity: Option<u8>,
+}
+
+/// Process a batch of MIDI events in a single IPC call
+#[tauri::command]
+pub fn midi_batch(events: Vec<MidiEvent>) -> Result<(), String> {
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+
+    for event in events {
+        match event.event_type.as_str() {
+            "on" => {
+                let velocity = event.velocity.unwrap_or(100);
+                handle.midi_note_on(event.note, velocity);
+            }
+            "off" => {
+                handle.midi_note_off(event.note);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 /// Send a MIDI note on event to the loaded plugin
 #[tauri::command]
 pub fn midi_note_on(note: u8, velocity: u8) -> Result<(), String> {
@@ -779,4 +847,164 @@ pub fn set_plugin_is_instrument(is_instrument: bool) -> Result<(), String> {
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
     handle.set_is_instrument(is_instrument);
     Ok(())
+}
+
+// =============================================================================
+// Pattern Playback Commands
+// =============================================================================
+
+use crate::audio::midi::{MidiPlayer, PatternCategory, PatternInfo, list_patterns, get_pattern};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+
+/// Global MIDI player instance
+static MIDI_PLAYER: Lazy<Mutex<Option<MidiPlayer>>> = Lazy::new(|| Mutex::new(None));
+
+/// Initialize the MIDI player (called when engine starts)
+fn init_midi_player() {
+    let mut player_lock = MIDI_PLAYER.lock();
+    if player_lock.is_none() {
+        *player_lock = Some(MidiPlayer::new());
+        log::info!("MIDI player initialized");
+    }
+}
+
+/// Get the MIDI player, initializing if needed
+fn get_midi_player() -> Result<parking_lot::MutexGuard<'static, Option<MidiPlayer>>, String> {
+    init_midi_player();
+    Ok(MIDI_PLAYER.lock())
+}
+
+/// Update the MIDI player's queue when a plugin is loaded
+/// Note: We don't create the player here - it's created lazily when pattern_play is called
+/// This avoids the background thread running when patterns aren't being used
+pub fn update_midi_player_queue() {
+    log::info!("update_midi_player_queue: called");
+
+    let player_lock = MIDI_PLAYER.lock();
+    // Only update queue if player already exists (created by pattern_play)
+    if let Some(ref player) = *player_lock {
+        // Get the current plugin's midi queue
+        if let Some(handle) = get_engine_handle() {
+            if let Some(queue) = handle.get_plugin_midi_queue() {
+                player.set_midi_queue(Some(queue));
+                log::info!("update_midi_player_queue: queue set successfully");
+            } else {
+                player.set_midi_queue(None);
+                log::warn!("update_midi_player_queue: no queue available from plugin");
+            }
+        } else {
+            log::warn!("update_midi_player_queue: no engine handle");
+        }
+    } else {
+        log::info!("update_midi_player_queue: player not created yet, will set queue on first play");
+    }
+}
+
+/// Clear the MIDI player's queue when a plugin is unloaded
+pub fn clear_midi_player_queue() {
+    if let Some(ref player) = *MIDI_PLAYER.lock() {
+        player.set_midi_queue(None);
+        player.stop();
+        log::info!("MIDI player queue cleared");
+    }
+}
+
+/// List all available patterns
+#[tauri::command]
+pub fn pattern_list() -> Vec<PatternInfo> {
+    let patterns = list_patterns();
+    log::info!("pattern_list: returning {} patterns", patterns.len());
+    patterns
+}
+
+/// List patterns by category
+#[tauri::command]
+pub fn pattern_list_by_category(category: PatternCategory) -> Vec<PatternInfo> {
+    crate::audio::midi::patterns::get_patterns_by_category(category)
+}
+
+/// Start playing a pattern
+#[tauri::command]
+pub fn pattern_play(
+    pattern_id: String,
+    bpm: u32,
+    octave_shift: i8,
+    looping: bool,
+) -> Result<(), String> {
+    log::info!("pattern_play: pattern={}, bpm={}, octave={}, loop={}", pattern_id, bpm, octave_shift, looping);
+
+    // Verify pattern exists first
+    if get_pattern(&pattern_id).is_none() {
+        return Err(format!("Pattern not found: {}", pattern_id));
+    }
+
+    let player_lock = get_midi_player()?;
+    let player = player_lock.as_ref().ok_or("MIDI player not initialized")?;
+
+    // Ensure the MIDI queue is set (may not be if this is the first play)
+    if let Some(handle) = get_engine_handle() {
+        if let Some(queue) = handle.get_plugin_midi_queue() {
+            player.set_midi_queue(Some(queue));
+            log::info!("pattern_play: queue set");
+        } else {
+            return Err("No plugin loaded - cannot play pattern".to_string());
+        }
+    } else {
+        return Err("Audio engine not initialized".to_string());
+    }
+
+    let result = player.play(&pattern_id, bpm, octave_shift, looping);
+    log::info!("pattern_play: result={:?}", result);
+    result
+}
+
+/// Stop pattern playback
+#[tauri::command]
+pub fn pattern_stop() -> Result<(), String> {
+    let player_lock = get_midi_player()?;
+    if let Some(player) = player_lock.as_ref() {
+        player.stop();
+    }
+    Ok(())
+}
+
+/// Set pattern BPM
+#[tauri::command]
+pub fn pattern_set_bpm(bpm: u32) -> Result<(), String> {
+    let player_lock = get_midi_player()?;
+    if let Some(player) = player_lock.as_ref() {
+        player.set_bpm(bpm);
+    }
+    Ok(())
+}
+
+/// Set pattern octave shift
+#[tauri::command]
+pub fn pattern_set_octave_shift(shift: i8) -> Result<(), String> {
+    let player_lock = get_midi_player()?;
+    if let Some(player) = player_lock.as_ref() {
+        player.set_octave_shift(shift);
+    }
+    Ok(())
+}
+
+/// Set pattern looping
+#[tauri::command]
+pub fn pattern_set_looping(looping: bool) -> Result<(), String> {
+    let player_lock = get_midi_player()?;
+    if let Some(player) = player_lock.as_ref() {
+        player.set_looping(looping);
+    }
+    Ok(())
+}
+
+/// Check if pattern is playing
+#[tauri::command]
+pub fn pattern_is_playing() -> bool {
+    if let Some(player) = MIDI_PLAYER.lock().as_ref() {
+        player.is_playing()
+    } else {
+        false
+    }
 }

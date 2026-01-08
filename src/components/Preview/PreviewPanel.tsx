@@ -82,14 +82,23 @@ export function PreviewPanel() {
   const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
   const inputDbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
   // Animated spectrum, waveform, and levels for buttery smooth 60fps rendering
+  // Using refs for interpolation + single consolidated state to minimize re-renders
   const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
   const animatedWaveformRef = useRef<number[]>(new Array(256).fill(0));
   const animatedLevelsRef = useRef({ left: 0, right: 0 });
   const animatedInputLevelsRef = useRef({ left: 0, right: 0 });
-  const [animatedSpectrum, setAnimatedSpectrum] = useState<number[]>(new Array(32).fill(0));
-  const [animatedWaveform, setAnimatedWaveform] = useState<number[]>(new Array(256).fill(0));
-  const [animatedLevels, setAnimatedLevels] = useState({ left: 0, right: 0 });
-  const [animatedInputLevels, setAnimatedInputLevels] = useState({ left: 0, right: 0 });
+  // Single state object for all animations - triggers one re-render per frame instead of 4
+  const [animationState, setAnimationState] = useState({
+    spectrum: new Array(32).fill(0) as number[],
+    waveform: new Array(256).fill(0) as number[],
+    levels: { left: 0, right: 0 },
+    inputLevels: { left: 0, right: 0 },
+  });
+  // Destructure for component usage (maintains backward compatibility)
+  const animatedSpectrum = animationState.spectrum;
+  const animatedWaveform = animationState.waveform;
+  const animatedLevels = animationState.levels;
+  const animatedInputLevels = animationState.inputLevels;
   const rafIdRef = useRef<number | null>(null);
   // Clipping indicator with hold (stays lit for 1 second after clip)
   const [clipHold, setClipHold] = useState({ left: false, right: false });
@@ -157,12 +166,12 @@ export function PreviewPanel() {
     return () => clearInterval(interval);
   }, [isOpen]); // Only run when panel is open
 
-  // Smooth animation loop for spectrum and levels (requestAnimationFrame @ 60fps)
-  // Only runs when panel is open to save CPU
+  // Smooth animation loop for spectrum, waveform, and levels at 60fps
   useEffect(() => {
     if (!isOpen) return;
 
     const smoothingFactor = 0.25; // Lower = smoother but more laggy, higher = snappier
+    const waveformSmoothing = 0.5; // Faster response for time-domain
 
     const animate = () => {
       const targetSpectrum = meteringRef.current.spectrum;
@@ -183,11 +192,10 @@ export function PreviewPanel() {
         }
       }
 
-      // Interpolate waveform (use faster smoothing for time-domain to capture transients)
+      // Interpolate waveform
       const targetWaveform = meteringRef.current.waveform;
       const currentWaveform = animatedWaveformRef.current;
       const numSamples = Math.min(currentWaveform.length, targetWaveform?.length || 0);
-      const waveformSmoothing = 0.5; // Faster response for time-domain
       let waveformChanged = false;
       for (let i = 0; i < numSamples; i++) {
         const target = targetWaveform[i] || 0;
@@ -223,18 +231,15 @@ export function PreviewPanel() {
         inputLevelsChanged = true;
       }
 
-      // Only trigger re-render if values changed
-      if (spectrumChanged) {
-        setAnimatedSpectrum([...currentSpectrum]);
-      }
-      if (waveformChanged) {
-        setAnimatedWaveform([...currentWaveform]);
-      }
-      if (levelsChanged) {
-        setAnimatedLevels({ ...currentLevels });
-      }
-      if (inputLevelsChanged) {
-        setAnimatedInputLevels({ ...currentInputLevels });
+      // Update React state at 60fps - single setState call for all animations
+      // Only update if something changed to avoid unnecessary re-renders
+      if (spectrumChanged || waveformChanged || levelsChanged || inputLevelsChanged) {
+        setAnimationState({
+          spectrum: spectrumChanged ? [...currentSpectrum] : animatedSpectrumRef.current,
+          waveform: waveformChanged ? [...currentWaveform] : animatedWaveformRef.current,
+          levels: levelsChanged ? { ...currentLevels } : animatedLevelsRef.current,
+          inputLevels: inputLevelsChanged ? { ...currentInputLevels } : animatedInputLevelsRef.current,
+        });
       }
 
       rafIdRef.current = requestAnimationFrame(animate);
@@ -460,14 +465,15 @@ export function PreviewPanel() {
       } catch (err) {
         // Silently ignore errors - plugin may have been unloaded
       }
-    }, 16); // ~60fps
+    }, 100); // ~10fps - sufficient for GUI parameter sync, reduces IPC overhead
 
     return () => {
       clearInterval(intervalId);
     };
   }, [isOpen, engineInitialized, loadedPlugin.status]);
 
-  // Hot reload: Listen for build completion and reload plugin (always enabled)
+  // Listen for build completion: update plugin availability AND trigger hot reload if active
+  // Combined into single listener to avoid duplicate event handlers
   useEffect(() => {
     if (!isOpen || !activeProject) return;
 
@@ -477,21 +483,8 @@ export function PreviewPanel() {
       // Only act on successful build completions
       if (data.type !== 'done' || !data.success) return;
 
-      // Check if we have a plugin loaded for this project
-      if (loadedPlugin.status !== 'active') return;
-
-      console.log('Build completed, triggering hot reload...');
-
-      // Check if editor was open before reload (so we can re-open it)
-      let editorWasOpen = false;
       try {
-        editorWasOpen = await previewApi.pluginIsEditorOpen();
-      } catch {
-        // Ignore error
-      }
-
-      // Get the current version
-      try {
+        // Get the current version
         const version = await invoke<number>('get_current_version', {
           projectPath: activeProject.path,
         });
@@ -499,40 +492,48 @@ export function PreviewPanel() {
         // Check if plugin file exists
         const pluginPath = await previewApi.getProjectPluginPath(activeProject.name, version);
         if (!pluginPath) {
-          console.log('No plugin found after build, skipping reload');
           return;
         }
 
-        // Update plugin availability
+        // Always update plugin availability state
         setPluginAvailable(true);
         setCurrentVersion(version);
+        setBuildStatus('ready');
+        setWebviewNeedsFreshBuild(false);
 
-        // Trigger hot reload
-        console.log('Hot reloading plugin...');
-        setLoadedPlugin({ status: 'reloading', path: pluginPath });
-        await previewApi.pluginReload(activeProject.name, version);
+        // If plugin is active, trigger hot reload
+        if (loadedPlugin.status === 'active') {
+          // Check if editor was open before reload (so we can re-open it)
+          let editorWasOpen = false;
+          try {
+            editorWasOpen = await previewApi.pluginIsEditorOpen();
+          } catch {
+            // Ignore error
+          }
 
-        // Re-open editor if it was open before
-        if (editorWasOpen) {
-          // Small delay to ensure plugin is fully loaded
-          setTimeout(async () => {
-            try {
-              // Verify plugin is still active before opening editor
-              const state = await previewApi.pluginGetState();
-              if (state.status === 'active') {
-                const hasEditor = await previewApi.pluginHasEditor();
-                if (hasEditor) {
-                  await previewApi.pluginOpenEditor();
-                  console.log('Re-opened editor after hot reload');
+          // Trigger hot reload
+          setLoadedPlugin({ status: 'reloading', path: pluginPath });
+          await previewApi.pluginReload(activeProject.name, version);
+
+          // Re-open editor if it was open before
+          if (editorWasOpen) {
+            setTimeout(async () => {
+              try {
+                const state = await previewApi.pluginGetState();
+                if (state.status === 'active') {
+                  const hasEditor = await previewApi.pluginHasEditor();
+                  if (hasEditor) {
+                    await previewApi.pluginOpenEditor();
+                  }
                 }
+              } catch (err) {
+                console.error('Failed to re-open editor after hot reload:', err);
               }
-            } catch (err) {
-              console.error('Failed to re-open editor after hot reload:', err);
-            }
-          }, 200);
+            }, 200);
+          }
         }
       } catch (err) {
-        console.error('Hot reload failed:', err);
+        console.error('Build completion handler failed:', err);
       }
     };
 
@@ -550,62 +551,6 @@ export function PreviewPanel() {
       cleanup?.();
     };
   }, [isOpen, activeProject, loadedPlugin.status, setLoadedPlugin]);
-
-  // Listen for build completion to update plugin availability (for first build case)
-  // This is separate from hot reload - it just updates the "plugin available" state
-  useEffect(() => {
-    if (!isOpen || !activeProject) return;
-
-    const handleBuildComplete = async (event: { payload: BuildStreamEvent }) => {
-      const data = event.payload;
-      console.log('[PreviewPanel] build-stream event received:', data.type, data.success);
-
-      // Only act on successful build completions
-      if (data.type !== 'done' || !data.success) return;
-
-      console.log('[PreviewPanel] Build completed successfully, checking plugin availability...');
-      console.log('[PreviewPanel] activeProject:', activeProject?.name, activeProject?.path);
-
-      // Check if plugin is now available
-      try {
-        const version = await invoke<number>('get_current_version', {
-          projectPath: activeProject.path,
-        });
-        console.log('[PreviewPanel] Got version:', version);
-
-        const pluginPath = await previewApi.getProjectPluginPath(activeProject.name, version);
-        console.log('[PreviewPanel] Plugin path result:', pluginPath);
-
-        if (pluginPath) {
-          console.log('[PreviewPanel] Setting pluginAvailable=true, currentVersion=', version);
-          setPluginAvailable(true);
-          setCurrentVersion(version);
-          // Build succeeded - update status to ready
-          setBuildStatus('ready');
-          // Clear the WebView fresh build requirement since we just built
-          setWebviewNeedsFreshBuild(false);
-        } else {
-          console.log('[PreviewPanel] No plugin found at path, pluginAvailable stays false');
-        }
-      } catch (err) {
-        console.error('[PreviewPanel] Failed to check plugin availability after build:', err);
-      }
-    };
-
-    const setupListener = async () => {
-      const unlisten = await listen<BuildStreamEvent>('build-stream', handleBuildComplete);
-      return unlisten;
-    };
-
-    let cleanup: (() => void) | undefined;
-    setupListener().then(unlisten => {
-      cleanup = unlisten;
-    });
-
-    return () => {
-      cleanup?.();
-    };
-  }, [isOpen, activeProject]);
 
   // Close plugin and stop playback when switching projects
   // Uses refs to get current values instead of stale closure values
@@ -883,14 +828,14 @@ export function PreviewPanel() {
   const renderSectionHeader = (id: string, title: string, icon: React.ReactNode) => (
     <button
       onClick={() => toggleSection(id)}
-      className="w-full flex items-center justify-between py-2 text-sm font-medium text-text-primary hover:text-accent transition-colors group"
+      className="w-full flex items-center justify-between py-1.5 text-xs font-medium text-text-primary hover:text-accent transition-colors group"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {icon}
         <span>{title}</span>
       </div>
       <svg
-        className={`w-4 h-4 text-text-muted group-hover:text-accent transition-transform duration-200 ${
+        className={`w-3.5 h-3.5 text-text-muted group-hover:text-accent transition-transform duration-200 ${
           collapsedSections[id] ? '' : 'rotate-180'
         }`}
         fill="none"
@@ -911,25 +856,25 @@ export function PreviewPanel() {
     >
       <div className="h-full flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
           <div className="flex items-center gap-2">
-            <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
             </svg>
-            <h2 className="text-lg font-semibold text-text-primary">Preview</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Preview</h2>
           </div>
           <button
             onClick={() => setOpen(false)}
-            className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {/* No Project Warning */}
           {!activeProject && (
             <div className="p-4 rounded-lg bg-warning-subtle border border-warning/20 text-warning text-sm">
@@ -944,10 +889,129 @@ export function PreviewPanel() {
 
           {activeProject && (
             <>
+              {/* Plugin Viewer - at top for quick access */}
+              <div className="border-b border-border pb-2">
+                {renderSectionHeader('plugin', 'Plugin Viewer',
+                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                )}
+                {!collapsedSections.plugin && (
+                <div className="pt-1.5">
+                  {/* Compact plugin toggle with inline status */}
+                  <div className="flex items-center justify-between gap-3 p-2 bg-bg-tertiary rounded-lg border border-border">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {/* Status indicator dot */}
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        loadedPlugin.status === 'active' ? 'bg-green-400' :
+                        loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' ? 'bg-amber-400 animate-pulse' :
+                        loadedPlugin.status === 'error' ? 'bg-error' :
+                        'bg-text-muted'
+                      }`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs text-text-primary truncate">
+                          {loadedPlugin.status === 'active'
+                            ? loadedPlugin.name
+                            : loadedPlugin.status === 'loading'
+                              ? 'Loading...'
+                              : loadedPlugin.status === 'reloading'
+                                ? 'Hot reloading...'
+                                : loadedPlugin.status === 'error'
+                                  ? 'Error'
+                                  : !pluginAvailable
+                                    ? 'No build available'
+                                    : `${activeProject?.name} v${currentVersion}`}
+                        </div>
+                      </div>
+                      {/* Open editor button (only when active and has editor) */}
+                      {loadedPlugin.status === 'active' && loadedPlugin.has_editor && !(webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview') && (
+                        <button
+                          onClick={handleOpenEditor}
+                          className="px-1.5 py-1 rounded text-xs text-text-muted hover:text-accent hover:bg-accent/10 transition-colors flex-shrink-0 flex items-center gap-1"
+                          title="Open Plugin Window"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                          <span>Reopen</span>
+                        </button>
+                      )}
+                    </div>
+                    {/* Toggle switch */}
+                    <button
+                      onClick={async () => {
+                        if (loadedPlugin.status === 'active') {
+                          try {
+                            await previewApi.pluginCloseEditor();
+                            await previewApi.pluginUnload();
+                            await previewApi.setPluginIsInstrument(false);
+                            if (activeProject?.uiFramework === 'webview') {
+                              setWebviewNeedsFreshBuild(true);
+                            }
+                          } catch (err) {
+                            console.error('Failed to disable plugin viewer:', err);
+                          }
+                        } else if (loadedPlugin.status === 'unloaded' && pluginAvailable && activeProject) {
+                          setPluginLoading(true);
+                          try {
+                            await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
+                            await previewApi.setPluginIsInstrument(activeProject.template === 'instrument');
+                            if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
+                              setTimeout(async () => {
+                                try {
+                                  const state = await previewApi.pluginGetState();
+                                  if (state.status === 'active') {
+                                    const hasEditor = await previewApi.pluginHasEditor();
+                                    if (hasEditor) {
+                                      await previewApi.pluginOpenEditor();
+                                    }
+                                  }
+                                } catch (err) {
+                                  console.error('Failed to open editor:', err);
+                                }
+                              }, 100);
+                            }
+                          } catch (err) {
+                            console.error('Failed to load plugin:', err);
+                          } finally {
+                            setPluginLoading(false);
+                          }
+                        }
+                      }}
+                      disabled={!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded') || !pluginAvailable}
+                      className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+                        loadedPlugin.status === 'active'
+                          ? 'bg-accent'
+                          : 'bg-bg-elevated border border-border'
+                      } ${(!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded') || !pluginAvailable) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <span
+                        className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all duration-200 ${
+                          loadedPlugin.status === 'active' ? 'left-[18px]' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {/* Error message */}
+                  {loadedPlugin.status === 'error' && (
+                    <div className="mt-1.5 text-xs text-error">
+                      {loadedPlugin.message}
+                    </div>
+                  )}
+                  {/* WebView warning */}
+                  {webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded' && pluginAvailable && (
+                    <div className="mt-1.5 text-xs text-amber-400">
+                      Fresh build required for WebView plugins
+                    </div>
+                  )}
+                </div>
+                )}
+              </div>
+
               {/* Plugin Type Badge */}
               <div className="flex items-center gap-2">
-                <span className="text-sm text-text-secondary">Plugin Type:</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                <span className="text-xs text-text-muted">Type:</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
                   effectivePluginType === 'instrument'
                     ? 'bg-amber-500/15 text-amber-400'
                     : 'bg-blue-500/15 text-blue-400'
@@ -957,14 +1021,14 @@ export function PreviewPanel() {
               </div>
 
               {/* Input Source Section */}
-              <div className="border-b border-border pb-3">
+              <div className="border-b border-border pb-2">
                 {renderSectionHeader('input', 'Input Source',
                   <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
                   </svg>
                 )}
                 {!collapsedSections.input && (
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3 pt-1.5">
 
                 {effectivePluginType === 'effect' && (
                   <>
@@ -1031,34 +1095,75 @@ export function PreviewPanel() {
                           </div>
                         )}
 
-                        {/* Custom File Loader */}
+                        {/* Custom File Loader + Transport Controls */}
                         <div className={demoSamples.length > 0 ? "pt-2 border-t border-border" : ""}>
-                          {inputSource.customPath ? (
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 p-2.5 rounded-lg bg-accent/10 border border-accent/30 text-accent text-sm truncate">
-                                {inputSource.customPath.split('/').pop()}
-                              </div>
-                              <button
-                                onClick={handleLoadCustomFile}
-                                className="p-2.5 rounded-lg bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
-                                title="Replace audio file"
-                              >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                                </svg>
-                              </button>
-                            </div>
-                          ) : (
+                          <div className="flex items-center gap-2">
+                            {/* Play/Stop button */}
                             <button
-                              onClick={handleLoadCustomFile}
-                              className="w-full p-2.5 rounded-lg text-sm flex items-center justify-center gap-2 bg-bg-tertiary border border-dashed border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+                              onClick={handleTogglePlaying}
+                              disabled={!engineInitialized}
+                              className={`p-2 rounded-lg transition-all duration-200 ${
+                                !engineInitialized
+                                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                                  : isPlaying
+                                    ? 'bg-error text-white hover:bg-error/90'
+                                    : 'bg-accent text-white hover:bg-accent-hover'
+                              }`}
+                              title={isPlaying ? 'Stop' : 'Play'}
+                            >
+                              {isPlaying ? (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M8 5.14v14l11-7-11-7z" />
+                                </svg>
+                              )}
+                            </button>
+                            {/* Loop toggle */}
+                            <button
+                              onClick={() => handleLoopingChange(!isLooping)}
+                              className={`p-2 rounded-lg border transition-colors ${
+                                isLooping
+                                  ? 'bg-accent/10 border-accent/30 text-accent'
+                                  : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
+                              }`}
+                              title={isLooping ? 'Looping enabled' : 'Looping disabled'}
                             >
                               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                               </svg>
-                              Load Custom Audio File
                             </button>
-                          )}
+                            {/* File loader / file display */}
+                            {inputSource.customPath ? (
+                              <>
+                                <div className="flex-1 px-2.5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs truncate">
+                                  {inputSource.customPath.split('/').pop()}
+                                </div>
+                                <button
+                                  onClick={handleLoadCustomFile}
+                                  className="p-2 rounded-lg bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+                                  title="Replace audio file"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                  </svg>
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={handleLoadCustomFile}
+                                className="flex-1 px-2.5 py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 bg-bg-tertiary border border-dashed border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                </svg>
+                                Load Audio File
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1162,6 +1267,51 @@ export function PreviewPanel() {
                             </div>
                           )}
                         </div>
+
+                        {/* Transport Controls */}
+                        <div className="pt-2 border-t border-border">
+                          <div className="flex items-center gap-2">
+                            {/* Play/Stop button */}
+                            <button
+                              onClick={handleTogglePlaying}
+                              disabled={!engineInitialized}
+                              className={`p-2 rounded-lg transition-all duration-200 ${
+                                !engineInitialized
+                                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                                  : isPlaying
+                                    ? 'bg-error text-white hover:bg-error/90'
+                                    : 'bg-accent text-white hover:bg-accent-hover'
+                              }`}
+                              title={isPlaying ? 'Stop' : 'Play'}
+                            >
+                              {isPlaying ? (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M8 5.14v14l11-7-11-7z" />
+                                </svg>
+                              )}
+                            </button>
+                            {/* Loop toggle */}
+                            <button
+                              onClick={() => handleLoopingChange(!isLooping)}
+                              className={`p-2 rounded-lg border transition-colors ${
+                                isLooping
+                                  ? 'bg-accent/10 border-accent/30 text-accent'
+                                  : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
+                              }`}
+                              title={isLooping ? 'Looping enabled' : 'Looping disabled'}
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            </button>
+                            <span className="flex-1 text-xs text-text-muted">Test Signal</span>
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -1180,7 +1330,7 @@ export function PreviewPanel() {
 
                 {effectivePluginType === 'instrument' && (
                   <InstrumentControls
-                    pluginLoaded={loadedPlugin !== null}
+                    pluginLoaded={loadedPlugin.status === 'active'}
                   />
                 )}
                 </div>
@@ -1199,73 +1349,15 @@ export function PreviewPanel() {
                 </div>
               )}
 
-              {/* Transport Controls - only for effects, hidden in live mode (live has its own controls) */}
-              {effectivePluginType === 'effect' && inputSource.type !== 'live' && (
-                <div className="border-b border-border pb-3">
-                  {renderSectionHeader('transport', 'Transport',
-                    <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                    </svg>
-                  )}
-                  {!collapsedSections.transport && (
-                  <div className="space-y-3 pt-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleTogglePlaying}
-                      disabled={!engineInitialized}
-                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl font-medium transition-all duration-200 ${
-                        !engineInitialized
-                          ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                          : isPlaying
-                            ? 'bg-error text-white hover:bg-error/90'
-                            : 'bg-accent text-white hover:bg-accent-hover hover:shadow-lg hover:shadow-accent/25'
-                      }`}
-                    >
-                      {isPlaying ? (
-                        <>
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                            <rect x="6" y="4" width="4" height="16" rx="1" />
-                            <rect x="14" y="4" width="4" height="16" rx="1" />
-                          </svg>
-                          Stop
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5.14v14l11-7-11-7z" />
-                          </svg>
-                          Play
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => handleLoopingChange(!isLooping)}
-                      className={`p-2.5 rounded-xl border transition-colors ${
-                        isLooping
-                          ? 'bg-accent/10 border-accent/30 text-accent'
-                          : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
-                      }`}
-                      title={isLooping ? 'Looping enabled' : 'Looping disabled'}
-                    >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    </button>
-                  </div>
-                  </div>
-                  )}
-                </div>
-              )}
-
               {/* Output Meter & Spectrum */}
-              <div className="border-b border-border pb-3">
+              <div className="border-b border-border pb-2">
                 {renderSectionHeader('output', 'Output',
                   <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
                   </svg>
                 )}
                 {!collapsedSections.output && (
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3 pt-1.5">
                   {/* Master Volume */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -1310,224 +1402,15 @@ export function PreviewPanel() {
                 )}
               </div>
 
-              {/* Plugin Viewer */}
-              <div className="border-b border-border pb-3">
-                {renderSectionHeader('plugin', 'Plugin Viewer',
-                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />
-                  </svg>
-                )}
-                {!collapsedSections.plugin && (
-                <div className="space-y-3 pt-2">
-
-                {/* No build available */}
-                {!pluginAvailable && loadedPlugin.status === 'unloaded' && (
-                  <div className="p-4 bg-bg-tertiary rounded-lg border border-border text-center">
-                    <svg className="w-8 h-8 mx-auto text-text-muted mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                    </svg>
-                    <div className="text-sm text-text-secondary mb-1">No plugin built yet</div>
-                    <div className="text-xs text-text-muted">Build your project first to preview it here</div>
-                  </div>
-                )}
-
-                {/* Plugin available - show viewer toggle */}
-                {(pluginAvailable || loadedPlugin.status !== 'unloaded') && (
-                  <div className="p-3 bg-bg-tertiary rounded-lg border border-border space-y-3">
-                    {/* WebView fresh build warning */}
-                    {webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded' && (
-                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
-                        <div className="flex items-start gap-2">
-                          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                          </svg>
-                          <div>
-                            <div className="font-medium">Fresh build required</div>
-                            <div className="text-amber-400/80 mt-1">
-                              WebView plugins need a fresh build after switching projects to avoid class name conflicts with the host app. Build the project to enable the plugin viewer.
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Viewer Toggle */}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm text-text-primary">Enable Plugin Viewer</div>
-                        <div className="text-xs text-text-muted">
-                          {loadedPlugin.status === 'unloaded'
-                            ? `${activeProject?.name} v${currentVersion}`
-                            : loadedPlugin.status === 'active'
-                              ? loadedPlugin.name
-                              : 'Loading...'}
-                        </div>
-                      </div>
-                      <button
-                        onClick={async () => {
-                          console.log('[PreviewPanel] Toggle clicked - status:', loadedPlugin.status, 'pluginAvailable:', pluginAvailable, 'currentVersion:', currentVersion);
-                          if (loadedPlugin.status === 'active') {
-                            // Disable - close editor and unload
-                            try {
-                              await previewApi.pluginCloseEditor();
-                              await previewApi.pluginUnload();
-                              // Reset instrument flag when unloading
-                              await previewApi.setPluginIsInstrument(false);
-                              // WebView plugins need a fresh build after unloading due to wry class name conflicts
-                              if (activeProject?.uiFramework === 'webview') {
-                                setWebviewNeedsFreshBuild(true);
-                              }
-                            } catch (err) {
-                              console.error('Failed to disable plugin viewer:', err);
-                            }
-                          } else if (loadedPlugin.status === 'unloaded' && pluginAvailable && activeProject) {
-                            // Enable - load plugin and open editor
-                            console.log('[PreviewPanel] Loading plugin for project:', activeProject.name, 'v', currentVersion);
-                            setPluginLoading(true);
-                            try {
-                              await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
-                              // Set whether this is an instrument plugin (for MIDI processing)
-                              await previewApi.setPluginIsInstrument(activeProject.template === 'instrument');
-                              // Auto-open editor after load (if plugin has one) - but not if webview needs fresh build
-                              if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
-                                // Use setTimeout to allow state to update
-                                setTimeout(async () => {
-                                  try {
-                                    // Verify plugin is still active before opening editor
-                                    const state = await previewApi.pluginGetState();
-                                    if (state.status === 'active') {
-                                      const hasEditor = await previewApi.pluginHasEditor();
-                                      if (hasEditor) {
-                                        await previewApi.pluginOpenEditor();
-                                      }
-                                    }
-                                  } catch (err) {
-                                    console.error('Failed to open editor:', err);
-                                  }
-                                }, 100);
-                              }
-                            } catch (err) {
-                              console.error('Failed to load plugin:', err);
-                            } finally {
-                              setPluginLoading(false);
-                            }
-                          }
-                        }}
-                        disabled={!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded')}
-                        className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${
-                          loadedPlugin.status === 'active'
-                            ? 'bg-accent'
-                            : 'bg-bg-elevated border border-border'
-                        } ${(!engineInitialized || pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading' || (webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' && loadedPlugin.status === 'unloaded')) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <span
-                          className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
-                            loadedPlugin.status === 'active' ? 'left-6' : 'left-1'
-                          }`}
-                        />
-                      </button>
-                    </div>
-
-                    {/* WebView warning when plugin is active - disabling requires rebuild */}
-                    {loadedPlugin.status === 'active' && activeProject?.uiFramework === 'webview' && (
-                      <div className="text-xs text-text-muted flex items-start gap-1.5">
-                        <svg className="w-3 h-3 flex-shrink-0 mt-0.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        <span>Disabling will require a rebuild to re-enable (WebView limitation)</span>
-                      </div>
-                    )}
-
-                    {/* Status indicator */}
-                    {loadedPlugin.status === 'loading' && (
-                      <div className="flex items-center gap-2 text-xs text-text-muted">
-                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Loading plugin...
-                      </div>
-                    )}
-
-                    {loadedPlugin.status === 'reloading' && (
-                      <div className="flex items-center gap-2 text-xs text-amber-400">
-                        <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Hot reloading...
-                      </div>
-                    )}
-
-                    {loadedPlugin.status === 'active' && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-1.5 text-xs text-green-400">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                          Plugin active - audio processing through plugin
-                        </div>
-
-                        {/* Editor controls */}
-                        {loadedPlugin.has_editor ? (
-                          webviewNeedsFreshBuild && activeProject?.uiFramework === 'webview' ? (
-                            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs space-y-2">
-                              <div className="flex items-start gap-2">
-                                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                </svg>
-                                <div>
-                                  <div className="font-medium">Fresh build required</div>
-                                  <div className="text-amber-400/80 mt-1">
-                                    WebView plugins need a fresh build after switching projects to avoid conflicts with the host app.
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={handleOpenEditor}
-                              className="w-full px-3 py-2 text-xs bg-accent text-white rounded-md hover:bg-accent-hover transition-colors flex items-center justify-center gap-2"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                              </svg>
-                              Open Plugin Window
-                            </button>
-                          )
-                        ) : (
-                          <div className="text-xs text-text-muted text-center py-2 bg-bg-primary rounded">
-                            This plugin has no GUI (headless)
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {loadedPlugin.status === 'error' && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-xs text-error">
-                          <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                          </svg>
-                          Failed to load: {loadedPlugin.message}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-                </div>
-                )}
-              </div>
-
               {/* Build Status */}
-              <div className="pb-3">
+              <div className="pb-2">
                 {renderSectionHeader('build', 'Build Status',
                   <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
                   </svg>
                 )}
                 {!collapsedSections.build && (
-                <div className="space-y-3 pt-2">
+                <div className="space-y-3 pt-1.5">
                 {/* Status indicator */}
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-text-secondary">Status:</span>

@@ -1,10 +1,12 @@
+import { memo } from 'react';
+
 interface WaveformDisplayProps {
   animatedWaveform: number[];
   showWaveform: boolean;
   onToggle: () => void;
 }
 
-export function WaveformDisplay({
+export const WaveformDisplay = memo(function WaveformDisplay({
   animatedWaveform,
   showWaveform,
   onToggle,
@@ -71,7 +73,7 @@ export function WaveformDisplay({
       )}
     </div>
   );
-}
+});
 
 function renderWaveformPath(animatedWaveform: number[]) {
   if (!animatedWaveform || animatedWaveform.length < 2) {

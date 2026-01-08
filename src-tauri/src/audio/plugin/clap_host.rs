@@ -99,6 +99,8 @@ pub struct PluginInstance {
     midi_queue: Arc<MidiEventQueue>,
     /// Context for current process call's MIDI events
     midi_context: MidiEventContext,
+    /// Pre-allocated buffer for draining MIDI events (avoids allocation in audio thread)
+    midi_drain_buffer: Vec<MidiEvent>,
 }
 
 // Host callback structure (renamed to avoid conflict with ClapHost struct)
@@ -392,8 +394,10 @@ impl PluginInstance {
             state_apply_count: AtomicU32::new(0),
             #[cfg(target_os = "macos")]
             editor_window: None,
-            midi_queue: Arc::new(MidiEventQueue::new(256)),
+            midi_queue: Arc::new(MidiEventQueue::new(1024)),
             midi_context: MidiEventContext::new(),
+            // Pre-allocate buffer for 256 events (covers typical usage without reallocation)
+            midi_drain_buffer: Vec::with_capacity(256),
         };
 
         // Activate the plugin
@@ -656,15 +660,18 @@ impl PluginInstance {
             constant_mask: 0,
         };
 
-        // Drain MIDI queue into context for this process call
+        // Drain MIDI queue into pre-allocated buffer (avoids allocation in audio thread)
+        self.midi_queue.drain_into(&mut self.midi_drain_buffer);
+
+        // Convert MIDI events to CLAP format
         self.midi_context.clear();
-        for event in self.midi_queue.drain() {
+        for event in self.midi_drain_buffer.iter() {
             match event {
                 MidiEvent::NoteOn { note, velocity, channel } => {
-                    self.midi_context.add_note_on(note, velocity, channel, 0);
+                    self.midi_context.add_note_on(*note, *velocity, *channel, 0);
                 }
                 MidiEvent::NoteOff { note, velocity, channel } => {
-                    self.midi_context.add_note_off(note, velocity, channel, 0);
+                    self.midi_context.add_note_off(*note, *velocity, *channel, 0);
                 }
                 MidiEvent::AllNotesOff => {
                     // Send note off for all 128 notes
