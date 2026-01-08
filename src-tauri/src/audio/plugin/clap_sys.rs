@@ -290,24 +290,33 @@ pub unsafe extern "C" fn empty_output_events_push(
 /// This is stored and passed via the ClapInputEvents ctx field
 pub struct MidiEventContext {
     /// Pre-allocated storage for note events
-    pub events: Vec<ClapEventNote>,
+    pub note_events: Vec<ClapEventNote>,
+    /// Pre-allocated storage for raw MIDI events (CC, pitch bend, etc.)
+    pub midi_events: Vec<ClapEventMidi>,
 }
 
 impl MidiEventContext {
     pub fn new() -> Self {
         Self {
-            events: Vec::with_capacity(64), // Pre-allocate for typical use
+            note_events: Vec::with_capacity(64), // Pre-allocate for typical use
+            midi_events: Vec::with_capacity(32), // CC and pitch bend
         }
     }
 
     /// Clear events for next process cycle
     pub fn clear(&mut self) {
-        self.events.clear();
+        self.note_events.clear();
+        self.midi_events.clear();
+    }
+
+    /// Get total event count (for callback)
+    pub fn len(&self) -> usize {
+        self.note_events.len() + self.midi_events.len()
     }
 
     /// Add a note on event
     pub fn add_note_on(&mut self, note: u8, velocity: u8, channel: u8, time: u32) {
-        self.events.push(ClapEventNote {
+        self.note_events.push(ClapEventNote {
             header: ClapEventHeader {
                 size: std::mem::size_of::<ClapEventNote>() as u32,
                 time,
@@ -325,7 +334,7 @@ impl MidiEventContext {
 
     /// Add a note off event
     pub fn add_note_off(&mut self, note: u8, velocity: u8, channel: u8, time: u32) {
-        self.events.push(ClapEventNote {
+        self.note_events.push(ClapEventNote {
             header: ClapEventHeader {
                 size: std::mem::size_of::<ClapEventNote>() as u32,
                 time,
@@ -340,6 +349,40 @@ impl MidiEventContext {
             velocity: velocity as f64 / 127.0,
         });
     }
+
+    /// Add a control change (CC) event as raw MIDI
+    pub fn add_control_change(&mut self, controller: u8, value: u8, channel: u8, time: u32) {
+        self.midi_events.push(ClapEventMidi {
+            header: ClapEventHeader {
+                size: std::mem::size_of::<ClapEventMidi>() as u32,
+                time,
+                space_id: 0,
+                type_: CLAP_EVENT_MIDI,
+                flags: 0,
+            },
+            port_index: 0,
+            // Raw MIDI: status byte (0xB0 | channel), controller, value
+            data: [0xB0 | (channel & 0x0F), controller & 0x7F, value & 0x7F],
+        });
+    }
+
+    /// Add a pitch bend event as raw MIDI
+    pub fn add_pitch_bend(&mut self, value: u16, channel: u8, time: u32) {
+        let lsb = (value & 0x7F) as u8;
+        let msb = ((value >> 7) & 0x7F) as u8;
+        self.midi_events.push(ClapEventMidi {
+            header: ClapEventHeader {
+                size: std::mem::size_of::<ClapEventMidi>() as u32,
+                time,
+                space_id: 0,
+                type_: CLAP_EVENT_MIDI,
+                flags: 0,
+            },
+            port_index: 0,
+            // Raw MIDI: status byte (0xE0 | channel), LSB, MSB
+            data: [0xE0 | (channel & 0x0F), lsb, msb],
+        });
+    }
 }
 
 /// Callback: return number of events in the context
@@ -348,10 +391,11 @@ pub unsafe extern "C" fn midi_input_events_size(list: *const ClapInputEvents) ->
     if ctx.is_null() {
         return 0;
     }
-    (*ctx).events.len() as u32
+    (*ctx).len() as u32
 }
 
 /// Callback: return event at index from the context
+/// Events are indexed: note_events first, then midi_events
 pub unsafe extern "C" fn midi_input_events_get(
     list: *const ClapInputEvents,
     index: u32,
@@ -360,9 +404,15 @@ pub unsafe extern "C" fn midi_input_events_get(
     if ctx.is_null() {
         return std::ptr::null();
     }
-    let events = &(*ctx).events;
-    if (index as usize) < events.len() {
-        &events[index as usize].header as *const ClapEventHeader
+    let idx = index as usize;
+    let note_count = (*ctx).note_events.len();
+
+    if idx < note_count {
+        // Return note event
+        &(&(*ctx).note_events)[idx].header as *const ClapEventHeader
+    } else if idx < note_count + (*ctx).midi_events.len() {
+        // Return MIDI event (CC, pitch bend)
+        &(&(*ctx).midi_events)[idx - note_count].header as *const ClapEventHeader
     } else {
         std::ptr::null()
     }

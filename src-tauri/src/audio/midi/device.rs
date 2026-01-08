@@ -128,8 +128,26 @@ impl MidiInputManager {
             log::info!("Disconnecting from MIDI device: {}", active.device_name);
             // Connection is dropped here, which closes the port
 
-            // Send all notes off when disconnecting
+            // Reset controller state and send all notes off when disconnecting
             if let Some(queue) = self.queue.lock().as_ref() {
+                // Reset sustain pedal (CC 64) to off
+                queue.push(MidiEvent::ControlChange {
+                    controller: 64,
+                    value: 0,
+                    channel: 0,
+                });
+                // Reset mod wheel (CC 1) to zero
+                queue.push(MidiEvent::ControlChange {
+                    controller: 1,
+                    value: 0,
+                    channel: 0,
+                });
+                // Reset pitch bend to center (8192)
+                queue.push(MidiEvent::PitchBend {
+                    value: 8192,
+                    channel: 0,
+                });
+                // Send all notes off
                 queue.all_notes_off();
             }
         }
@@ -225,14 +243,19 @@ impl MidiInputManager {
                     let cc = message[1] & 0x7F;
                     let value = message[2] & 0x7F;
 
-                    // Handle All Notes Off CC (123)
+                    // Handle All Notes Off CC (123) specially
                     if cc == 123 {
                         queue.push(MidiEvent::AllNotesOff);
                         log::debug!("MIDI All Notes Off CC received");
+                    } else {
+                        // Forward other CC messages (sustain=64, mod wheel=1, etc.)
+                        queue.push(MidiEvent::ControlChange {
+                            controller: cc,
+                            value,
+                            channel,
+                        });
+                        log::trace!("MIDI CC: cc={}, value={}, ch={}", cc, value, channel);
                     }
-                    // TODO: Forward other CC messages (sustain, mod wheel, etc.)
-                    // For now, just log them
-                    log::trace!("MIDI CC: cc={}, value={}, ch={}", cc, value, channel);
                 }
             }
             // Pitch Bend
@@ -240,9 +263,9 @@ impl MidiInputManager {
                 if message.len() >= 3 {
                     let lsb = message[1] & 0x7F;
                     let msb = message[2] & 0x7F;
-                    let _value = ((msb as u16) << 7) | (lsb as u16);
-                    // TODO: Forward pitch bend to plugin
-                    log::trace!("MIDI Pitch Bend: value={}, ch={}", _value, channel);
+                    let value = ((msb as u16) << 7) | (lsb as u16);
+                    queue.push(MidiEvent::PitchBend { value, channel });
+                    log::trace!("MIDI Pitch Bend: value={}, ch={}", value, channel);
                 }
             }
             // Other messages (aftertouch, program change, etc.) - log but ignore for now

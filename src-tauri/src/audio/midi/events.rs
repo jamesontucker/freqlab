@@ -29,6 +29,22 @@ pub enum MidiEvent {
         /// MIDI channel (0-15)
         channel: u8,
     },
+    /// Control change (CC) event
+    ControlChange {
+        /// Controller number (0-127)
+        controller: u8,
+        /// Controller value (0-127)
+        value: u8,
+        /// MIDI channel (0-15)
+        channel: u8,
+    },
+    /// Pitch bend event
+    PitchBend {
+        /// 14-bit pitch bend value (0-16383, center at 8192)
+        value: u16,
+        /// MIDI channel (0-15)
+        channel: u8,
+    },
     /// All notes off - send note off for all active notes
     AllNotesOff,
 }
@@ -52,6 +68,22 @@ impl MidiEvent {
             velocity: 0,
             channel: 0,
         }
+    }
+
+    /// Create a control change event
+    #[inline]
+    pub fn control_change(controller: u8, value: u8, channel: u8) -> Self {
+        Self::ControlChange {
+            controller,
+            value,
+            channel,
+        }
+    }
+
+    /// Create a pitch bend event
+    #[inline]
+    pub fn pitch_bend(value: u16, channel: u8) -> Self {
+        Self::PitchBend { value, channel }
     }
 }
 

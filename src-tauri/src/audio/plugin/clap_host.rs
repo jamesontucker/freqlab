@@ -673,6 +673,12 @@ impl PluginInstance {
                 MidiEvent::NoteOff { note, velocity, channel } => {
                     self.midi_context.add_note_off(*note, *velocity, *channel, 0);
                 }
+                MidiEvent::ControlChange { controller, value, channel } => {
+                    self.midi_context.add_control_change(*controller, *value, *channel, 0);
+                }
+                MidiEvent::PitchBend { value, channel } => {
+                    self.midi_context.add_pitch_bend(*value, *channel, 0);
+                }
                 MidiEvent::AllNotesOff => {
                     // Send note off for all 128 notes
                     for note in 0..128u8 {
