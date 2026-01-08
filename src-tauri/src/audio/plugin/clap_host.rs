@@ -81,12 +81,8 @@ pub struct PluginInstance {
     // Editor process state (out-of-process hosting, kept alive)
     _editor_process: Option<Arc<Mutex<Child>>>,
     editor_open: bool,
-    // Last known editor window position (x, y) for restoring on reload
-    last_editor_position: Option<(f64, f64)>,
     // Channel for receiving state updates from editor process
     state_receiver: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
-    // Shared position updated by the reader thread (kept alive)
-    _editor_position_shared: Option<Arc<Mutex<Option<(f64, f64)>>>>,
     // Counter for how many states have been applied (for debugging)
     state_apply_count: AtomicU32,
 
@@ -388,9 +384,7 @@ impl PluginInstance {
             temp_bundle_path,
             _editor_process: None,
             editor_open: false,
-            last_editor_position: None,
             state_receiver: None,
-            _editor_position_shared: None,
             state_apply_count: AtomicU32::new(0),
             #[cfg(target_os = "macos")]
             editor_window: None,
@@ -1008,43 +1002,57 @@ impl PluginInstance {
         self.editor_open
     }
 
-    /// Open the plugin's editor window (IN-PROCESS - GUI and audio share same plugin instance)
+    /// Open the plugin's editor window at a specific position (IN-PROCESS)
     ///
     /// This is the correct architecture: the plugin's GUI runs in the same process as audio,
     /// sharing the same atomic parameters. No IPC or state sync needed.
+    ///
+    /// Position is (x, y) in macOS screen coordinates. Pass None to center the window.
     #[cfg(target_os = "macos")]
-    pub fn open_editor(&mut self) -> Result<(), String> {
-        log::info!("open_editor: Called (in-process), editor_open={}", self.editor_open);
+    pub fn open_editor_at(&mut self, position: Option<(f64, f64)>) -> Result<(), String> {
+        log::info!("open_editor_at: Called, editor_open={}, position={:?}", self.editor_open, position);
 
         // Check if editor is already open
         if self.editor_open {
             // Check if the window is still visible
             if self.is_editor_window_visible() {
-                log::info!("open_editor: Editor window already open and visible");
+                log::info!("open_editor_at: Editor window already open and visible");
                 return Ok(());
             } else {
                 // Window was closed by user, clean up
-                log::info!("open_editor: Editor window was closed, cleaning up");
+                log::info!("open_editor_at: Editor window was closed, cleaning up");
                 self.close_editor_window();
                 self.editor_open = false;
             }
         }
 
-        log::info!("open_editor: Checking has_gui");
+        log::info!("open_editor_at: Checking has_gui");
         if !self.has_gui() {
-            log::warn!("open_editor: Plugin does not have a GUI");
+            log::warn!("open_editor_at: Plugin does not have a GUI");
             return Err("Plugin does not have a GUI".to_string());
         }
 
         // Open the editor window in-process (same plugin instance as audio)
         // This means GUI parameter changes directly affect audio via shared atomics
-        log::info!("open_editor: Opening editor window in-process");
-        self.open_editor_window_at(self.last_editor_position)?;
+        log::info!("open_editor_at: Opening editor window in-process at position {:?}", position);
+        self.open_editor_window_at(position)?;
 
         self.editor_open = true;
-        log::info!("open_editor: Editor opened successfully (in-process, shared atomics)");
+        log::info!("open_editor_at: Editor opened successfully (in-process, shared atomics)");
 
         Ok(())
+    }
+
+    /// Open the plugin's editor window centered (IN-PROCESS)
+    #[cfg(target_os = "macos")]
+    pub fn open_editor(&mut self) -> Result<(), String> {
+        self.open_editor_at(None)
+    }
+
+    /// Open the plugin's editor window (stub for non-macOS)
+    #[cfg(not(target_os = "macos"))]
+    pub fn open_editor_at(&mut self, _position: Option<(f64, f64)>) -> Result<(), String> {
+        Err("Plugin editor not supported on this platform".to_string())
     }
 
     /// Open the plugin's editor window (stub for non-macOS)
@@ -1053,7 +1061,14 @@ impl PluginInstance {
         Err("Plugin editor not supported on this platform".to_string())
     }
 
+    /// Get the current position of the editor window
+    /// Returns (x, y) in screen coordinates, or None if no window
+    pub fn get_editor_position(&self) -> Option<(f64, f64)> {
+        self.get_editor_window_position()
+    }
+
     /// Close the plugin's editor window (IN-PROCESS)
+    /// Note: Position is NOT saved here - caller (AudioEngineHandle) should save it
     #[cfg(target_os = "macos")]
     pub fn close_editor(&mut self) {
         if !self.editor_open {
@@ -1062,13 +1077,8 @@ impl PluginInstance {
 
         log::info!("close_editor: Closing in-process editor window");
 
-        // Save window position before closing
-        if let Some((x, y)) = self.get_editor_window_position() {
-            log::info!("close_editor: Saving window position ({}, {})", x, y);
-            self.last_editor_position = Some((x, y));
-        }
-
         // Close the window (in-process)
+        // Note: Position saving is handled by AudioEngineHandle to survive plugin reload
         self.close_editor_window();
 
         self.editor_open = false;

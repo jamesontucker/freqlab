@@ -213,6 +213,9 @@ struct SharedState {
     // Crossfade for hot reload
     crossfade_state: AtomicU8,
     crossfade_position: AtomicU32,
+    // Plugin editor window position (persists across plugin reload for hot reload)
+    // This is stored at engine level so it survives plugin unload/reload cycles
+    last_editor_position: RwLock<Option<(f64, f64)>>,
 }
 
 /// Helper to store f32 in AtomicU32
@@ -561,25 +564,62 @@ impl AudioEngineHandle {
     }
 
     /// Open the plugin's editor window
+    ///
+    /// Uses stored position if available, otherwise centers the window.
     pub fn open_plugin_editor(&self) -> Result<(), String> {
         log::info!("AudioEngineHandle::open_plugin_editor called");
+
+        // First, check if user manually closed the window (clicked X) and save position
+        // This handles the edge case where window was closed without calling close_plugin_editor
+        {
+            let plugin_lock = self.shared.plugin_instance.read();
+            if let Some(plugin) = plugin_lock.as_ref() {
+                // If editor is marked as open but window is not visible, user closed it manually
+                if plugin.is_editor_open() && !plugin.is_editor_window_visible() {
+                    if let Some(position) = plugin.get_editor_position() {
+                        log::info!("open_plugin_editor: saving position from manually closed window {:?}", position);
+                        *self.shared.last_editor_position.write() = Some(position);
+                    }
+                }
+            }
+        }
+
+        // Get stored position from engine level (survives plugin reload)
+        let position = self.shared.last_editor_position.read().clone();
+        log::info!("AudioEngineHandle::open_plugin_editor: position={:?}", position);
+
         let mut plugin_lock = self.shared.plugin_instance.write();
         log::info!("AudioEngineHandle::open_plugin_editor: got plugin lock");
         if let Some(plugin) = plugin_lock.as_mut() {
-            log::info!("AudioEngineHandle::open_plugin_editor: calling plugin.open_editor()");
-            plugin.open_editor()
+            log::info!("AudioEngineHandle::open_plugin_editor: calling plugin.open_editor_at()");
+            plugin.open_editor_at(position)
         } else {
             log::warn!("AudioEngineHandle::open_plugin_editor: no plugin loaded");
             Err("No plugin loaded".to_string())
         }
     }
 
-    /// Close the plugin's editor window
+    /// Close the plugin's editor window and save its position
     pub fn close_plugin_editor(&self) {
         let mut plugin_lock = self.shared.plugin_instance.write();
         if let Some(plugin) = plugin_lock.as_mut() {
+            // Save window position before closing (survives plugin reload)
+            if let Some(position) = plugin.get_editor_position() {
+                log::info!("AudioEngineHandle::close_plugin_editor: saving position {:?}", position);
+                *self.shared.last_editor_position.write() = Some(position);
+            }
             plugin.close_editor();
         }
+    }
+
+    /// Get the stored editor window position
+    pub fn get_editor_position(&self) -> Option<(f64, f64)> {
+        self.shared.last_editor_position.read().clone()
+    }
+
+    /// Set the stored editor window position
+    pub fn set_editor_position(&self, position: Option<(f64, f64)>) {
+        *self.shared.last_editor_position.write() = position;
     }
 
     /// Check if the plugin editor is open
@@ -724,6 +764,7 @@ impl AudioEngine {
             is_instrument_plugin: AtomicBool::new(false),
             crossfade_state: AtomicU8::new(CROSSFADE_NONE),
             crossfade_position: AtomicU32::new(0),
+            last_editor_position: RwLock::new(None),
         });
 
         let shared_clone = Arc::clone(&shared);

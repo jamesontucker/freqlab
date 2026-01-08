@@ -354,6 +354,7 @@ export async function pluginLoadForProject(projectName: string, version: number)
 
 /**
  * Open the plugin's editor window
+ * Uses stored position if available, otherwise centers the window.
  */
 export async function pluginOpenEditor(): Promise<void> {
   await invoke('plugin_open_editor');

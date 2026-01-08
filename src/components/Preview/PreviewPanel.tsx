@@ -530,6 +530,7 @@ export function PreviewPanel() {
           await previewApi.pluginReload(activeProject.name, version);
 
           // Re-open editor if it was open before
+          // Position is stored at engine level, so it will restore to same position
           if (editorWasOpen) {
             setTimeout(async () => {
               try {

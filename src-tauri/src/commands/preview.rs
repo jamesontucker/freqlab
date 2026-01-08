@@ -513,6 +513,8 @@ pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     // Clear MIDI queues before unloading
     clear_midi_player_queue();
     clear_midi_input_queue();
+    // Close editor first to save window position
+    handle.close_plugin_editor();
     handle.unload_plugin();
     let _ = app_handle.emit("plugin-unloaded", ());
     Ok(())
@@ -636,11 +638,12 @@ pub fn plugin_load_for_project(
 }
 
 /// Open the plugin's editor window
+///
+/// Uses stored position if available, otherwise centers the window.
 #[tauri::command]
 pub fn plugin_open_editor() -> Result<(), String> {
     log::info!("plugin_open_editor command called");
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
-    log::info!("plugin_open_editor: got engine handle, calling open_plugin_editor");
     let result = handle.open_plugin_editor();
     log::info!("plugin_open_editor: result = {:?}", result.is_ok());
     result
