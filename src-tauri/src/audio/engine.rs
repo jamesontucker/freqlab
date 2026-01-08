@@ -204,6 +204,8 @@ struct SharedState {
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
+    // Whether the loaded plugin is an instrument (needs MIDI processing even when not "playing")
+    is_instrument_plugin: AtomicBool,
     // Crossfade for hot reload
     crossfade_state: AtomicU8,
     crossfade_position: AtomicU32,
@@ -596,6 +598,38 @@ impl AudioEngineHandle {
         }
     }
 
+    // MIDI methods (for instrument plugins)
+
+    /// Send a MIDI note on event to the loaded plugin
+    pub fn midi_note_on(&self, note: u8, velocity: u8) {
+        let plugin_lock = self.shared.plugin_instance.read();
+        if let Some(plugin) = plugin_lock.as_ref() {
+            plugin.send_note_on(note, velocity);
+        }
+    }
+
+    /// Send a MIDI note off event to the loaded plugin
+    pub fn midi_note_off(&self, note: u8) {
+        let plugin_lock = self.shared.plugin_instance.read();
+        if let Some(plugin) = plugin_lock.as_ref() {
+            plugin.send_note_off(note);
+        }
+    }
+
+    /// Send all notes off to the loaded plugin
+    pub fn midi_all_notes_off(&self) {
+        let plugin_lock = self.shared.plugin_instance.read();
+        if let Some(plugin) = plugin_lock.as_ref() {
+            plugin.send_all_notes_off();
+        }
+    }
+
+    /// Set whether the loaded plugin is an instrument (vs effect)
+    /// Instrument plugins are processed even when not "playing" for MIDI input
+    pub fn set_is_instrument(&self, is_instrument: bool) {
+        self.shared.is_instrument_plugin.store(is_instrument, Ordering::SeqCst);
+    }
+
     /// Start crossfade out (for hot reload)
     pub fn start_crossfade_out(&self) {
         self.shared.crossfade_position.store(0, Ordering::SeqCst);
@@ -664,6 +698,7 @@ impl AudioEngine {
             waveform_write_pos: AtomicU32::new(0),
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
+            is_instrument_plugin: AtomicBool::new(false),
             crossfade_state: AtomicU8::new(CROSSFADE_NONE),
             crossfade_position: AtomicU32::new(0),
         });
@@ -692,9 +727,14 @@ impl AudioEngine {
                 &stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let is_playing = shared_clone.is_playing.load(Ordering::SeqCst);
+                    let has_plugin = shared_clone.plugin_instance.read().is_some();
+                    let is_instrument = shared_clone.is_instrument_plugin.load(Ordering::SeqCst);
 
-                    if !is_playing {
-                        // Fill with silence
+                    // For instrument plugins, we need to process even when not "playing"
+                    // because they generate sound from MIDI input, not audio input.
+                    // For effect plugins, respect the is_playing flag normally.
+                    if !is_playing && !(has_plugin && is_instrument) {
+                        // Not playing, and either no plugin or plugin is an effect - output silence
                         for sample in data.iter_mut() {
                             *sample = 0.0;
                         }
@@ -704,7 +744,6 @@ impl AudioEngine {
                     }
 
                     let input_source = shared_clone.input_source.read().clone();
-                    let has_plugin = shared_clone.plugin_instance.read().is_some();
 
                     // Generate input samples
                     match input_source {

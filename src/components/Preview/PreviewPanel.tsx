@@ -11,6 +11,7 @@ import { LevelMeters } from './LevelMeters';
 import { SpectrumAnalyzer } from './SpectrumAnalyzer';
 import { WaveformDisplay } from './WaveformDisplay';
 import { LiveInputControls } from './LiveInputControls';
+import { InstrumentControls } from './InstrumentControls';
 
 interface BuildStreamEvent {
   type: 'start' | 'output' | 'error' | 'done';
@@ -630,6 +631,8 @@ export function PreviewPanel() {
           try {
             await previewApi.pluginCloseEditor();
             await previewApi.pluginUnload();
+            // Reset instrument flag when unloading
+            await previewApi.setPluginIsInstrument(false);
           } catch (err) {
             console.error('Failed to close plugin on project switch:', err);
           }
@@ -1176,14 +1179,9 @@ export function PreviewPanel() {
                 )}
 
                 {effectivePluginType === 'instrument' && (
-                  <div className="p-4 bg-bg-tertiary rounded-lg border border-border">
-                    <p className="text-sm text-text-secondary text-center">
-                      Virtual keyboard coming soon...
-                    </p>
-                    <p className="text-xs text-text-muted text-center mt-1">
-                      MIDI input for instrument plugins
-                    </p>
-                  </div>
+                  <InstrumentControls
+                    pluginLoaded={loadedPlugin !== null}
+                  />
                 )}
                 </div>
                 )}
@@ -1373,6 +1371,8 @@ export function PreviewPanel() {
                             try {
                               await previewApi.pluginCloseEditor();
                               await previewApi.pluginUnload();
+                              // Reset instrument flag when unloading
+                              await previewApi.setPluginIsInstrument(false);
                               // WebView plugins need a fresh build after unloading due to wry class name conflicts
                               if (activeProject?.uiFramework === 'webview') {
                                 setWebviewNeedsFreshBuild(true);
@@ -1386,6 +1386,8 @@ export function PreviewPanel() {
                             setPluginLoading(true);
                             try {
                               await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
+                              // Set whether this is an instrument plugin (for MIDI processing)
+                              await previewApi.setPluginIsInstrument(activeProject.template === 'instrument');
                               // Auto-open editor after load (if plugin has one) - but not if webview needs fresh build
                               if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
                                 // Use setTimeout to allow state to update

@@ -283,6 +283,92 @@ pub unsafe extern "C" fn empty_output_events_push(
 }
 
 // =============================================================================
+// MIDI Event Context for Input Events
+// =============================================================================
+
+/// Context structure for passing MIDI events to the plugin
+/// This is stored and passed via the ClapInputEvents ctx field
+pub struct MidiEventContext {
+    /// Pre-allocated storage for note events
+    pub events: Vec<ClapEventNote>,
+}
+
+impl MidiEventContext {
+    pub fn new() -> Self {
+        Self {
+            events: Vec::with_capacity(64), // Pre-allocate for typical use
+        }
+    }
+
+    /// Clear events for next process cycle
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    /// Add a note on event
+    pub fn add_note_on(&mut self, note: u8, velocity: u8, channel: u8, time: u32) {
+        self.events.push(ClapEventNote {
+            header: ClapEventHeader {
+                size: std::mem::size_of::<ClapEventNote>() as u32,
+                time,
+                space_id: 0, // CLAP_CORE_EVENT_SPACE_ID
+                type_: CLAP_EVENT_NOTE_ON,
+                flags: 0,
+            },
+            note_id: -1, // No specific note ID
+            port_index: 0,
+            channel: channel as i16,
+            key: note as i16,
+            velocity: velocity as f64 / 127.0, // CLAP uses 0.0-1.0
+        });
+    }
+
+    /// Add a note off event
+    pub fn add_note_off(&mut self, note: u8, velocity: u8, channel: u8, time: u32) {
+        self.events.push(ClapEventNote {
+            header: ClapEventHeader {
+                size: std::mem::size_of::<ClapEventNote>() as u32,
+                time,
+                space_id: 0,
+                type_: CLAP_EVENT_NOTE_OFF,
+                flags: 0,
+            },
+            note_id: -1,
+            port_index: 0,
+            channel: channel as i16,
+            key: note as i16,
+            velocity: velocity as f64 / 127.0,
+        });
+    }
+}
+
+/// Callback: return number of events in the context
+pub unsafe extern "C" fn midi_input_events_size(list: *const ClapInputEvents) -> u32 {
+    let ctx = (*list).ctx as *const MidiEventContext;
+    if ctx.is_null() {
+        return 0;
+    }
+    (*ctx).events.len() as u32
+}
+
+/// Callback: return event at index from the context
+pub unsafe extern "C" fn midi_input_events_get(
+    list: *const ClapInputEvents,
+    index: u32,
+) -> *const ClapEventHeader {
+    let ctx = (*list).ctx as *const MidiEventContext;
+    if ctx.is_null() {
+        return std::ptr::null();
+    }
+    let events = &(*ctx).events;
+    if (index as usize) < events.len() {
+        &events[index as usize].header as *const ClapEventHeader
+    } else {
+        std::ptr::null()
+    }
+}
+
+// =============================================================================
 // GUI Extension
 // =============================================================================
 

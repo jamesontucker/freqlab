@@ -7,17 +7,19 @@ Add MIDI input capabilities for instrument plugins in the preview panel, includi
 ## UI Structure
 
 ### Tab Layout
-Three tabs (matching effect panel's input source pattern):
+Four tabs:
+- **Piano** - Virtual piano keyboard for direct note input (standalone tab)
 - **Patterns** - Preset musical patterns with playback controls
 - **MIDI File** - Load and play .mid files
 - **Live** - Connect MIDI keyboard/controller
 
 ### Virtual Piano Keyboard
-- Full piano octaves displayed across bottom of instrument controls
-- Clickable with mouse to trigger notes
-- Highlights keys when notes play (from any source)
-- Octave range navigation
-- Available in all three tabs
+- Full 4-octave piano displayed in Piano tab
+- Clickable with mouse to trigger notes (supports drag for glissando)
+- Highlights keys when notes play
+- Octave shift control: -2 to +2 (shifts entire keyboard range)
+- Panic button to stop all notes
+- Also available as compact display in other tabs to show active notes
 
 ### Patterns Tab
 - Category pills: "Melodic" | "Bass" | "Drums"
@@ -165,12 +167,14 @@ Send note-off for all 128 notes when:
 
 ## Implementation Phases
 
-### Phase 1: CLAP MIDI + Piano Keyboard
-- Add MIDI event queue to ClapHost
-- Implement CLAP note events
-- Create InstrumentControls component with piano keyboard
-- Add midi_note_on/off commands
-- **Goal:** Click piano key → hear sound from instrument plugin
+### Phase 1: CLAP MIDI + Piano Keyboard ✅ COMPLETE
+- [x] Add MIDI event queue to ClapHost (lock-free ringbuf)
+- [x] Implement CLAP note events (CLAP_EVENT_NOTE_ON/OFF)
+- [x] Create InstrumentControls component with piano keyboard
+- [x] Add midi_note_on/off/all_notes_off commands
+- [x] Add is_instrument_plugin flag for proper audio callback behavior
+- [x] Fix stuck notes on octave change
+- **Result:** Click piano key → hear sound from instrument plugin ✓
 
 ### Phase 2: Patterns + Playback
 - Implement pattern presets in Rust
@@ -196,11 +200,11 @@ Send note-off for all 128 notes when:
 
 ```
 src/components/Preview/
-  InstrumentControls.tsx    # Main container with tabs
-  PianoKeyboard.tsx         # Virtual piano (used in all tabs)
-  PatternControls.tsx       # Pattern selection and playback
-  MidiFileControls.tsx      # File loading and track selection
-  MidiLiveControls.tsx      # Device connection
+  InstrumentControls.tsx    # Main container with tabs (Piano tab currently active)
+  PianoKeyboard.tsx         # Virtual piano keyboard ✅ DONE
+  PatternControls.tsx       # Pattern selection and playback (Phase 2)
+  MidiFileControls.tsx      # File loading and track selection (Phase 3)
+  MidiLiveControls.tsx      # Device connection (Phase 4)
 ```
 
 ## Files to Create/Modify

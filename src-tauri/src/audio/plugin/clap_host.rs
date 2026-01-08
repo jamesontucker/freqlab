@@ -5,6 +5,7 @@
 use super::clap_sys::*;
 #[cfg(target_os = "macos")]
 use super::editor;
+use crate::audio::midi::{MidiEvent, MidiEventQueue};
 use libloading::{Library, Symbol};
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
@@ -92,6 +93,12 @@ pub struct PluginInstance {
     // Direct editor window state (for in-process hosting by editor_host binary)
     #[cfg(target_os = "macos")]
     editor_window: Option<*mut std::ffi::c_void>,
+
+    // MIDI event handling
+    /// Queue for incoming MIDI events (from commands, patterns, devices)
+    midi_queue: Arc<MidiEventQueue>,
+    /// Context for current process call's MIDI events
+    midi_context: MidiEventContext,
 }
 
 // Host callback structure (renamed to avoid conflict with ClapHost struct)
@@ -385,6 +392,8 @@ impl PluginInstance {
             state_apply_count: AtomicU32::new(0),
             #[cfg(target_os = "macos")]
             editor_window: None,
+            midi_queue: Arc::new(MidiEventQueue::new(256)),
+            midi_context: MidiEventContext::new(),
         };
 
         // Activate the plugin
@@ -647,11 +656,30 @@ impl PluginInstance {
             constant_mask: 0,
         };
 
-        // Create empty event lists
+        // Drain MIDI queue into context for this process call
+        self.midi_context.clear();
+        for event in self.midi_queue.drain() {
+            match event {
+                MidiEvent::NoteOn { note, velocity, channel } => {
+                    self.midi_context.add_note_on(note, velocity, channel, 0);
+                }
+                MidiEvent::NoteOff { note, velocity, channel } => {
+                    self.midi_context.add_note_off(note, velocity, channel, 0);
+                }
+                MidiEvent::AllNotesOff => {
+                    // Send note off for all 128 notes
+                    for note in 0..128u8 {
+                        self.midi_context.add_note_off(note, 0, 0, 0);
+                    }
+                }
+            }
+        }
+
+        // Create input events with MIDI context
         let input_events = ClapInputEvents {
-            ctx: ptr::null_mut(),
-            size: Some(empty_input_events_size),
-            get: Some(empty_input_events_get),
+            ctx: &self.midi_context as *const MidiEventContext as *mut std::ffi::c_void,
+            size: Some(midi_input_events_size),
+            get: Some(midi_input_events_get),
         };
 
         let output_events = ClapOutputEvents {
@@ -710,6 +738,26 @@ impl PluginInstance {
             return !ext.is_null();
         }
         false
+    }
+
+    /// Get a reference to the MIDI event queue for sending events
+    pub fn midi_queue(&self) -> Arc<MidiEventQueue> {
+        Arc::clone(&self.midi_queue)
+    }
+
+    /// Send a note on event to the plugin
+    pub fn send_note_on(&self, note: u8, velocity: u8) {
+        self.midi_queue.note_on(note, velocity);
+    }
+
+    /// Send a note off event to the plugin
+    pub fn send_note_off(&self, note: u8) {
+        self.midi_queue.note_off(note);
+    }
+
+    /// Send all notes off to prevent stuck notes
+    pub fn send_all_notes_off(&self) {
+        self.midi_queue.all_notes_off();
     }
 
     /// Check if the plugin supports state save/load

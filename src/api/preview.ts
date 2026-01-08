@@ -457,3 +457,39 @@ export async function previewSetMasterVolume(volume: number): Promise<void> {
 export async function previewGetMasterVolume(): Promise<number> {
   return await invoke('preview_get_master_volume');
 }
+
+// =============================================================================
+// MIDI API (for instrument plugins)
+// =============================================================================
+
+/**
+ * Send a MIDI note on event to the loaded plugin
+ * @param note - MIDI note number (0-127, 60 = middle C)
+ * @param velocity - Note velocity (0-127)
+ */
+export async function midiNoteOn(note: number, velocity: number): Promise<void> {
+  await invoke('midi_note_on', { note, velocity });
+}
+
+/**
+ * Send a MIDI note off event to the loaded plugin
+ * @param note - MIDI note number (0-127)
+ */
+export async function midiNoteOff(note: number): Promise<void> {
+  await invoke('midi_note_off', { note });
+}
+
+/**
+ * Send all notes off to the loaded plugin (panic button)
+ */
+export async function midiAllNotesOff(): Promise<void> {
+  await invoke('midi_all_notes_off');
+}
+
+/**
+ * Set whether the loaded plugin is an instrument (vs effect)
+ * Instrument plugins are processed even when not "playing" for MIDI input
+ */
+export async function setPluginIsInstrument(isInstrument: boolean): Promise<void> {
+  await invoke('set_plugin_is_instrument', { isInstrument });
+}

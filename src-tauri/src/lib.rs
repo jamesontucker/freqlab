@@ -98,6 +98,11 @@ pub fn run() {
             // Master volume commands
             commands::preview::preview_set_master_volume,
             commands::preview::preview_get_master_volume,
+            // MIDI commands (for instrument plugins)
+            commands::preview::midi_note_on,
+            commands::preview::midi_note_off,
+            commands::preview::midi_all_notes_off,
+            commands::preview::set_plugin_is_instrument,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

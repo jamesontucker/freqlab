@@ -743,3 +743,40 @@ pub fn preview_get_master_volume() -> Result<f32, String> {
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
     Ok(handle.get_master_volume())
 }
+
+// =============================================================================
+// MIDI Commands (for instrument plugins)
+// =============================================================================
+
+/// Send a MIDI note on event to the loaded plugin
+#[tauri::command]
+pub fn midi_note_on(note: u8, velocity: u8) -> Result<(), String> {
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    handle.midi_note_on(note, velocity);
+    Ok(())
+}
+
+/// Send a MIDI note off event to the loaded plugin
+#[tauri::command]
+pub fn midi_note_off(note: u8) -> Result<(), String> {
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    handle.midi_note_off(note);
+    Ok(())
+}
+
+/// Send all notes off to the loaded plugin
+#[tauri::command]
+pub fn midi_all_notes_off() -> Result<(), String> {
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    handle.midi_all_notes_off();
+    Ok(())
+}
+
+/// Set whether the loaded plugin is an instrument (vs effect)
+/// Instrument plugins are processed even when not "playing" for MIDI input
+#[tauri::command]
+pub fn set_plugin_is_instrument(is_instrument: bool) -> Result<(), String> {
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    handle.set_is_instrument(is_instrument);
+    Ok(())
+}
