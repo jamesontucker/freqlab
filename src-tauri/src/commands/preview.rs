@@ -492,8 +492,9 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
-            // Update MIDI player queue for pattern playback
+            // Update MIDI queues for pattern playback and live input
             update_midi_player_queue();
+            update_midi_input_queue();
             // Pre-warm MIDI code paths to reduce initial lag
             prewarm_midi_paths(&handle);
             Ok(())
@@ -509,8 +510,9 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
 #[tauri::command]
 pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
-    // Clear MIDI player queue before unloading
+    // Clear MIDI queues before unloading
     clear_midi_player_queue();
+    clear_midi_input_queue();
     handle.unload_plugin();
     let _ = app_handle.emit("plugin-unloaded", ());
     Ok(())
@@ -619,8 +621,9 @@ pub fn plugin_load_for_project(
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
-            // Update MIDI player queue for pattern playback
+            // Update MIDI queues for pattern playback and live input
             update_midi_player_queue();
+            update_midi_input_queue();
             // Pre-warm MIDI code paths to reduce initial lag
             prewarm_midi_paths(&handle);
             Ok(())
@@ -712,8 +715,9 @@ pub fn plugin_reload(
         Ok(()) => {
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
-            // Update MIDI player queue for pattern playback
+            // Update MIDI queues for pattern playback and live input
             update_midi_player_queue();
+            update_midi_input_queue();
             // Pre-warm MIDI code paths to reduce initial lag
             prewarm_midi_paths(&handle);
             log::info!("Plugin hot reload successful");
@@ -1154,4 +1158,79 @@ pub fn midi_file_seek(position_beats: f32) -> Result<(), String> {
     let player = player_lock.as_ref().ok_or("MIDI player not initialized")?;
     player.seek(position_beats);
     Ok(())
+}
+
+// =============================================================================
+// Live MIDI Device Input Commands
+// =============================================================================
+
+use crate::audio::midi::{MidiDeviceInfo, MidiInputManager};
+
+/// Global MIDI input manager instance
+static MIDI_INPUT_MANAGER: Lazy<MidiInputManager> = Lazy::new(MidiInputManager::new);
+
+/// Update the MIDI input manager's queue when a plugin is loaded/reloaded
+fn update_midi_input_queue() {
+    if MIDI_INPUT_MANAGER.is_connected() {
+        if let Some(handle) = get_engine_handle() {
+            if let Some(queue) = handle.get_plugin_midi_queue() {
+                MIDI_INPUT_MANAGER.set_queue(Some(queue));
+                log::info!("MIDI input manager queue updated");
+            } else {
+                log::warn!("MIDI input manager: no queue available from plugin");
+            }
+        }
+    }
+}
+
+/// Clear the MIDI input manager's queue and disconnect when a plugin is unloaded
+/// This ensures user doesn't see "connected" state that doesn't work
+fn clear_midi_input_queue() {
+    if MIDI_INPUT_MANAGER.is_connected() {
+        MIDI_INPUT_MANAGER.disconnect();
+        log::info!("MIDI input manager disconnected due to plugin unload");
+    }
+    MIDI_INPUT_MANAGER.set_queue(None);
+    log::info!("MIDI input manager queue cleared");
+}
+
+/// List available MIDI input devices
+#[tauri::command]
+pub fn midi_device_list() -> Result<Vec<MidiDeviceInfo>, String> {
+    MIDI_INPUT_MANAGER.list_devices()
+}
+
+/// Connect to a MIDI input device by index
+#[tauri::command]
+pub fn midi_device_connect(device_index: usize) -> Result<String, String> {
+    // Get the plugin's MIDI queue
+    let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    let queue = handle.get_plugin_midi_queue()
+        .ok_or_else(|| "No plugin loaded - cannot connect MIDI device".to_string())?;
+
+    MIDI_INPUT_MANAGER.connect(device_index, queue)
+}
+
+/// Disconnect from the current MIDI input device
+#[tauri::command]
+pub fn midi_device_disconnect() {
+    MIDI_INPUT_MANAGER.disconnect();
+}
+
+/// Check if connected to a MIDI input device
+#[tauri::command]
+pub fn midi_device_is_connected() -> bool {
+    MIDI_INPUT_MANAGER.is_connected()
+}
+
+/// Get the name of the connected MIDI device (if any)
+#[tauri::command]
+pub fn midi_device_get_connected() -> Option<String> {
+    MIDI_INPUT_MANAGER.connected_device_name()
+}
+
+/// Get the last received MIDI note (for activity indicator)
+#[tauri::command]
+pub fn midi_device_get_last_note() -> Option<u8> {
+    MIDI_INPUT_MANAGER.get_last_note()
 }

@@ -123,6 +123,13 @@ pub fn run() {
             commands::preview::midi_file_set_tempo_automation,
             commands::preview::midi_file_get_position,
             commands::preview::midi_file_seek,
+            // Live MIDI device commands
+            commands::preview::midi_device_list,
+            commands::preview::midi_device_connect,
+            commands::preview::midi_device_disconnect,
+            commands::preview::midi_device_is_connected,
+            commands::preview::midi_device_get_connected,
+            commands::preview::midi_device_get_last_note,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -722,3 +722,56 @@ export async function midiFileGetPosition(): Promise<PlaybackPositionInfo> {
 export async function midiFileSeek(positionBeats: number): Promise<void> {
   await invoke('midi_file_seek', { position_beats: positionBeats });
 }
+
+// =============================================================================
+// Live MIDI Device API
+// =============================================================================
+
+export interface MidiDeviceInfo {
+  index: number;
+  name: string;
+}
+
+/**
+ * List available MIDI input devices
+ */
+export async function midiDeviceList(): Promise<MidiDeviceInfo[]> {
+  return await invoke('midi_device_list');
+}
+
+/**
+ * Connect to a MIDI input device by index
+ * @param deviceIndex - Index from midiDeviceList()
+ * @returns Name of the connected device
+ */
+export async function midiDeviceConnect(deviceIndex: number): Promise<string> {
+  return await invoke('midi_device_connect', { deviceIndex });
+}
+
+/**
+ * Disconnect from the current MIDI input device
+ */
+export async function midiDeviceDisconnect(): Promise<void> {
+  await invoke('midi_device_disconnect');
+}
+
+/**
+ * Check if connected to a MIDI input device
+ */
+export async function midiDeviceIsConnected(): Promise<boolean> {
+  return await invoke('midi_device_is_connected');
+}
+
+/**
+ * Get the name of the connected MIDI device (if any)
+ */
+export async function midiDeviceGetConnected(): Promise<string | null> {
+  return await invoke('midi_device_get_connected');
+}
+
+/**
+ * Get the last received MIDI note (for activity indicator)
+ */
+export async function midiDeviceGetLastNote(): Promise<number | null> {
+  return await invoke('midi_device_get_last_note');
+}

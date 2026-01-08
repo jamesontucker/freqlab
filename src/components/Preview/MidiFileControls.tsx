@@ -41,10 +41,15 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
   const playbackStartedRef = useRef(false);
   const progressBarRef = useRef<HTMLDivElement>(null);
   const isSwitchingTrackRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const isPollInFlightRef = useRef(false);
 
-  // Stop playback when component unmounts
+  // Track mounted state and stop playback on unmount
   useEffect(() => {
+    isMountedRef.current = true;
+
     return () => {
+      isMountedRef.current = false;
       if (playbackStartedRef.current) {
         midiFileStop().catch(err => {
           console.error('Failed to stop MIDI file on unmount:', err);
@@ -53,13 +58,19 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
     };
   }, []);
 
-  // Poll playback position while playing
+  // Poll playback position while playing (with guards against overlapping calls)
   useEffect(() => {
     if (!isPlaying) return;
 
     const pollPosition = async () => {
+      // Skip if previous poll is still in flight or component unmounted
+      if (isPollInFlightRef.current || !isMountedRef.current) return;
+
+      isPollInFlightRef.current = true;
       try {
         const posInfo = await midiFileGetPosition();
+        if (!isMountedRef.current) return;
+
         setPlaybackPosition(posInfo.position);
         setPlaybackDuration(posInfo.duration);
         // Sync playing state in case playback ended (but not during track switch)
@@ -67,13 +78,15 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
           setIsPlaying(false);
           playbackStartedRef.current = false;
         }
-      } catch (err) {
+      } catch {
         // Ignore errors during polling
+      } finally {
+        isPollInFlightRef.current = false;
       }
     };
 
-    // Poll at ~30fps
-    const interval = setInterval(pollPosition, 33);
+    // Poll at 10Hz (100ms) - plenty fast for position display, reduces IPC overhead
+    const interval = setInterval(pollPosition, 100);
     pollPosition(); // Initial poll
 
     return () => clearInterval(interval);
@@ -84,8 +97,10 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
       // Stop any current playback
       if (isPlaying) {
         await midiFileStop();
-        setIsPlaying(false);
-        playbackStartedRef.current = false;
+        if (isMountedRef.current) {
+          setIsPlaying(false);
+          playbackStartedRef.current = false;
+        }
       }
 
       const path = await open({
@@ -93,12 +108,14 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
         filters: [{ name: 'MIDI Files', extensions: ['mid', 'midi'] }],
       });
 
-      if (!path) return;
+      if (!path || !isMountedRef.current) return;
 
       setLoading(true);
       setError(null);
 
       const info = await midiFileLoad(path as string);
+      if (!isMountedRef.current) return;
+
       setFileInfo(info);
       setSelectedTrack(0);
       setOctaveShift(0);
@@ -112,25 +129,32 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
       setUseTempoAutomation(info.has_tempo_automation);
     } catch (err) {
       console.error('Failed to load MIDI file:', err);
-      setError(String(err));
+      if (isMountedRef.current) {
+        setError(String(err));
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [isPlaying]);
 
   const handleUnloadFile = useCallback(async () => {
     try {
       await midiFileUnload();
-      setFileInfo(null);
-      setSelectedTrack(0);
-      setIsPlaying(false);
-      playbackStartedRef.current = false;
+      if (isMountedRef.current) {
+        setFileInfo(null);
+        setSelectedTrack(0);
+        setIsPlaying(false);
+        playbackStartedRef.current = false;
+      }
     } catch (err) {
       console.error('Failed to unload MIDI file:', err);
     }
   }, []);
 
   const handleTrackSelect = useCallback(async (trackIndex: number) => {
+    if (!isMountedRef.current) return;
     setSelectedTrack(trackIndex);
 
     // If already playing, switch to new track while preserving position
@@ -165,8 +189,10 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
 
     try {
       await midiFilePlay(selectedTrack, bpm, octaveShift, true, useTempoAutomation);
-      setIsPlaying(true);
-      playbackStartedRef.current = true;
+      if (isMountedRef.current) {
+        setIsPlaying(true);
+        playbackStartedRef.current = true;
+      }
     } catch (err) {
       console.error('Failed to play MIDI file:', err);
     }
@@ -175,8 +201,10 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
   const handleStop = useCallback(async () => {
     try {
       await midiFileStop();
-      setIsPlaying(false);
-      playbackStartedRef.current = false;
+      if (isMountedRef.current) {
+        setIsPlaying(false);
+        playbackStartedRef.current = false;
+      }
     } catch (err) {
       console.error('Failed to stop MIDI file:', err);
     }

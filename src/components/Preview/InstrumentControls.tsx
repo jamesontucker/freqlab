@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { PianoKeyboard } from './PianoKeyboard';
 import { PatternControls } from './PatternControls';
 import { MidiFileControls } from './MidiFileControls';
+import { MidiLiveControls } from './MidiLiveControls';
 import { midiAllNotesOff } from '../../api/preview';
 
 interface InstrumentControlsProps {
@@ -18,7 +19,7 @@ const TABS: { id: TabId; label: string; enabled: boolean }[] = [
   { id: 'patterns', label: 'Patterns', enabled: true },
   { id: 'midi', label: 'MIDI File', enabled: true },
   { id: 'piano', label: 'Piano', enabled: true },
-  { id: 'live', label: 'Live', enabled: false },
+  { id: 'live', label: 'Live', enabled: true },
 ];
 
 // Octave shift options
@@ -156,9 +157,7 @@ export function InstrumentControls({
 
       {/* Live Tab */}
       {activeTab === 'live' && (
-        <div className="py-8 text-center">
-          <p className="text-sm text-text-secondary">Live MIDI (coming soon)</p>
-        </div>
+        <MidiLiveControls pluginLoaded={pluginLoaded} />
       )}
     </div>
   );
