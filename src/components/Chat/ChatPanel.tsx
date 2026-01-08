@@ -52,6 +52,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessageType[]>([]);
+  const isInitialMount = useRef(true);
   const isSavingRef = useRef(false);
   const saveQueueRef = useRef<ChatMessageType[] | null>(null);
   const streamingContentRef = useRef('');
@@ -194,9 +195,20 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   }, [messages]);
 
   // Auto-scroll to bottom when messages change
+  // Use instant scroll until history is loaded (no visible animation), smooth scroll for chat updates after
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
+    if (!isHistoryLoaded) {
+      // Still loading - use instant scroll (will be hidden during fade anyway)
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+    } else if (isInitialMount.current) {
+      // History just loaded - instant scroll then mark mount complete
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+      isInitialMount.current = false;
+    } else {
+      // Normal chat flow - smooth scroll for new messages
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, streamingContent, isHistoryLoaded]);
 
   // Rotate through thinking phrases while loading
   useEffect(() => {
@@ -431,7 +443,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const effectiveVersionForHeader = activeVersion ?? latestVersionForHeader;
 
   return (
-    <div className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden">
+    <div className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in">
       {/* Version header */}
       {effectiveVersionForHeader > 0 && (
         <div className="px-4 py-2 border-b border-border flex items-center gap-2">
