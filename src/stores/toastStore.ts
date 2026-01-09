@@ -6,6 +6,7 @@ export interface Toast {
   id: string;
   type: ToastType;
   message: string;
+  duration?: number; // Custom duration in ms (default: 5000, errors don't auto-dismiss)
   action?: {
     label: string;
     onClick: () => void;
@@ -30,13 +31,14 @@ export const useToastStore = create<ToastState>((set) => ({
       toasts: [...state.toasts, { ...toast, id }],
     }));
 
-    // Auto-dismiss success and info toasts after 5 seconds
+    // Auto-dismiss non-error toasts (custom duration or default 5s)
     if (toast.type !== 'error') {
+      const duration = toast.duration ?? 5000;
       setTimeout(() => {
         set((state) => ({
           toasts: state.toasts.filter((t) => t.id !== id),
         }));
-      }, 5000);
+      }, duration);
     }
 
     return id;

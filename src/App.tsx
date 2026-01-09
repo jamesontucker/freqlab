@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { useSettingsStore } from './stores/settingsStore';
 import { useProjectStore } from './stores/projectStore';
 import { useToastStore } from './stores/toastStore';
 import { useUpdateStore } from './stores/updateStore';
+import { useNetworkStatusChange } from './hooks/useNetworkStatus';
 import { WelcomeWizard } from './components/Setup/WelcomeWizard';
 import { MainLayout } from './components/Layout/MainLayout';
 import { applyTheme } from './components/Settings/ThemePicker';
@@ -19,6 +20,25 @@ function App() {
   const { setStatus, setUpdateInfo, setLastChecked } = useUpdateStore();
   const [hasCheckedPrereqs, setHasCheckedPrereqs] = useState(false);
   const [hasCheckedUpdates, setHasCheckedUpdates] = useState(false);
+
+  // Network status change handlers
+  const handleOnline = useCallback(() => {
+    addToast({
+      type: 'success',
+      message: 'Back online',
+    });
+  }, [addToast]);
+
+  const handleOffline = useCallback(() => {
+    addToast({
+      type: 'warning',
+      message: 'No internet connection. Claude requests will fail.',
+      duration: 10000, // Show longer since this is important
+    });
+  }, [addToast]);
+
+  // Monitor network status (checks every 60 seconds, plus instant browser events)
+  useNetworkStatusChange(handleOnline, handleOffline);
 
   // Apply theme on startup and when it changes
   useEffect(() => {
