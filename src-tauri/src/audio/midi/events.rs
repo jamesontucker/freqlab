@@ -5,7 +5,6 @@
 //! Consumer side uses try_lock to avoid blocking the audio thread.
 
 use ringbuf::{traits::*, HeapRb};
-use std::sync::Arc;
 use parking_lot::Mutex;
 
 /// MIDI event types that can be sent to plugins
@@ -192,16 +191,6 @@ impl MidiEventQueue {
 // Safe to share across threads
 unsafe impl Send for MidiEventQueue {}
 unsafe impl Sync for MidiEventQueue {}
-
-/// Create a shared MIDI event queue with adequate capacity
-pub fn create_midi_queue() -> Arc<MidiEventQueue> {
-    // 1024 events provides headroom for:
-    // - Rapid piano input (~100 events/second)
-    // - Pattern playback (~50 events/second at fast tempos)
-    // - Multiple simultaneous sources
-    // At 48kHz with 512 sample buffers (~93 callbacks/sec), this is ~11 events per callback max
-    Arc::new(MidiEventQueue::new(1024))
-}
 
 #[cfg(test)]
 mod tests {

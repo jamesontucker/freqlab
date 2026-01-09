@@ -6,7 +6,7 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::chat::ChatHistory;
-use super::projects::{get_workspace_path, ProjectMeta};
+use super::projects::{ensure_workspace, get_workspace_path, ProjectMeta};
 
 /// Get the projects directory path
 fn get_projects_path() -> std::path::PathBuf {
@@ -240,6 +240,9 @@ pub async fn import_project(
     zip_path: String,
     rename_to: Option<String>,
 ) -> Result<ProjectMeta, String> {
+    // Ensure workspace exists (handles fresh install case)
+    ensure_workspace()?;
+
     // Validate rename_to if provided
     if let Some(ref new_name) = rename_to {
         validate_name(new_name)?;
