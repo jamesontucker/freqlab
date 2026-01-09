@@ -21,7 +21,8 @@ Use established crates instead of implementing DSP from scratch. These are battl
 |-------|---------|-------------|
 | `dasp` | Sample/frame types, ring buffers, interpolation | Core audio data structures |
 | `fundsp` | Composable DSP graph notation | Complex signal chains, rapid prototyping |
-| `synfx-dsp` | Production-ready DSP (Dattorro reverb, PolyBLEP) | Effects that need to sound good |
+
+> **⚠️ WARNING: `synfx-dsp` requires nightly Rust** due to `portable_simd`. Do NOT use it unless you've switched to nightly with `rustup default nightly`. For stable Rust, use `fundsp` or implement algorithms inline (see examples below).
 
 ### FFT & Spectral
 
@@ -35,9 +36,10 @@ Use established crates instead of implementing DSP from scratch. These are battl
 
 | Crate | Purpose | When to Use |
 |-------|---------|-------------|
-| `fundsp` | Oscillators, envelopes, filters | Synth building blocks |
-| `synfx-dsp` | PolyBLEP oscillators, envelopes | Anti-aliased waveforms |
+| `fundsp` | Oscillators, envelopes, filters | Synth building blocks, anti-aliased |
 | `twang` | Additive, FM, wavetable, Karplus-Strong | Pure Rust synthesis |
+
+> For anti-aliased oscillators on stable Rust, use `fundsp` or implement PolyBLEP inline (see examples below).
 
 ### MIDI
 
@@ -59,13 +61,13 @@ Use established crates instead of implementing DSP from scratch. These are battl
 
 ```bash
 # In your plugin directory, run:
-cargo add biquad        # Filters
-cargo add fundsp        # DSP graphs
-cargo add synfx-dsp     # Effects
-cargo add rustfft       # FFT
-cargo add wmidi         # MIDI
-cargo add hound         # WAV files
-cargo add rubato        # High-quality resampling
+cargo add biquad        # Filters (stable Rust)
+cargo add fundsp        # DSP graphs, oscillators (stable Rust)
+cargo add rustfft       # FFT (stable Rust)
+cargo add wmidi         # MIDI (stable Rust)
+cargo add hound         # WAV files (stable Rust)
+cargo add rubato        # High-quality resampling (stable Rust)
+# cargo add synfx-dsp   # WARNING: Requires nightly Rust!
 ```
 
 Or manually add to `Cargo.toml` (check crates.io for latest versions):
@@ -123,24 +125,61 @@ for sample in buffer.iter_mut() {
 }
 ```
 
-**synfx-dsp PolyBLEP oscillator:**
+**Anti-aliased oscillator using fundsp (stable Rust):**
 ```rust
-use synfx_dsp::{PolyBlepOscillator, init_cos_tab};
+use fundsp::prelude::*;
 
-// Call once at plugin initialization:
-init_cos_tab();
+// Create an anti-aliased saw oscillator
+let mut osc = saw();
+osc.set_sample_rate(sample_rate as f64);
 
-// Create oscillator with initial phase (0.0 to 1.0)
-let mut osc = PolyBlepOscillator::new(0.0);
+// In process loop:
+osc.set_hash(fxhash(&freq));  // Set frequency via hash
+let sample = osc.get_mono() as f32;
 
-// In process loop - pass frequency and INVERSE sample rate each call:
-let israte = 1.0 / sample_rate;  // Calculate once, reuse
-let sample = osc.next_saw(440.0, israte);  // Anti-aliased saw
+// Or use the simpler function-based approach:
+let mut voice = saw_hz(440.0);  // Creates saw at 440Hz
+voice.set_sample_rate(sample_rate as f64);
+```
 
-// Other waveforms:
-// osc.next_tri(freq, israte)
-// osc.next_pulse(freq, israte, pulse_width)  // 0.0 = square
-// osc.next_sin(freq, israte)
+**Inline PolyBLEP saw (stable Rust, no dependencies):**
+```rust
+struct PolyBlepSaw {
+    phase: f32,
+}
+
+impl PolyBlepSaw {
+    fn new() -> Self { Self { phase: 0.0 } }
+
+    // PolyBLEP correction function
+    fn polyblep(&self, t: f32, dt: f32) -> f32 {
+        if t < dt {
+            let t = t / dt;
+            2.0 * t - t * t - 1.0
+        } else if t > 1.0 - dt {
+            let t = (t - 1.0) / dt;
+            t * t + 2.0 * t + 1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn next(&mut self, freq: f32, sample_rate: f32) -> f32 {
+        let dt = freq / sample_rate;  // Phase increment
+
+        // Naive saw: ramps from -1 to 1
+        let naive = 2.0 * self.phase - 1.0;
+
+        // Apply PolyBLEP correction at discontinuity
+        let sample = naive - self.polyblep(self.phase, dt);
+
+        // Advance phase
+        self.phase += dt;
+        if self.phase >= 1.0 { self.phase -= 1.0; }
+
+        sample
+    }
+}
 ```
 
 **MIDI note handling (nih-plug style):**

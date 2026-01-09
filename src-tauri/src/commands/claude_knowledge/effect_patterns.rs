@@ -108,7 +108,8 @@ fn soft_clip(x: f32) -> f32 {
 
 ```rust
 // Waveshaping without oversampling = aliasing artifacts
-// Use synfx-dsp's oversampling utilities or implement 2x/4x
+// Implement 2x/4x oversampling or use rubato crate for high-quality resampling
+// NOTE: synfx-dsp has oversampling but requires nightly Rust
 
 // Common waveshaping functions:
 fn soft_clip(x: f32) -> f32 { x.tanh() }
@@ -279,73 +280,85 @@ impl ModulatedDelay {
 | Flanger | 0.5-5ms | High | Jet sweep, resonance |
 | Phaser | Allpass filters | High | Similar to flanger, different character |
 
-### Reverb (Using synfx-dsp)
+### Reverb
 
-For reverb, use the Dattorro implementation from synfx-dsp:
+> **⚠️ NOTE:** `synfx-dsp` has excellent Dattorro reverb but requires **nightly Rust**.
+> For stable Rust, use `fundsp` or implement Freeverb-style reverb inline.
 
+**Using fundsp reverb (stable Rust):**
 ```rust
-use synfx_dsp::{DattorroReverb, DattorroReverbParams};
+use fundsp::prelude::*;
 
-// Implement the params trait for your reverb controls
-struct MyReverbParams {
-    predelay: f64,      // 0.0-1.0
-    size: f64,          // 0.0-1.0 (room size)
-    decay: f64,         // 0.0-1.0 (reverb time)
-    input_low_cut: f64, // 0.0-1.0 (highpass on input)
-    input_high_cut: f64,// 0.0-1.0 (lowpass on input)
-    diffuse: f64,       // 0.0-1.0 (diffusion amount)
-    mod_speed: f64,     // 0.0-1.0 (internal modulation)
-    mod_depth: f64,     // 0.0-1.0
-}
+// Create a simple reverb (stereo in/out)
+let mut reverb = reverb_stereo(40.0, 5.0, 0.5);  // room_size, time, diffusion
+reverb.set_sample_rate(sample_rate as f64);
 
-impl DattorroReverbParams for MyReverbParams {
-    fn predelay(&self) -> f64 { self.predelay }
-    fn size(&self) -> f64 { self.size }
-    fn decay(&self) -> f64 { self.decay }
-    fn input_low_cut(&self) -> f64 { self.input_low_cut }
-    fn input_high_cut(&self) -> f64 { self.input_high_cut }
-    fn diffuse(&self) -> f64 { self.diffuse }
-    fn mod_speed(&self) -> f64 { self.mod_speed }
-    fn mod_depth(&self) -> f64 { self.mod_depth }
-}
-
-// In your plugin:
-struct ReverbPlugin {
-    reverb: DattorroReverb,
-    reverb_params: MyReverbParams,
-}
-
-// Initialize with sample rate (note: uses f64):
-fn initialize(&mut self, buffer_config: &BufferConfig, ...) -> bool {
-    self.reverb = DattorroReverb::new();
-    self.reverb.set_sample_rate(buffer_config.sample_rate as f64);
-    true
-}
-
-// Process stereo (note: synfx-dsp uses f64 internally):
-fn process(&mut self, buffer: &mut Buffer, ...) {
-    // Update reverb params from plugin params
-    self.reverb_params.decay = self.params.decay.smoothed.next() as f64;
-    self.reverb_params.size = self.params.size.smoothed.next() as f64;
-
-    for mut channel_samples in buffer.iter_samples() {
-        let left = channel_samples.get_mut(0).unwrap();
-        let right = channel_samples.get_mut(1).unwrap();
-
-        let (wet_l, wet_r) = self.reverb.process(
-            &mut self.reverb_params,
-            *left as f64,
-            *right as f64
-        );
-
-        let mix = self.params.mix.smoothed.next();
-        *left = (*left * (1.0 - mix) + wet_l as f32 * mix);
-        *right = (*right * (1.0 - mix) + wet_r as f32 * mix);
-    }
-}
+// In process loop (f64):
+let (out_l, out_r) = reverb.get_stereo();
+reverb.set_stereo(input_l as f64, input_r as f64);
 ```
 
-> **Note:** DattorroReverb uses f64 internally for precision. Convert f32 samples when interfacing.
+**Simple comb filter reverb (stable Rust, inline):**
+```rust
+struct SimpleReverb {
+    comb_filters: Vec<CombFilter>,
+    allpass_filters: Vec<AllpassFilter>,
+}
+
+struct CombFilter {
+    buffer: Vec<f32>,
+    index: usize,
+    feedback: f32,
+    damping: f32,
+    filter_state: f32,
+}
+
+impl CombFilter {
+    fn new(delay_samples: usize, feedback: f32, damping: f32) -> Self {
+        Self {
+            buffer: vec![0.0; delay_samples],
+            index: 0,
+            feedback,
+            damping,
+            filter_state: 0.0,
+        }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        let output = self.buffer[self.index];
+        // Lowpass in feedback path for damping
+        self.filter_state = output * (1.0 - self.damping) + self.filter_state * self.damping;
+        self.buffer[self.index] = input + self.filter_state * self.feedback;
+        self.index = (self.index + 1) % self.buffer.len();
+        output
+    }
+}
+
+struct AllpassFilter {
+    buffer: Vec<f32>,
+    index: usize,
+    feedback: f32,
+}
+
+impl AllpassFilter {
+    fn new(delay_samples: usize, feedback: f32) -> Self {
+        Self { buffer: vec![0.0; delay_samples], index: 0, feedback }
+    }
+
+    fn process(&mut self, input: f32) -> f32 {
+        let delayed = self.buffer[self.index];
+        let output = -input + delayed;
+        self.buffer[self.index] = input + delayed * self.feedback;
+        self.index = (self.index + 1) % self.buffer.len();
+        output
+    }
+}
+
+// Initialize with prime-number delay times for natural sound
+// Typical Freeverb delays (in samples at 44100Hz):
+// Combs: 1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617
+// Allpasses: 556, 441, 341, 225
+```
 
 "#
 }

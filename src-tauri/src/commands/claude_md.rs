@@ -239,8 +239,8 @@ struct MyParams {
     #[id = "gain"]
     pub gain: FloatParam,
 
-    // NOT persisted - just for change tracking
-    #[persist = ""]
+    // For change tracking (must have unique key)
+    #[persist = "gain-dirty"]
     gain_changed: Arc<AtomicBool>,
 }
 

@@ -153,8 +153,8 @@ fn naive_saw(phase: f32) -> f32 {
 }
 
 // GOOD - use PolyBLEP or wavetable from a crate
-// synfx-dsp provides PolyBLEP oscillators
-// fundsp provides anti-aliased oscillators
+// fundsp provides anti-aliased oscillators (stable Rust)
+// NOTE: synfx-dsp has PolyBLEP but requires nightly Rust
 
 // If you must implement, use PolyBLEP correction:
 fn poly_blep(t: f32, dt: f32) -> f32 {

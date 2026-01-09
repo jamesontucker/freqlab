@@ -48,7 +48,7 @@ Before generating DSP code, verify:
 If unsure about DSP math or implementation:
 
 1. **Say so explicitly** - "I'm not certain about the exact formula for..."
-2. **Recommend a crate** - biquad, fundsp, synfx-dsp handle most cases correctly
+2. **Recommend a crate** - `biquad` or `fundsp` handle most cases (stable Rust)
 3. **Link to references:**
    - Audio EQ Cookbook: https://webaudio.github.io/Audio-EQ-Cookbook/
    - Awesome Audio DSP: https://github.com/BillyDM/awesome-audio-dsp

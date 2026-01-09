@@ -12,8 +12,10 @@ pub fn get_dsp_fundamentals() -> &'static str {
 **DO NOT** generate filter coefficient formulas from memory. Filter math is precise and errors cause broken audio. Always use:
 
 - The `biquad` crate (implements Audio EQ Cookbook correctly)
-- The `fundsp` or `synfx-dsp` crates for pre-built filters
+- The `fundsp` crate for pre-built filters and DSP
 - Reference: https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html
+
+> **⚠️ WARNING:** `synfx-dsp` requires **nightly Rust**. Use `biquad` or `fundsp` for stable Rust builds.
 
 **Correct approach - use a crate:**
 ```rust
@@ -206,7 +208,7 @@ fn hann_window(n: usize, total: usize) -> f32 {
 If you're unsure about a DSP algorithm:
 
 1. **Say so explicitly** - "I'm not certain about the exact coefficients for..."
-2. **Recommend a crate** - fundsp, synfx-dsp, or biquad handle most cases
+2. **Recommend a crate** - `biquad` or `fundsp` handle most cases (stable Rust)
 3. **Link to reference** - Audio EQ Cookbook, DAFX book, musicdsp.org
 4. **Don't guess** - Wrong DSP math = broken audio or crashes
 

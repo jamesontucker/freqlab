@@ -68,7 +68,31 @@ struct MyPluginParams {
 
     #[id = "mode"]
     pub mode: EnumParam<MyMode>,
+
+    // For non-parameter persisted state (e.g., editor state)
+    #[persist = "editor-state"]  // MUST be unique, non-empty string
+    pub editor_state: Arc<SomeState>,
 }
+```
+
+**⚠️ CRITICAL: Persist Key Rules**
+- Every `#[persist = "key"]` MUST have a **unique, non-empty key**
+- Using `#[persist = ""]` (empty string) for multiple fields causes **compile/runtime errors**
+- Keys must be unique across the entire Params struct
+- Use descriptive keys: `"editor-state"`, `"gain-changed"`, not empty strings
+
+```rust
+// BAD - empty keys cause conflicts:
+#[persist = ""]
+gain_changed: Arc<AtomicBool>,
+#[persist = ""]
+filter_changed: Arc<AtomicBool>,  // ERROR: duplicate key!
+
+// GOOD - unique descriptive keys:
+#[persist = "gain-dirty"]
+gain_changed: Arc<AtomicBool>,
+#[persist = "filter-dirty"]
+filter_changed: Arc<AtomicBool>,
 ```
 
 #### FloatParam

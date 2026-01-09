@@ -843,7 +843,7 @@ struct {pascal_name}Params {{
     #[id = "gain"]
     pub gain: FloatParam,
     /// Flag to notify UI when gain changes from host automation
-    #[persist = ""]
+    #[persist = "gain-dirty"]
     gain_changed: Arc<AtomicBool>,
 }}
 
@@ -1190,7 +1190,7 @@ struct {pascal_name}Params {{
     #[id = "gain"]
     pub gain: FloatParam,
     /// Flag to notify UI when gain changes from host automation
-    #[persist = ""]
+    #[persist = "gain-dirty"]
     gain_changed: Arc<AtomicBool>,
 }}
 
