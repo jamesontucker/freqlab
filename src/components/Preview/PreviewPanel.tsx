@@ -641,6 +641,37 @@ export function PreviewPanel() {
     }
   }, [activeProject?.name, activeProject?.uiFramework, setLoadedPlugin]);
 
+  // Listen for build completion even when panel is closed to clear webview fresh build flag
+  // This prevents the "double build" issue where user builds, then opens preview panel,
+  // but the flag is still set because the main listener wasn't running
+  useEffect(() => {
+    // Only need this listener when panel is closed - the main listener handles open state
+    if (isOpen) return;
+    if (!activeProject || activeProject.uiFramework !== 'webview') return;
+
+    const handleBuildComplete = async (event: { payload: BuildStreamEvent }) => {
+      const data = event.payload;
+      if (data.type !== 'done' || !data.success) return;
+
+      // Clear the fresh build flag since we just built successfully
+      setWebviewNeedsFreshBuild(false);
+    };
+
+    const setupListener = async () => {
+      const unlisten = await listen<BuildStreamEvent>('build-stream', handleBuildComplete);
+      return unlisten;
+    };
+
+    let cleanup: (() => void) | undefined;
+    setupListener().then(unlisten => {
+      cleanup = unlisten;
+    });
+
+    return () => {
+      cleanup?.();
+    };
+  }, [isOpen, activeProject]);
+
   // Handle play/stop
   const handleTogglePlaying = useCallback(async () => {
     if (!engineInitialized) return;
