@@ -8,15 +8,15 @@
 </p>
 
 > [!NOTE]
-> This is a personal side project that I initally build for my wife who's a sound designer and is not consistently maintained. It was a vibe experiement, so use as-is.
+> This is a personal side project that I initally build for my wife who's a sound designer and is **not consistently maintained**. It was a vibe experiement, so **use as-is**.
 >
-> Also go hire a dev if you're looking to take plugin development seriously ;)
+> **Also** go hire a dev if you're looking to take plugin development seriously ;)
 
 ---
 
 ## What is freqlab?
 
-Most AI apps are trying to replace traditional music/audio creative flows (ie. suno and other gen-ai garbage), I wanted to create something that genuinely assists their creative process instead of replacing it.
+Most AI apps are trying to replace traditional music/audio creative flows (ie. suno and other exploitative gen-ai), I wanted to create something that genuinely assists their creative process instead of replacing it.
 
 freqlab was built for producers and sound designers who aren't developers, but who have always dreamed of creating unique plugins for their projects.
 
@@ -95,7 +95,8 @@ Choose your starting point:
 -   **Rust** — via [rustup](https://rustup.rs/)
 -   **Claude Code CLI** — requires an active Anthropic subscription
 
-freqlab on-boarding checks these on first launch.
+> [!NOTE]
+> freqlab on-boarding checks these on first launch. It also gudes the user through the setup and does what it can through the UI alone.
 
 ---
 
@@ -120,7 +121,10 @@ npm run tauri build
 
 ### Unsigned Plugins
 
-Plugins are unsigned, so macOS Gatekeeper may block them. Remove the quarantine flag:
+> [!WARNING]
+> Plugins are unsigned, so macOS Gatekeeper may block them.
+
+You may need to remove the quarantine flag (though this is already automated in the app):
 
 ```bash
 xattr -cr /path/to/YourPlugin.clap
@@ -148,7 +152,9 @@ Plugins use [nih-plug](https://github.com/robbert-vdh/nih-plug):
 
 -   VST3 plugins must be GPL-3.0 (provide source on request)
 -   CLAP-only plugins have no such requirement
--   You can sell plugins, but must share source if asked. But to be honest, just make them for yourself and share with your friends. If you want to actually sell plugins you should be hring a developer or learning to code!
+-   You can sell plugins, but must share source if asked. But to be honest, just make them for yourself and share with your friends.
+-
+-   If you want to actually sell plugins you should be hiring a developer or learning to code!
 
 ---
 
