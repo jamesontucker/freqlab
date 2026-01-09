@@ -2,6 +2,7 @@ pub mod prerequisites;
 pub use prerequisites::cleanup_child_processes;
 pub mod projects;
 pub mod claude;
+pub mod claude_knowledge;
 pub mod claude_md;
 pub mod build;
 pub mod git;

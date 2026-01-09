@@ -1,7 +1,13 @@
 //! CLAUDE.md generation for VST plugin projects
 //!
 //! Generates project-specific guidance files that Claude reads when helping
-//! users develop their plugins. Ensures Claude knows to update both DSP and UI.
+//! users develop their plugins. Includes DSP best practices, anti-hallucination
+//! guardrails, and plugin-specific patterns.
+
+use super::claude_knowledge::{
+    get_dsp_fundamentals, get_effect_patterns, get_instrument_patterns, get_mastering_patterns,
+    get_nih_plug_basics, get_rust_audio_libs, get_safety_rails, get_sampler_patterns,
+};
 
 /// Generate the complete CLAUDE.md content for a project
 pub fn generate_claude_md(
@@ -15,19 +21,41 @@ pub fn generate_claude_md(
     // Header and config
     content.push_str(&generate_header(project_name, template, ui_framework, components));
 
-    // Critical guidelines (always included)
+    // nih-plug framework essentials (ALWAYS included - every plugin uses nih-plug)
+    content.push_str(get_nih_plug_basics());
+    content.push('\n');
+
+    // DSP fundamentals and anti-hallucination rules (CRITICAL - always included)
+    content.push_str(get_dsp_fundamentals());
+    content.push('\n');
+
+    // Safety rails and focus guidelines
+    content.push_str(get_safety_rails());
+    content.push('\n');
+
+    // Critical guidelines for this UI framework
     content.push_str(&generate_critical_guidelines(ui_framework));
 
     // UI framework specific section
     content.push_str(&generate_ui_framework_section(ui_framework));
 
-    // Plugin type specific section
+    // Plugin type specific section (basic patterns)
     content.push_str(&generate_plugin_type_section(template));
+
+    // Advanced patterns based on plugin type
+    content.push_str(&generate_advanced_patterns_section(template));
 
     // Component-specific sections
     if let Some(comps) = components {
         content.push_str(&generate_component_sections(comps));
     }
+
+    // Rust audio libraries reference (condensed)
+    content.push_str(get_rust_audio_libs());
+    content.push('\n');
+
+    // Resources section
+    content.push_str(&generate_resources_section());
 
     content
 }
@@ -85,37 +113,59 @@ fn generate_header(
 }
 
 fn generate_critical_guidelines(ui_framework: &str) -> String {
-    let ui_step = match ui_framework {
-        "headless" => "3. *(Skip - headless plugin has no custom UI)*",
-        "webview" => "3. **Add UI control** in `src/ui.html` (slider, knob, etc.)",
-        "egui" => "3. **Add UI widget** in the `editor()` method",
-        _ => "3. **Add UI control** for the parameter",
-    };
-
-    let ipc_step = match ui_framework {
-        "webview" => "4. **Add IPC handling** - message variant in Rust, handler in JS",
-        "egui" => "4. **Wire up setter** - use `widgets::ParamSlider::for_param()`",
-        "headless" => "4. *(Skip - no UI to wire up)*",
-        _ => "4. **Wire up the UI** to the parameter",
+    let (ui_file, ui_step, ipc_step, ui_reminder) = match ui_framework {
+        "headless" => (
+            "",
+            "3. *(Skip - headless plugin has no custom UI)*",
+            "4. *(Skip - no UI to wire up)*",
+            "",
+        ),
+        "webview" => (
+            "\n\n**UI File Location:** `src/ui.html`",
+            "3. **Add UI control** in `src/ui.html` (slider, knob, button, etc.)",
+            "4. **Add IPC handling** - message variant in Rust enum, handler in JavaScript",
+            "\n\n> **STOP!** Before finishing, verify you added the UI control in `src/ui.html`",
+        ),
+        "egui" => (
+            "\n\n**UI Location:** `editor()` method in `src/lib.rs`",
+            "3. **Add UI widget** in the `editor()` method using `widgets::ParamSlider::for_param()`",
+            "4. **Wire up setter** - the ParamSlider handles this automatically",
+            "\n\n> **STOP!** Before finishing, verify you added the widget in `editor()`",
+        ),
+        _ => (
+            "",
+            "3. **Add UI control** for the parameter",
+            "4. **Wire up the UI** to the parameter",
+            "",
+        ),
     };
 
     format!(
         r#"## Critical Guidelines
 
-### ALWAYS Update Both DSP and UI Together
+### ⚠️ MANDATORY: Every Feature Needs UI
 
-When adding or modifying any feature that affects user-controllable parameters, complete ALL steps:
+**This is a {ui_framework} project.** When adding ANY feature with user-controllable parameters, you MUST complete ALL steps - DSP alone is NOT complete.{ui_file}
+
+### Required Steps (DO NOT SKIP ANY):
 
 1. **Add the parameter** to the `Params` struct with `#[id = "param_name"]`
-2. **Add DSP logic** in `process()` that uses `self.params.param_name.smoothed.next()`
+2. **Add DSP logic** in `process()` using `self.params.param_name.smoothed.next()`
 {ui_step}
 {ipc_step}
+5. **Test the complete flow** - parameter should be controllable from UI AND host automation{ui_reminder}
 
-**Checklist for adding a new parameter (e.g., "mix"):**
-- [ ] `mix: FloatParam` added to `Params` struct with proper range and default
-- [ ] `self.params.mix.smoothed.next()` used in `process()` loop
-- [ ] UI control added (unless headless)
-- [ ] Parameter changes sync between UI and host automation
+### Feature Completion Checklist
+
+Before saying a feature is "done", verify ALL boxes are checked:
+
+- [ ] Parameter added to `Params` struct with `#[id = "..."]`
+- [ ] DSP code uses the parameter via `.smoothed.next()` or `.value()`
+- [ ] **UI CONTROL EXISTS** (unless headless) - slider/knob/button in the UI
+- [ ] UI sends parameter changes to plugin (IPC for webview, setter for egui)
+- [ ] Plugin sends parameter changes to UI (for host automation sync)
+
+**A feature without UI is NOT complete.** Users cannot control parameters they cannot see.
 
 ### Parameter Best Practices
 
@@ -146,75 +196,171 @@ fn generate_ui_framework_section(ui_framework: &str) -> String {
 fn generate_webview_section() -> String {
     r#"## WebView UI Framework
 
-### File Structure
-- **DSP/Plugin Logic**: `src/lib.rs`
-- **UI**: `src/ui.html` (HTML + CSS + JavaScript)
+### ⚠️ TWO FILES MUST BE MODIFIED FOR EVERY FEATURE
 
-### IPC Communication Pattern
+| File | Purpose | What to Add |
+|------|---------|-------------|
+| `src/lib.rs` | Rust DSP + IPC | Parameter, process() logic, UIMessage variant, handler |
+| `src/ui.html` | User Interface | HTML control (slider/knob), JS event handlers |
 
-The plugin and UI communicate via JSON messages:
+**If you only edit `src/lib.rs`, the feature is INCOMPLETE.** Users need UI to control parameters.
 
-**Rust → JavaScript** (parameter updates from host automation):
+### Required Imports for WebView
+
 ```rust
-ctx.send_json(json!({
-    "type": "param_change",
-    "param": "filter_cutoff",
-    "value": params.filter_cutoff.unmodulated_normalized_value(),
-    "text": params.filter_cutoff.to_string()
-}));
+use nih_plug_webview::{WebViewEditor, HTMLSource, EventStatus};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 ```
 
-**JavaScript → Rust** (user adjusts UI control):
-```javascript
-sendToPlugin({ type: 'SetFilterCutoff', value: normalizedValue });
-```
+### Message Enum Pattern
 
-### Adding a New Parameter (Complete Flow)
+Define typed messages for UI → Plugin communication:
 
-**1. Rust side - Add message variant:**
 ```rust
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 enum UIMessage {
-    // ... existing variants ...
-    SetMyParam { value: f32 },  // ADD THIS
+    Init,                        // UI requests initial state
+    SetGain { value: f32 },      // User adjusted gain slider
+    SetFilterCutoff { value: f32 },
+    // Add more as needed...
 }
 ```
 
-**2. Rust side - Handle the message:**
+### AtomicBool Pattern for Host Automation Sync
+
+When the DAW automates a parameter, you need to notify the UI:
+
 ```rust
-UIMessage::SetMyParam { value } => {
-    setter.begin_set_parameter(&params.my_param);
-    setter.set_parameter_normalized(&params.my_param, value);
-    setter.end_set_parameter(&params.my_param);
+#[derive(Params)]
+struct MyParams {
+    #[id = "gain"]
+    pub gain: FloatParam,
+
+    // NOT persisted - just for change tracking
+    #[persist = ""]
+    gain_changed: Arc<AtomicBool>,
+}
+
+// In Default impl, add callback to the parameter:
+impl Default for MyParams {
+    fn default() -> Self {
+        let gain_changed = Arc::new(AtomicBool::new(false));
+        let gain_changed_clone = gain_changed.clone();
+
+        Self {
+            gain: FloatParam::new("Gain", util::db_to_gain(0.0), FloatRange::Skewed { ... })
+                .with_callback(Arc::new(move |_| {
+                    gain_changed_clone.store(true, Ordering::Relaxed);
+                })),
+            gain_changed,
+        }
+    }
 }
 ```
 
-**3. Rust side - Sync from host automation (add AtomicBool flag):**
+### Editor Creation Pattern
+
 ```rust
-// In struct: my_param_changed: Arc<AtomicBool>,
-if my_param_changed.swap(false, Ordering::Relaxed) {
-    ctx.send_json(json!({
-        "type": "param_change",
-        "param": "my_param",
-        "value": params.my_param.unmodulated_normalized_value()
-    }));
+fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    let params = self.params.clone();
+    let gain_changed = self.params.gain_changed.clone();
+
+    Some(Box::new(
+        WebViewEditor::new(HTMLSource::String(include_str!("ui.html")), (400, 300))
+            .with_background_color((26, 26, 46, 255))  // Match your UI background
+            .with_developer_mode(cfg!(debug_assertions)) // DevTools in debug builds
+            .with_event_loop(move |ctx, setter, _window| {
+                // Handle messages from JavaScript
+                while let Ok(msg) = ctx.next_event() {
+                    match msg {
+                        UIMessage::Init => {
+                            // Send initial parameter values to UI
+                            ctx.send_json(json!({
+                                "type": "init",
+                                "gain": params.gain.unmodulated_normalized_value(),
+                            }));
+                        }
+                        UIMessage::SetGain { value } => {
+                            setter.begin_set_parameter(&params.gain);
+                            setter.set_parameter_normalized(&params.gain, value);
+                            setter.end_set_parameter(&params.gain);
+                        }
+                        // Handle other messages...
+                    }
+                }
+
+                // Check for host automation changes and notify UI
+                if gain_changed.swap(false, Ordering::Relaxed) {
+                    ctx.send_json(json!({
+                        "type": "param_change",
+                        "param": "gain",
+                        "value": params.gain.unmodulated_normalized_value()
+                    }));
+                }
+
+                EventStatus::Ignored
+            })
+    ))
 }
 ```
 
-**4. JavaScript side - Add control and handlers:**
+### JavaScript Side (ui.html)
+
 ```html
-<input type="range" id="my-param" min="0" max="1" step="0.001">
-<script>
-document.getElementById('my-param').addEventListener('input', (e) => {
-    sendToPlugin({ type: 'SetMyParam', value: parseFloat(e.target.value) });
-});
-// In onPluginMessage handler:
-if (msg.param === 'my_param') {
-    document.getElementById('my-param').value = msg.value;
-}
-</script>
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { background: #1a1a2e; color: #eee; font-family: sans-serif; }
+        .slider { width: 200px; }
+    </style>
+</head>
+<body>
+    <h1>My Plugin</h1>
+    <label>Gain: <input type="range" id="gain" class="slider" min="0" max="1" step="0.001"></label>
+
+    <script>
+        // Send message to plugin
+        function sendToPlugin(msg) {
+            window.ipc.postMessage(JSON.stringify(msg));
+        }
+
+        // Receive messages from plugin
+        window.onPluginMessage = function(msg) {
+            if (msg.type === 'init') {
+                document.getElementById('gain').value = msg.gain;
+            } else if (msg.type === 'param_change') {
+                if (msg.param === 'gain') {
+                    document.getElementById('gain').value = msg.value;
+                }
+            }
+        };
+
+        // Request initial state when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            sendToPlugin({ type: 'Init' });
+        });
+
+        // Handle user input
+        document.getElementById('gain').addEventListener('input', (e) => {
+            sendToPlugin({ type: 'SetGain', value: parseFloat(e.target.value) });
+        });
+    </script>
+</body>
+</html>
 ```
+
+### Common Pitfalls to Avoid
+
+| Pitfall | Problem | Solution |
+|---------|---------|----------|
+| Missing Init message | UI shows wrong values on open | Always handle `Init` and send current state |
+| No AtomicBool callback | UI doesn't update from host automation | Add `.with_callback()` to each parameter |
+| Feedback loop | UI → Plugin → UI infinite loop | JavaScript should ignore updates while dragging |
+| Missing begin/end_set_parameter | Undo/redo doesn't work properly | Always wrap set_parameter_normalized |
 
 "#
     .to_string()
@@ -223,51 +369,182 @@ if (msg.param === 'my_param') {
 fn generate_egui_section() -> String {
     r#"## egui UI Framework
 
-### File Structure
-- **Everything in**: `src/lib.rs`
-- UI code lives in the `editor()` method
+### ⚠️ BOTH DSP AND UI ARE IN THE SAME FILE
 
-### Adding Parameter Controls
+| Location | Purpose | What to Add |
+|----------|---------|-------------|
+| `src/lib.rs` - `Params` struct | Parameters | `FloatParam`, `IntParam`, etc. |
+| `src/lib.rs` - `process()` | DSP Logic | Use `params.x.smoothed.next()` |
+| `src/lib.rs` - `editor()` | **UI Widgets** | `ParamSlider::for_param()` |
 
-Use the built-in `ParamSlider` widget for most parameters:
+**If you only add the parameter and DSP, the feature is INCOMPLETE.** You MUST also add a widget in `editor()`.
+
+### Required Imports for egui
+
+```rust
+use nih_plug_egui::{create_egui_editor, egui, widgets, EguiState};
+```
+
+### EguiState Setup (Required for Window Persistence)
+
+```rust
+#[derive(Params)]
+struct MyPluginParams {
+    #[persist = "editor-state"]  // Saves window size with presets
+    editor_state: Arc<EguiState>,
+
+    #[id = "gain"]
+    pub gain: FloatParam,
+}
+
+impl Default for MyPluginParams {
+    fn default() -> Self {
+        Self {
+            editor_state: EguiState::from_size(400, 300),  // Width x Height in logical pixels
+            gain: FloatParam::new(...),
+        }
+    }
+}
+```
+
+### Complete Editor Pattern
 
 ```rust
 fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
     let params = self.params.clone();
+    let peak_meter = self.peak_meter.clone();  // For visualizations
+
     create_egui_editor(
         self.params.editor_state.clone(),
-        (),
-        |_, _| {},
-        move |egui_ctx, setter, _state| {
+        (),                              // User state (use () if not needed)
+        |ctx, _| {                       // Build function (one-time setup)
+            // Optional: Customize styling
+            let mut style = (*ctx.style()).clone();
+            style.visuals.window_fill = egui::Color32::from_rgb(26, 26, 46);
+            ctx.set_style(style);
+        },
+        move |egui_ctx, setter, _state| {  // Update function (called every frame)
             egui::CentralPanel::default().show(egui_ctx, |ui| {
                 ui.heading("My Plugin");
+                ui.add_space(10.0);
 
-                // Simple parameter slider
-                ui.label("Filter Cutoff");
-                ui.add(widgets::ParamSlider::for_param(&params.filter_cutoff, setter));
+                // Parameter slider with label
+                ui.horizontal(|ui| {
+                    ui.label("Gain:");
+                    ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+                });
 
-                // Slider with custom width
-                ui.add(widgets::ParamSlider::for_param(&params.resonance, setter)
-                    .with_width(150.0));
+                ui.add_space(10.0);
+
+                // Peak meter visualization
+                let peak = f32::from_bits(peak_meter.load(std::sync::atomic::Ordering::Relaxed));
+                ui.add(egui::ProgressBar::new(peak).text(format!("{:.1} dB", util::gain_to_db(peak))));
             });
         },
     )
 }
 ```
 
-### Custom Displays
+### ParamSlider Widget
 
-Read parameter values directly for custom visualizations:
+The built-in `ParamSlider` handles all parameter binding automatically:
+
 ```rust
-let cutoff_hz = params.filter_cutoff.value();
-ui.label(format!("Cutoff: {:.0} Hz", cutoff_hz));
+// Basic usage
+ui.add(widgets::ParamSlider::for_param(&params.gain, setter));
+
+// With custom width
+ui.add(widgets::ParamSlider::for_param(&params.cutoff, setter).with_width(200.0));
 ```
 
-### Layout Tips
+This automatically handles:
+- Displaying current value with proper formatting
+- begin_set_parameter / end_set_parameter calls
+- Drag interaction
+- Value display using parameter's formatters
 
-- Use `ui.horizontal()` for side-by-side controls
-- Use `ui.group()` to visually group related parameters
-- Use `ui.separator()` between sections
+### Peak Meter Pattern (Audio → GUI Communication)
+
+For real-time visualizations, use `AtomicU32` to safely pass data from audio thread:
+
+```rust
+use std::sync::atomic::{AtomicU32, Ordering};
+
+struct MyPlugin {
+    params: Arc<MyPluginParams>,
+    peak_meter: Arc<AtomicU32>,  // Store peak as bits (f32 -> u32)
+}
+
+// In process():
+let peak = buffer.iter_samples()
+    .map(|s| s.iter().map(|x| x.abs()).fold(0.0f32, f32::max))
+    .fold(0.0f32, f32::max);
+self.peak_meter.store(peak.to_bits(), Ordering::Relaxed);
+
+// In editor - only compute when UI is visible:
+if self.params.editor_state.is_open() {
+    // Compute expensive visualizations
+}
+```
+
+### Layout Patterns
+
+```rust
+// Horizontal layout
+ui.horizontal(|ui| {
+    ui.label("Cutoff:");
+    ui.add(widgets::ParamSlider::for_param(&params.cutoff, setter));
+});
+
+// Grouped parameters
+ui.group(|ui| {
+    ui.label("Filter");
+    ui.add(widgets::ParamSlider::for_param(&params.cutoff, setter));
+    ui.add(widgets::ParamSlider::for_param(&params.resonance, setter));
+});
+
+// Sections with separators
+ui.separator();
+ui.heading("Modulation");
+
+// Vertical centering
+ui.vertical_centered(|ui| {
+    ui.heading("My Plugin");
+});
+
+// Custom spacing
+ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+```
+
+### Custom Parameter Controls
+
+For more control than `ParamSlider`:
+
+```rust
+// Get current normalized value (0.0 to 1.0)
+let mut value = params.cutoff.unmodulated_normalized_value();
+
+let response = ui.add(egui::Slider::new(&mut value, 0.0..=1.0).text("Cutoff"));
+
+if response.drag_started() {
+    setter.begin_set_parameter(&params.cutoff);
+}
+if response.changed() {
+    setter.set_parameter_normalized(&params.cutoff, value);
+}
+if response.drag_stopped() {
+    setter.end_set_parameter(&params.cutoff);
+}
+```
+
+### Common Pitfalls to Avoid
+
+| Pitfall | Problem | Solution |
+|---------|---------|----------|
+| Missing `editor_state` | Window size not saved | Add `#[persist = "editor-state"]` field |
+| Heavy computation in UI | UI lag, audio glitches | Use `is_open()` check, pre-compute values |
+| Not using `ParamSlider` | Missing begin/end calls | Use built-in widget or call manually |
+| Forgetting UI for new param | Parameter not controllable | Always add widget in `editor()` |
 
 "#
     .to_string()
@@ -614,41 +891,30 @@ For smoother transitions, crossfade adjacent layers based on velocity.
 }
 
 fn generate_adsr_section() -> String {
-    r#"## ADSR Envelope Guidelines
+    r#"## ADSR Envelope Additional Tips
 
-### State Machine
+> See "Advanced Instrument Implementation" section above for complete ADSR code.
 
-```rust
-enum EnvelopeStage { Attack, Decay, Sustain, Release, Idle }
+### Common ADSR Mistakes to Avoid
 
-struct AdsrEnvelope {
-    stage: EnvelopeStage,
-    level: f32,
-    // Coefficients calculated from times
-}
-```
+| Mistake | Problem | Fix |
+|---------|---------|-----|
+| Resetting level on retrigger | Click when retriggering | Don't reset `level` in `trigger()` |
+| Linear attack | Unnatural sound | Use exponential (`1.0 - e^(-1/time)`) |
+| Instant release | Clicks on note-off | Minimum 5-10ms release |
+| Not handling sample rate | Wrong envelope times | Recalculate coefficients in `initialize()` |
 
-### Coefficient Calculation
+### Envelope Modulation Targets
 
-```rust
-// For exponential curves
-let attack_coeff = 1.0 - (-1.0 / (attack_time * sample_rate)).exp();
-```
+Common things to modulate with envelopes:
+- **Amplitude envelope**: Essential for note on/off
+- **Filter envelope**: Cutoff frequency (use bipolar: -1 to +1)
+- **Pitch envelope**: Subtle pitch drift (< 1 semitone usually)
 
-### Per-Sample Processing
+### Per-Voice vs Global Envelopes
 
-```rust
-fn process(&mut self) -> f32 {
-    match self.stage {
-        EnvelopeStage::Attack => {
-            self.level += self.attack_coeff * (1.0 - self.level);
-            if self.level >= 0.999 { self.stage = EnvelopeStage::Decay; }
-        }
-        // ... other stages
-    }
-    self.level
-}
-```
+- **Per-voice**: Amplitude, filter cutoff - each note has its own
+- **Global**: LFO rates, master filter - shared across all voices
 
 "#
     .to_string()
@@ -693,4 +959,254 @@ Use LFO output to modulate other parameters (filter cutoff, amplitude, pitch).
 
 "#
     .to_string()
+}
+
+/// Generate advanced patterns section based on plugin type
+fn generate_advanced_patterns_section(template: &str) -> String {
+    let mut content = String::new();
+
+    match template {
+        "effect" => {
+            content.push_str(get_effect_patterns());
+            content.push('\n');
+            // Also include mastering patterns for effects (limiters, compressors, etc.)
+            content.push_str(get_mastering_patterns());
+        }
+        "instrument" => {
+            content.push_str(get_instrument_patterns());
+            content.push('\n');
+            // Also include sampler patterns for instruments (sample playback, drum machines)
+            content.push_str(get_sampler_patterns());
+        }
+        _ => {}
+    }
+
+    content
+}
+
+/// Generate resources section with useful links
+fn generate_resources_section() -> String {
+    r#"## Resources
+
+Essential references for audio plugin development:
+
+- **Audio EQ Cookbook**: https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html
+- **Awesome Audio DSP**: https://github.com/BillyDM/awesome-audio-dsp
+- **nih-plug Documentation**: https://nih-plug.robbertvanderhelm.nl/
+- **DAFX (Digital Audio Effects)**: Classic DSP textbook
+- **musicdsp.org**: Community DSP code archive
+
+"#
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check_section_present(content: &str, section: &str, scenario: &str) {
+        assert!(
+            content.contains(section),
+            "MISSING in {}: '{}'",
+            scenario,
+            section
+        );
+    }
+
+    #[test]
+    fn test_scenario_1_effect_webview_with_components() {
+        let components = vec!["sidechain_input".to_string(), "oversampling".to_string()];
+        let content = generate_claude_md("test-effect", "effect", "webview", Some(&components));
+
+        let scenario = "Scenario 1 (effect + webview + sidechain + oversampling)";
+
+        // Check header
+        check_section_present(&content, "Type**: effect", scenario);
+        check_section_present(&content, "UI Framework**: webview", scenario);
+        check_section_present(&content, "sidechain_input, oversampling", scenario);
+
+        // Check nih-plug basics (ALWAYS included)
+        check_section_present(&content, "## nih-plug Framework Essentials", scenario);
+        check_section_present(&content, "impl Plugin for", scenario);
+        check_section_present(&content, "FloatParam", scenario);
+        check_section_present(&content, "ClapPlugin", scenario);
+
+        // Check DSP fundamentals
+        check_section_present(&content, "## CRITICAL: DSP Anti-Hallucination Rules", scenario);
+        check_section_present(&content, "Never Invent Filter Coefficients", scenario);
+
+        // Check safety rails
+        check_section_present(&content, "## Plugin Development Focus & Safety", scenario);
+
+        // Check webview-specific guidelines
+        check_section_present(&content, "**This is a webview project.**", scenario);
+        check_section_present(&content, "**UI File Location:** `src/ui.html`", scenario);
+        check_section_present(&content, "## WebView UI Framework", scenario);
+        check_section_present(&content, "UIMessage", scenario);
+
+        // Check effect patterns
+        check_section_present(&content, "## Effect Plugin Patterns", scenario);
+        check_section_present(&content, "## Advanced Effect Implementation", scenario);
+
+        // Check mastering patterns (included for effects)
+        check_section_present(&content, "## Mastering Plugin Implementation", scenario);
+        check_section_present(&content, "Lookahead Limiter", scenario);
+
+        // Check component sections
+        check_section_present(&content, "## Sidechain Input Guidelines", scenario);
+        check_section_present(&content, "## Oversampling Guidelines", scenario);
+
+        // Check resources
+        check_section_present(&content, "## Rust Audio Libraries Reference", scenario);
+        check_section_present(&content, "## Resources", scenario);
+
+        println!("✅ {} PASSED", scenario);
+    }
+
+    #[test]
+    fn test_scenario_2_instrument_egui_no_components() {
+        let content = generate_claude_md("test-synth", "instrument", "egui", None);
+
+        let scenario = "Scenario 2 (instrument + egui + no components)";
+
+        // Check header
+        check_section_present(&content, "Type**: instrument", scenario);
+        check_section_present(&content, "UI Framework**: egui", scenario);
+        check_section_present(&content, "Components**: None", scenario);
+
+        // Check egui-specific guidelines
+        check_section_present(&content, "**This is a egui project.**", scenario);
+        check_section_present(&content, "**UI Location:** `editor()` method in `src/lib.rs`", scenario);
+        check_section_present(&content, "## egui UI Framework", scenario);
+        check_section_present(&content, "ParamSlider::for_param", scenario);
+
+        // Check instrument patterns
+        check_section_present(&content, "## Instrument Plugin Patterns", scenario);
+        check_section_present(&content, "MIDI Note Handling", scenario);
+
+        // Check advanced instrument patterns
+        check_section_present(&content, "## Advanced Instrument Implementation", scenario);
+        check_section_present(&content, "Complete Voice Structure", scenario);
+        check_section_present(&content, "ADSR Envelope (Correct Implementation)", scenario);
+
+        // Check sampler patterns (included for instruments)
+        check_section_present(&content, "## Sampler & Drum Machine Implementation", scenario);
+
+        // Should NOT have sidechain (effect component)
+        assert!(
+            !content.contains("## Sidechain Input Guidelines"),
+            "Should NOT have sidechain for instrument"
+        );
+
+        println!("✅ {} PASSED", scenario);
+    }
+
+    #[test]
+    fn test_scenario_3_effect_headless_no_components() {
+        let content = generate_claude_md("test-processor", "effect", "headless", None);
+
+        let scenario = "Scenario 3 (effect + headless + no components)";
+
+        // Check header
+        check_section_present(&content, "Type**: effect", scenario);
+        check_section_present(&content, "UI Framework**: headless", scenario);
+
+        // Check headless-specific guidelines
+        check_section_present(&content, "**This is a headless project.**", scenario);
+        check_section_present(&content, "*(Skip - headless plugin has no custom UI)*", scenario);
+        check_section_present(&content, "## Headless Plugin (No Custom UI)", scenario);
+
+        // Should NOT have webview or egui sections
+        assert!(
+            !content.contains("## WebView UI Framework"),
+            "Should NOT have webview section for headless"
+        );
+        assert!(
+            !content.contains("## egui UI Framework"),
+            "Should NOT have egui section for headless"
+        );
+        assert!(
+            !content.contains("src/ui.html"),
+            "Should NOT mention ui.html for headless"
+        );
+
+        // Check effect patterns still present
+        check_section_present(&content, "## Effect Plugin Patterns", scenario);
+        check_section_present(&content, "## Advanced Effect Implementation", scenario);
+
+        println!("✅ {} PASSED", scenario);
+    }
+
+    #[test]
+    fn test_scenario_4_instrument_webview_all_components() {
+        let components = vec![
+            "preset_system".to_string(),
+            "polyphony".to_string(),
+            "velocity_layers".to_string(),
+            "adsr_envelope".to_string(),
+            "lfo".to_string(),
+        ];
+        let content = generate_claude_md("super-synth", "instrument", "webview", Some(&components));
+
+        let scenario = "Scenario 4 (instrument + webview + ALL components)";
+
+        // Check header includes all components
+        check_section_present(&content, "Type**: instrument", scenario);
+        check_section_present(&content, "UI Framework**: webview", scenario);
+        check_section_present(&content, "preset_system", scenario);
+        check_section_present(&content, "polyphony", scenario);
+        check_section_present(&content, "velocity_layers", scenario);
+        check_section_present(&content, "adsr_envelope", scenario);
+        check_section_present(&content, "lfo", scenario);
+
+        // Check webview section (since it's webview)
+        check_section_present(&content, "## WebView UI Framework", scenario);
+        check_section_present(&content, "src/ui.html", scenario);
+
+        // Check ALL component sections
+        check_section_present(&content, "## Preset System Guidelines", scenario);
+        check_section_present(&content, "## Polyphony Guidelines", scenario);
+        check_section_present(&content, "## Velocity Layers Guidelines", scenario);
+        check_section_present(&content, "## ADSR Envelope Additional Tips", scenario);
+        check_section_present(&content, "## LFO Guidelines", scenario);
+
+        // Check instrument patterns
+        check_section_present(&content, "## Instrument Plugin Patterns", scenario);
+        check_section_present(&content, "## Advanced Instrument Implementation", scenario);
+        check_section_present(&content, "## Sampler & Drum Machine Implementation", scenario);
+
+        println!("✅ {} PASSED", scenario);
+    }
+
+    #[test]
+    fn test_ui_enforcement_warnings() {
+        // Test that UI enforcement warnings are present for webview and egui
+        let webview_content = generate_claude_md("test", "effect", "webview", None);
+        let egui_content = generate_claude_md("test", "effect", "egui", None);
+        let headless_content = generate_claude_md("test", "effect", "headless", None);
+
+        // WebView should have strong UI warnings
+        assert!(
+            webview_content.contains("⚠️ MANDATORY: Every Feature Needs UI"),
+            "WebView should have UI warning"
+        );
+        assert!(
+            webview_content.contains("STOP!"),
+            "WebView should have STOP reminder"
+        );
+
+        // egui should have UI warnings
+        assert!(
+            egui_content.contains("⚠️ MANDATORY: Every Feature Needs UI"),
+            "egui should have UI warning"
+        );
+
+        // Headless should skip UI steps
+        assert!(
+            headless_content.contains("Skip - headless plugin has no custom UI"),
+            "Headless should skip UI steps"
+        );
+
+        println!("✅ UI enforcement warnings PASSED");
+    }
 }

@@ -162,9 +162,3 @@ Plugins use [nih-plug](https://github.com/robbert-vdh/nih-plug):
 ## Contributing
 
 Contributions are generally welcome, but this is a side project with irregular maintenance. Mostly just experimenting right now.
-
----
-
-<p align="center">
-  Built with <a href="https://tauri.app/">Tauri</a> · <a href="https://github.com/robbert-vdh/nih-plug">nih-plug</a> · <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>
-</p>
