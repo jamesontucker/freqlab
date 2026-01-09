@@ -42,6 +42,7 @@ pub fn run() {
             commands::projects::list_projects,
             commands::projects::get_project,
             commands::projects::delete_project,
+            commands::projects::update_project,
             commands::projects::open_project_folder,
             commands::projects::open_in_editor,
             commands::projects::get_workspace_path_string,

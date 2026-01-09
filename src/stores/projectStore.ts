@@ -12,7 +12,8 @@ interface ProjectState {
   loadProjects: () => Promise<void>;
   createProject: (input: CreateProjectInput) => Promise<ProjectMeta>;
   selectProject: (project: ProjectMeta | null) => void;
-  deleteProject: (name: string) => Promise<void>;
+  deleteProject: (folderName: string, projectPath: string) => Promise<void>;
+  updateProject: (projectPath: string, name: string, description: string) => Promise<void>;
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
@@ -51,17 +52,37 @@ export const useProjectStore = create<ProjectState>((set) => ({
     set({ activeProject: project });
   },
 
-  deleteProject: async (name: string) => {
+  deleteProject: async (folderName: string, projectPath: string) => {
     set({ loading: true, error: null });
     try {
-      await invoke('delete_project', { name });
+      // Backend uses folder name to find the project directory
+      await invoke('delete_project', { name: folderName });
+      // Filter local state by path (more reliable than name since name can be edited)
       set((state) => ({
-        projects: state.projects.filter((p) => p.name !== name),
-        activeProject: state.activeProject?.name === name ? null : state.activeProject,
+        projects: state.projects.filter((p) => p.path !== projectPath),
+        activeProject: state.activeProject?.path === projectPath ? null : state.activeProject,
         loading: false,
       }));
     } catch (err) {
       set({ error: String(err), loading: false });
+      throw err;
+    }
+  },
+
+  updateProject: async (projectPath: string, name: string, description: string) => {
+    try {
+      const updated = await invoke<ProjectMeta>('update_project', {
+        projectPath,
+        name,
+        description,
+      });
+      set((state) => ({
+        projects: state.projects.map((p) =>
+          p.path === projectPath ? updated : p
+        ),
+        activeProject: state.activeProject?.path === projectPath ? updated : state.activeProject,
+      }));
+    } catch (err) {
       throw err;
     }
   },

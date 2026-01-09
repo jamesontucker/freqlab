@@ -18,9 +18,16 @@ interface ConflictInfo {
   conflictingName: string;
 }
 
+// Helper to extract folder name from project path
+// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+function getFolderName(projectPath: string): string {
+  return projectPath.split('/').pop() || '';
+}
+
 export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImportModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>('export');
-  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  // Store selected project path (not display name) for reliable filesystem operations
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [conflict, setConflict] = useState<ConflictInfo | null>(null);
@@ -32,7 +39,7 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
   // Reset state when modal opens/closes
   useEffect(() => {
     if (isOpen) {
-      setSelectedProject(null);
+      setSelectedProjectPath(null);
       setError(null);
       setSuccess(null);
       setConflict(null);
@@ -41,17 +48,20 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
   }, [isOpen, loadProjects]);
 
   const handleExport = async () => {
-    if (!selectedProject) return;
+    if (!selectedProjectPath) return;
 
     setExporting(true);
     setError(null);
     setSuccess(null);
 
+    // Get the folder name for filesystem operations
+    const folderName = getFolderName(selectedProjectPath);
+
     try {
       // Open save dialog
       const destination = await save({
         title: 'Export Plugin Project',
-        defaultPath: `${selectedProject}.freqlab.zip`,
+        defaultPath: `${folderName}.freqlab.zip`,
         filters: [{ name: 'Freqlab Project', extensions: ['zip'] }],
       });
 
@@ -61,7 +71,7 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
       }
 
       const result = await invoke<string>('export_project', {
-        projectName: selectedProject,
+        projectName: folderName,
         destination,
       });
 
@@ -206,7 +216,7 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
                 <label
                   key={project.id}
                   className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedProject === project.name
+                    selectedProjectPath === project.path
                       ? 'border-accent bg-accent/10'
                       : 'border-border hover:border-border-hover hover:bg-bg-tertiary'
                   }`}
@@ -214,9 +224,9 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
                   <input
                     type="radio"
                     name="project"
-                    value={project.name}
-                    checked={selectedProject === project.name}
-                    onChange={() => setSelectedProject(project.name)}
+                    value={project.path}
+                    checked={selectedProjectPath === project.path}
+                    onChange={() => setSelectedProjectPath(project.path)}
                     className="w-4 h-4 text-accent"
                   />
                   <div className="flex-1 min-w-0">
@@ -245,7 +255,7 @@ export function ShareImportModal({ isOpen, onClose, onImportSuccess }: ShareImpo
 
           <button
             onClick={handleExport}
-            disabled={!selectedProject || exporting}
+            disabled={!selectedProjectPath || exporting}
             className="w-full py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-lg transition-colors disabled:cursor-not-allowed"
           >
             {exporting ? 'Exporting...' : 'Export Selected Project'}

@@ -80,7 +80,11 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
             busyType={busyType}
             collapsed={collapsed}
             onClick={() => selectProject(project)}
-            onDelete={() => deleteProject(project.name)}
+            onDelete={() => {
+              // Extract folder name from path for filesystem operations
+              const folderName = project.path.split('/').pop() || '';
+              deleteProject(folderName, project.path);
+            }}
           />
         );
       })}

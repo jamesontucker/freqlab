@@ -50,6 +50,12 @@ const DAW_LABELS: Record<keyof DawPaths, string> = {
   other: 'Custom Location',
 };
 
+// Helper to extract folder name from project path
+// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+function getFolderName(projectPath: string): string {
+  return projectPath.split('/').pop() || '';
+}
+
 export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishModalProps) {
   const { dawPaths } = useSettingsStore();
   const [selectedDaws, setSelectedDaws] = useState<Set<keyof DawPaths>>(new Set());
@@ -73,8 +79,10 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
       invoke<number>('get_current_version', { projectPath: project.path })
         .then((version) => {
           setCurrentVersion(version);
+          // Use folder name from path, not display name, for filesystem operations
+          const folderName = getFolderName(project.path);
           return invoke<AvailableFormats>('check_available_formats', {
-            projectName: project.name,
+            projectName: folderName,
             version,
           });
         })
@@ -125,8 +133,10 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
         clap_path: dawPaths[daw].clap,
       }));
 
+      // Use folder name from path, not display name
+      const folderName = getFolderName(project.path);
       const publishResult = await invoke<PublishResult>('publish_to_daw', {
-        projectName: project.name,
+        projectName: folderName,
         version: currentVersion,
         targets,
       });
@@ -158,8 +168,10 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
         return; // User cancelled
       }
 
+      // Use folder name from path, not display name
+      const packageFolderName = getFolderName(project.path);
       const result = await invoke<PackageResult>('package_plugins', {
-        projectName: project.name,
+        projectName: packageFolderName,
         version: currentVersion,
         destination,
       });

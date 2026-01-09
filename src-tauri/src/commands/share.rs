@@ -414,7 +414,8 @@ pub async fn import_project(
     // This is critical when importing a copy of an existing project
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.path = target_path.to_string_lossy().to_string();
-    meta.name = target_name.to_string();
+    // Note: meta.name (display name) is preserved from the original project
+    // The folder name is stored in meta.path, not meta.name
     meta.updated_at = chrono::Utc::now().to_rfc3339();
 
     // Save updated metadata

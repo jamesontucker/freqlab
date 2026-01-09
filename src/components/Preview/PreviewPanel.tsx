@@ -40,6 +40,12 @@ const GATE_OPTIONS: { value: GatePattern; label: string; rateLabel: string }[] =
 
 // No hardcoded samples - we use only what the backend provides or custom files
 
+// Helper to extract folder name from project path
+// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+function getFolderName(projectPath: string): string {
+  return projectPath.split('/').pop() || '';
+}
+
 export function PreviewPanel() {
   const {
     isOpen,
@@ -445,7 +451,9 @@ export function PreviewPanel() {
         setCurrentVersion(version);
 
         // Check if a .clap plugin exists for this version
-        const pluginPath = await previewApi.getProjectPluginPath(activeProject.name, version);
+        // Use folder name from path, not display name, for filesystem operations
+        const folderName = getFolderName(activeProject.path);
+        const pluginPath = await previewApi.getProjectPluginPath(folderName, version);
         setPluginAvailable(!!pluginPath);
       } catch (err) {
         console.error('Failed to check plugin availability:', err);
@@ -492,7 +500,9 @@ export function PreviewPanel() {
         });
 
         // Check if plugin file exists
-        const pluginPath = await previewApi.getProjectPluginPath(activeProject.name, version);
+        // Use folder name from path, not display name, for filesystem operations
+        const folderName = getFolderName(activeProject.path);
+        const pluginPath = await previewApi.getProjectPluginPath(folderName, version);
         if (!pluginPath) {
           return;
         }
@@ -527,7 +537,9 @@ export function PreviewPanel() {
 
           // Trigger hot reload
           setLoadedPlugin({ status: 'reloading', path: pluginPath });
-          await previewApi.pluginReload(activeProject.name, version);
+          // Use folder name from path for reload
+          const reloadFolderName = getFolderName(activeProject.path);
+          await previewApi.pluginReload(reloadFolderName, version);
 
           // Re-open editor if it was open before
           // Position is stored at engine level, so it will restore to same position
@@ -1028,7 +1040,9 @@ export function PreviewPanel() {
                         } else if (loadedPlugin.status === 'unloaded' && pluginAvailable && activeProject) {
                           setPluginLoading(true);
                           try {
-                            await previewApi.pluginLoadForProject(activeProject.name, currentVersion);
+                            // Use folder name from path, not display name
+                            const loadFolderName = getFolderName(activeProject.path);
+                            await previewApi.pluginLoadForProject(loadFolderName, currentVersion);
                             await previewApi.setPluginIsInstrument(activeProject.template === 'instrument');
                             if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
                               setTimeout(async () => {

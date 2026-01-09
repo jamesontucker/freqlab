@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Header } from './Header';
@@ -16,6 +16,7 @@ import { useToastStore } from '../../stores/toastStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
+import type { ProjectMeta } from '../../types';
 
 interface AvailableFormats {
   vst3: boolean;
@@ -36,6 +37,12 @@ interface BuildResult {
   error?: string;
 }
 
+// Helper to extract folder name from project path
+// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+function getFolderName(projectPath: string): string {
+  return projectPath.split('/').pop() || '';
+}
+
 export function MainLayout() {
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
@@ -43,7 +50,15 @@ export function MainLayout() {
   const [hasBuild, setHasBuild] = useState(false);
   // Store last build error so user can fix it even after dismissing toast
   const [lastBuildError, setLastBuildError] = useState<string | null>(null);
-  const { activeProject, createProject, projects, deleteProject, selectProject } = useProjectStore();
+  // Quick actions dropdown state
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const quickActionsRef = useRef<HTMLDivElement>(null);
+  // Edit project modal state
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [isEditSaving, setIsEditSaving] = useState(false);
+  const { activeProject, createProject, projects, deleteProject, selectProject, updateProject } = useProjectStore();
   const { addToast } = useToastStore();
   const { queueMessage } = useChatStore();
   const { buildingPath, setBuildingPath, clearBuildingIfMatch, isClaudeBusy } = useProjectBusyStore();
@@ -74,8 +89,10 @@ export function MainLayout() {
       const version = await invoke<number>('get_current_version', {
         projectPath: activeProject.path,
       });
+      // Use folder name (from path), not display name, for filesystem operations
+      const folderName = getFolderName(activeProject.path);
       const formats = await invoke<AvailableFormats>('check_available_formats', {
-        projectName: activeProject.name,
+        projectName: folderName,
         version,
       });
       setHasBuild(formats.vst3 || formats.clap);
@@ -90,17 +107,75 @@ export function MainLayout() {
     setLastBuildError(null); // Clear error when switching projects
   }, [checkBuildExists]);
 
+  // Close quick actions dropdown when clicking outside or pressing Escape
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (quickActionsRef.current && !quickActionsRef.current.contains(event.target as Node)) {
+        setShowQuickActions(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowQuickActions(false);
+      }
+    };
+
+    if (showQuickActions) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleEscape);
+      };
+    }
+  }, [showQuickActions]);
+
   const handleCreateProject = async (input: Parameters<typeof createProject>[0]) => {
     await createProject(input);
   };
 
+  // Open edit modal with current project values
+  const handleOpenEditModal = () => {
+    if (activeProject) {
+      setEditName(activeProject.name);
+      setEditDescription(activeProject.description || '');
+      setIsEditModalOpen(true);
+      setShowQuickActions(false);
+    }
+  };
+
+  // Save edited project
+  const handleSaveEdit = async () => {
+    if (!activeProject || !editName.trim()) return;
+
+    setIsEditSaving(true);
+    try {
+      await updateProject(activeProject.path, editName.trim(), editDescription.trim());
+      setIsEditModalOpen(false);
+      addToast({
+        type: 'success',
+        message: 'Project updated',
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        message: `Failed to update: ${err}`,
+      });
+    } finally {
+      setIsEditSaving(false);
+    }
+  };
+
   const handleOpenFolder = async () => {
+    setShowQuickActions(false);
     if (activeProject?.path) {
       await invoke('open_project_folder', { path: activeProject.path });
     }
   };
 
   const handleOpenInEditor = async () => {
+    setShowQuickActions(false);
     if (activeProject?.path) {
       try {
         await invoke('open_in_editor', { path: activeProject.path });
@@ -113,10 +188,17 @@ export function MainLayout() {
     }
   };
 
+  const handleDeleteClick = () => {
+    setShowQuickActions(false);
+    setShowDeleteConfirm(true);
+  };
+
   const handleDelete = async () => {
     if (!activeProject) return;
     try {
-      await deleteProject(activeProject.name);
+      // Use folder name (from path), not display name, for delete operation
+      const folderName = getFolderName(activeProject.path);
+      await deleteProject(folderName, activeProject.path);
       selectProject(null);
       addToast({
         type: 'success',
@@ -163,8 +245,10 @@ export function MainLayout() {
     });
 
     try {
+      // Use folder name (from path), not display name, for build operation
+      const folderName = getFolderName(activeProject.path);
       const result = await invoke<BuildResult>('build_project', {
-        projectName: activeProject.name,
+        projectName: folderName,
         version,
       });
 
@@ -238,7 +322,7 @@ export function MainLayout() {
                         {activeProject.template === 'instrument' ? 'Instrument' : 'Effect'}
                       </span>
                     </div>
-                    <p className="text-sm text-text-muted mt-1">{activeProject.description || 'No description'}</p>
+                    <p className="text-sm text-text-muted mt-1 line-clamp-2 break-words">{activeProject.description || 'No description'}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {/* Persistent Fix Error button - shows when there's an unresolved build error */}
@@ -301,34 +385,60 @@ export function MainLayout() {
                       </svg>
                       Publish
                     </button>
-                    <button
-                      onClick={handleOpenFolder}
-                      className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent hover:border-border transition-colors"
-                      title="Open project folder"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={handleOpenInEditor}
-                      className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent hover:border-border transition-colors"
-                      title="Open in VS Code"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => setShowDeleteConfirm(true)}
-                      disabled={buildDisabled}
-                      className="p-2 rounded-lg hover:bg-error/10 text-text-muted hover:text-error disabled:opacity-50 disabled:cursor-not-allowed border border-transparent hover:border-error/20 transition-colors"
-                      title="Delete project"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                      </svg>
-                    </button>
+                    {/* Quick Actions Dropdown */}
+                    <div className="relative" ref={quickActionsRef}>
+                      <button
+                        onClick={() => setShowQuickActions(!showQuickActions)}
+                        className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-elevated border border-transparent hover:border-border transition-colors"
+                        title="More actions"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" />
+                        </svg>
+                      </button>
+                      {showQuickActions && (
+                        <div className="absolute right-0 top-full mt-1 w-48 bg-bg-secondary border border-border rounded-lg shadow-lg z-50 py-1 animate-fade-in">
+                          <button
+                            onClick={handleOpenFolder}
+                            className="w-full px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors flex items-center gap-2"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+                            </svg>
+                            Open Folder
+                          </button>
+                          <button
+                            onClick={handleOpenInEditor}
+                            className="w-full px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors flex items-center gap-2"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                            </svg>
+                            Open in Editor
+                          </button>
+                          <button
+                            onClick={handleOpenEditModal}
+                            className="w-full px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors flex items-center gap-2"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                            </svg>
+                            Edit Project
+                          </button>
+                          <div className="border-t border-border my-1" />
+                          <button
+                            onClick={handleDeleteClick}
+                            disabled={buildDisabled}
+                            className="w-full px-3 py-2 text-left text-sm text-error hover:bg-error/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                            </svg>
+                            Delete Project
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="flex-1 min-h-0">
@@ -406,6 +516,76 @@ export function MainLayout() {
           }}
         />
       )}
+
+      {/* Edit Project Modal */}
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Edit Project"
+      >
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="edit-name" className="block text-sm font-medium text-text-secondary mb-2">
+              Name
+            </label>
+            <input
+              type="text"
+              id="edit-name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value.slice(0, 50))}
+              maxLength={50}
+              className="w-full px-4 py-2.5 bg-bg-primary border border-border rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            />
+            <div className="mt-1.5 flex items-center justify-between">
+              <p className="text-xs text-text-muted">
+                Display name only (does not rename files)
+              </p>
+              <span className={`text-xs ${editName.length >= 45 ? 'text-warning' : 'text-text-muted'}`}>
+                {editName.length}/50
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="edit-description" className="block text-sm font-medium text-text-secondary mb-1">
+              Description
+            </label>
+            <p className="text-xs text-text-muted mb-2">
+              Provides context for code suggestions
+            </p>
+            <textarea
+              id="edit-description"
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value.slice(0, 280))}
+              rows={3}
+              maxLength={280}
+              className="w-full px-4 py-2.5 bg-bg-primary border border-border rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors resize-none"
+            />
+            <div className="mt-1.5 flex justify-end">
+              <span className={`text-xs ${editDescription.length >= 260 ? 'text-warning' : 'text-text-muted'}`}>
+                {editDescription.length}/280
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => setIsEditModalOpen(false)}
+              disabled={isEditSaving}
+              className="flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveEdit}
+              disabled={isEditSaving || !editName.trim()}
+              className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-xl transition-all duration-200 disabled:cursor-not-allowed"
+            >
+              {isEditSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal

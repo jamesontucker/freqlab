@@ -18,7 +18,9 @@ pub struct ProjectMeta {
 
 #[derive(Deserialize)]
 pub struct CreateProjectInput {
-    pub name: String,
+    pub name: String,                     // Folder-safe name (my_cool_plugin)
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,     // User-friendly name (My Cool Plugin)
     pub description: String,
     pub template: String, // "effect" or "instrument"
     #[serde(rename = "uiFramework")]
@@ -347,9 +349,17 @@ strip = "symbols"
     let now = chrono::Utc::now().to_rfc3339();
     let id = uuid::Uuid::new_v4().to_string();
 
+    // Use display_name if provided, otherwise use folder name
+    let display_name = input
+        .display_name
+        .as_ref()
+        .filter(|n| !n.is_empty())
+        .cloned()
+        .unwrap_or_else(|| input.name.clone());
+
     let metadata = ProjectMeta {
         id: id.clone(),
-        name: input.name.clone(),
+        name: display_name.clone(),
         description: input.description.clone(),
         template: Some(input.template.clone()),
         ui_framework: Some(input.ui_framework.clone()),
@@ -364,9 +374,9 @@ strip = "symbols"
     fs::write(project_path.join(".vstworkshop/metadata.json"), metadata_json)
         .map_err(|e| format!("Failed to write metadata.json: {}", e))?;
 
-    // Generate CLAUDE.md for project-specific Claude guidance
+    // Generate CLAUDE.md for project-specific Claude guidance (uses display name for header)
     let claude_md_content = super::claude_md::generate_claude_md(
-        &input.name,
+        &display_name,
         &input.template,
         &input.ui_framework,
         input.components.as_ref(),
@@ -454,6 +464,44 @@ pub async fn delete_project(name: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn update_project(
+    project_path: String,
+    name: String,
+    description: String,
+) -> Result<ProjectMeta, String> {
+    // Validate description length
+    if description.len() > 280 {
+        return Err("Description must be 280 characters or less".to_string());
+    }
+
+    let path = PathBuf::from(&project_path);
+    let metadata_path = path.join(".vstworkshop/metadata.json");
+
+    if !metadata_path.exists() {
+        return Err("Project metadata not found".to_string());
+    }
+
+    // Read existing metadata
+    let content = fs::read_to_string(&metadata_path)
+        .map_err(|e| format!("Failed to read metadata: {}", e))?;
+    let mut meta: ProjectMeta = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse metadata: {}", e))?;
+
+    // Update fields
+    meta.name = name;
+    meta.description = description;
+    meta.updated_at = chrono::Utc::now().to_rfc3339();
+
+    // Write back
+    let metadata_json = serde_json::to_string_pretty(&meta)
+        .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+    fs::write(&metadata_path, metadata_json)
+        .map_err(|e| format!("Failed to write metadata: {}", e))?;
+
+    Ok(meta)
 }
 
 #[tauri::command]

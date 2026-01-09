@@ -100,7 +100,8 @@ export type InstrumentComponent =
   | 'lfo';
 
 export interface CreateProjectInput {
-  name: string;
+  name: string;              // Folder-safe name (my_cool_plugin)
+  displayName?: string;      // User-friendly name (My Cool Plugin)
   description: string;
   template: PluginTemplate;
   uiFramework: UIFramework;

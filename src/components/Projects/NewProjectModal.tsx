@@ -156,13 +156,14 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { vendorName, vendorUrl, vendorEmail } = useSettingsStore();
 
-  const validateName = (value: string): string | null => {
-    if (!value) return 'Name is required';
-    if (value.length > 50) return 'Name too long (max 50 chars)';
-    if (!/^[a-z]/.test(value)) return 'Must start with a lowercase letter';
-    if (!/^[a-z][a-z0-9_]*$/.test(value)) {
-      return 'Only lowercase letters, numbers, and underscores allowed';
-    }
+  const validateName = (displayName: string): string | null => {
+    if (!displayName.trim()) return 'Name is required';
+    if (displayName.length > 50) return 'Name too long (max 50 chars)';
+
+    // Validate the converted folder name
+    const folderName = toFolderName(displayName);
+    if (!folderName) return 'Name must contain at least one letter or number';
+    if (!/^[a-z]/.test(folderName)) return 'Name must start with a letter';
     return null;
   };
 
@@ -195,8 +196,10 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
     setIsSubmitting(true);
 
     try {
+      const folderName = toFolderName(name);
       await onSubmit({
-        name,
+        name: folderName,                     // Folder-safe name for filesystem
+        displayName: name.trim(),             // Original user-typed name for display
         description,
         template,
         uiFramework,
@@ -232,19 +235,19 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
     onClose();
   };
 
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Sanitize input to valid plugin name:
-    // 1. Lowercase everything
-    // 2. Replace spaces and hyphens with underscores
-    // 3. Remove any remaining invalid characters
-    // 4. Collapse multiple underscores into one
-    // 5. Remove leading/trailing underscores
-    const value = e.target.value
+  // Convert display name to folder-safe name (used when creating project)
+  const toFolderName = (displayName: string): string => {
+    return displayName
       .toLowerCase()
       .replace(/[\s-]+/g, '_')        // spaces/hyphens → underscores
       .replace(/[^a-z0-9_]/g, '')     // remove invalid chars
       .replace(/_+/g, '_')            // collapse multiple underscores
-      .replace(/^_|_$/g, '');         // trim leading/trailing underscores
+      .replace(/^_+|_+$/g, '');       // trim leading/trailing underscores
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Allow user to type freely, just enforce max length
+    const value = e.target.value.slice(0, 50);
     setName(value);
     setError(null);
   };
@@ -274,12 +277,15 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                 value={name}
                 onChange={handleNameChange}
                 placeholder="my_plugin"
+                maxLength={50}
                 className="w-full px-4 py-2.5 bg-bg-primary border border-border rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
                 autoFocus
               />
-              <p className="mt-1.5 text-xs text-text-muted">
-                Lowercase letters, numbers, and underscores only
-              </p>
+              <div className="mt-1.5 flex justify-end">
+                <span className={`text-xs ${name.length >= 45 ? 'text-warning' : 'text-text-muted'}`}>
+                  {name.length}/50
+                </span>
+              </div>
             </div>
 
             <div>
@@ -343,20 +349,26 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
             </div>
 
             <div>
-              <label htmlFor="description" className="block text-sm font-medium text-text-secondary mb-2">
+              <label htmlFor="description" className="block text-sm font-medium text-text-secondary mb-1">
                 Description
               </label>
+              <p className="text-xs text-text-muted mb-2">
+                Provides context for code suggestions
+              </p>
               <textarea
                 id="description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => setDescription(e.target.value.slice(0, 280))}
                 placeholder="Describe your plugin idea..."
                 rows={3}
+                maxLength={280}
                 className="w-full px-4 py-2.5 bg-bg-primary border border-border rounded-xl text-text-primary placeholder-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors resize-none"
               />
-              <p className="mt-1.5 text-xs text-text-muted">
-                You can refine and add features through conversation
-              </p>
+              <div className="mt-1.5 flex justify-end">
+                <span className={`text-xs ${description.length >= 260 ? 'text-warning' : 'text-text-muted'}`}>
+                  {description.length}/280
+                </span>
+              </div>
             </div>
           </>
         )}
