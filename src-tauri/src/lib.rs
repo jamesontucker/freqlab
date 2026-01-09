@@ -1,12 +1,14 @@
 pub mod audio;
 mod commands;
 
+use tauri::RunEvent;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize file logging
     commands::logging::init_logging();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -140,6 +142,13 @@ pub fn run() {
             commands::preview::midi_device_get_connected,
             commands::preview::midi_device_get_last_note,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, event| {
+        if let RunEvent::Exit = event {
+            // Clean up any spawned child processes when the app exits
+            commands::cleanup_child_processes();
+        }
+    });
 }

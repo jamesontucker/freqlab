@@ -1,8 +1,43 @@
 use serde::Serialize;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
+
+// Track active child process PIDs for cleanup on exit
+static ACTIVE_CHILD_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// Register a child process PID for tracking
+fn register_child_pid(pid: u32) {
+    if let Ok(mut pids) = ACTIVE_CHILD_PIDS.lock() {
+        pids.push(pid);
+    }
+}
+
+/// Unregister a child process PID (called when process completes normally)
+fn unregister_child_pid(pid: u32) {
+    if let Ok(mut pids) = ACTIVE_CHILD_PIDS.lock() {
+        pids.retain(|&p| p != pid);
+    }
+}
+
+/// Kill all tracked child processes - call this on app exit
+pub fn cleanup_child_processes() {
+    if let Ok(pids) = ACTIVE_CHILD_PIDS.lock() {
+        for &pid in pids.iter() {
+            // Send SIGTERM first, then SIGKILL
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            // Give it a moment then force kill
+            std::thread::sleep(Duration::from_millis(100));
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    }
+}
 
 /// Events emitted during installation
 #[derive(Serialize, Clone)]
@@ -295,6 +330,7 @@ pub async fn install_homebrew(window: tauri::Window) -> Result<bool, String> {
         .env("PATH", super::get_extended_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to start Homebrew installer: {}", e))?;
 
@@ -442,6 +478,7 @@ pub async fn install_node(window: tauri::Window) -> Result<bool, String> {
         .env("PATH", super::get_extended_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to start brew install: {}", e))?;
 
@@ -497,7 +534,7 @@ pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
         "install-stream",
         InstallEvent::ActionRequired {
             action: "xcode_dialog".to_string(),
-            message: "Click 'Install' in the system dialog that appears".to_string(),
+            message: "Click 'Install' in the system dialog (check behind other windows)".to_string(),
         },
     );
 
@@ -632,30 +669,6 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
         }
     }
 
-    // Check for existing non-rustup Rust installation that could conflict
-    let home = std::env::var("HOME").unwrap_or_default();
-    let rustup_dir = std::path::Path::new(&home).join(".rustup");
-
-    // If rustc exists but not via rustup, warn user
-    if run_command_with_timeout("which", &["rustc"], 3)
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-        && !rustup_dir.exists()
-    {
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
-                line: "⚠️ Found existing Rust installation (not via rustup)".to_string(),
-            },
-        );
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
-                line: "This may cause conflicts. If install fails, uninstall existing Rust first.".to_string(),
-            },
-        );
-    }
-
     let _ = window.emit(
         "install-stream",
         InstallEvent::Output {
@@ -671,6 +684,7 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
         .env("PATH", super::get_extended_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to start Rust installer: {}", e))?;
 
@@ -770,10 +784,9 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
     }
 
     // Check if npm is available
-    if run_command_with_timeout("which", &["npm"], 3)
+    if !run_command_with_timeout("which", &["npm"], 3)
         .map(|o| o.status.success())
         .unwrap_or(false)
-        == false
     {
         let msg = "npm not found. Please install Node.js first.";
         let _ = window.emit(
@@ -796,6 +809,7 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
         .env("PATH", super::get_extended_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to start npm install: {}", e))?;
 
@@ -948,10 +962,9 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     );
 
     // Check if Claude CLI is installed first
-    if run_command_with_timeout("which", &["claude"], 3)
+    if !run_command_with_timeout("which", &["claude"], 3)
         .map(|o| o.status.success())
         .unwrap_or(false)
-        == false
     {
         let msg = "Claude CLI not found. Please install it first.";
         let _ = window.emit(
@@ -979,14 +992,15 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
 
     // Open Terminal.app with claude command and auto-type /login after delay
     // Uses AppleScript keystroke to simulate typing - works with interactive programs
+    // Note: 8 second delay to allow Claude to fully initialize (especially on first run)
     let apple_script = r#"
         tell application "Terminal"
             activate
             do script "echo '=== Claude Authentication ===' && echo '' && echo 'Starting Claude... login will begin automatically.' && echo 'Complete sign-in in your browser when it opens.' && echo '' && echo 'After signing in, close this window and click Recheck.' && echo '' && claude"
         end tell
 
-        -- Wait for Claude to initialize (shows welcome message)
-        delay 5
+        -- Wait for Claude to initialize (longer delay for first run or slower machines)
+        delay 8
 
         -- Auto-type /login and press Enter
         tell application "System Events"
@@ -997,11 +1011,25 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
         end tell
     "#;
 
-    let result = tokio::process::Command::new("osascript")
-        .args(["-e", apple_script])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to open Terminal: {}", e))?;
+    // 30 second timeout - script should complete in ~10 seconds normally
+    let result = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new("osascript")
+            .args(["-e", apple_script])
+            .output()
+    )
+    .await
+    .map_err(|_| {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Authentication script timed out. Please try again.".to_string(),
+            },
+        );
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        "Authentication script timed out".to_string()
+    })?
+    .map_err(|e| format!("Failed to open Terminal: {}", e))?;
 
     if result.status.success() {
         let _ = window.emit(
@@ -1115,13 +1143,21 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
             );
         }
         let _ = window.emit("install-stream", InstallEvent::Done { success: false });
-        Ok(false)
+        Err("Authentication setup failed - see instructions above".to_string())
     }
 }
 
 /// Helper to stream stdout/stderr and wait for process completion
 /// Returns true if process succeeded, false otherwise
+/// Includes a 10-minute timeout to prevent indefinite hangs
+/// Tracks child PID for cleanup on app exit
 async fn stream_and_wait(child: &mut tokio::process::Child, window: &tauri::Window) -> bool {
+    // Track the child PID for cleanup on app exit
+    let pid = child.id();
+    if let Some(pid) = pid {
+        register_child_pid(pid);
+    }
+
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -1150,8 +1186,30 @@ async fn stream_and_wait(child: &mut tokio::process::Child, window: &tauri::Wind
         None
     };
 
-    // Wait for process to complete
-    let status = child.wait().await;
+    // Wait for process to complete with 10-minute timeout
+    let status = tokio::time::timeout(
+        Duration::from_secs(600),
+        child.wait()
+    ).await;
+
+    // Kill the process if it timed out
+    let success = match status {
+        Ok(Ok(exit_status)) => exit_status.success(),
+        Ok(Err(_)) => false, // wait() failed
+        Err(_) => {
+            // Timeout - kill the process
+            let _ = child.kill().await;
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "Process timed out after 10 minutes".to_string(),
+            });
+            false
+        }
+    };
+
+    // Unregister the PID now that process has completed
+    if let Some(pid) = pid {
+        unregister_child_pid(pid);
+    }
 
     // Wait for streaming tasks to finish (they'll complete when pipes close)
     if let Some(task) = stdout_task {
@@ -1161,5 +1219,5 @@ async fn stream_and_wait(child: &mut tokio::process::Child, window: &tauri::Wind
         let _ = task.await;
     }
 
-    status.map(|s| s.success()).unwrap_or(false)
+    success
 }

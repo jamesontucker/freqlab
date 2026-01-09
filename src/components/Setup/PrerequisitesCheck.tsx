@@ -16,10 +16,12 @@ import type { CheckResult } from '../../types';
 
 // Helper to wait for an install to complete via events
 // Fixed: Register listener BEFORE starting installation to avoid race condition
+// Accepts an AbortSignal for cleanup on component unmount
 async function waitForInstallComplete(
   installFn: () => Promise<unknown>,
   onOutput: (line: string) => void,
   onActionRequired: (message: string) => void,
+  abortSignal?: AbortSignal,
   timeoutMs: number = 10 * 60 * 1000 // 10 minute default timeout
 ): Promise<boolean> {
   return new Promise((resolve) => {
@@ -45,6 +47,13 @@ async function waitForInstallComplete(
       resolve(success);
     };
 
+    // Handle abort signal (component unmount)
+    if (abortSignal) {
+      abortSignal.addEventListener('abort', () => {
+        finish(false);
+      });
+    }
+
     // Set timeout
     timeoutId = setTimeout(() => {
       onOutput('Installation timed out. Please check your network connection and try again.');
@@ -53,6 +62,9 @@ async function waitForInstallComplete(
 
     // Register listener FIRST, then start installation
     listen<InstallEvent>('install-stream', (event) => {
+      // Don't process events if already resolved (e.g., component unmounted)
+      if (resolved) return;
+
       const data = event.payload;
 
       if (data.type === 'output' && data.line) {
@@ -111,6 +123,7 @@ interface CheckItemProps {
   onInstall?: () => void;
   installLabel?: string;
   isInstalling?: boolean;
+  isAnyInstalling?: boolean; // Disable button when ANY item is installing
   installOutput?: string[];
   actionRequired?: string | null;
 }
@@ -123,6 +136,7 @@ function CheckItem({
   onInstall,
   installLabel = 'Install',
   isInstalling,
+  isAnyInstalling,
   installOutput = [],
   actionRequired,
 }: CheckItemProps) {
@@ -232,11 +246,12 @@ function CheckItem({
           )}
         </div>
 
-        {/* Install button */}
+        {/* Install button - disabled when any installation is in progress */}
         {needsHelp && onInstall && !isInstalling && (
           <button
             onClick={onInstall}
-            className="px-3 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors"
+            disabled={isAnyInstalling}
+            className="px-3 py-1.5 text-xs font-medium bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white rounded-lg transition-colors disabled:cursor-not-allowed"
           >
             {installLabel}
           </button>
@@ -308,7 +323,8 @@ type InstallStep = 'homebrew' | 'node' | 'xcode' | 'rust' | 'claude_cli' | 'clau
 
 export function PrerequisitesCheck({ onComplete }: PrerequisitesCheckProps) {
   const { status, loading, check, allInstalled } = usePrerequisites();
-  const [testFailure, setTestFailure] = useState(false);
+  // Keep for testing - uncomment the test button below to use
+  const [testFailure, _setTestFailure] = useState(false);
 
   // Installation state
   const [installingStep, setInstallingStep] = useState<InstallStep | null>(null);
@@ -317,11 +333,37 @@ export function PrerequisitesCheck({ onComplete }: PrerequisitesCheckProps) {
   const [hasHomebrew, setHasHomebrew] = useState<boolean | null>(null);
   const [hasNode, setHasNode] = useState<boolean | null>(null);
 
+  // Refs for cleanup and preventing race conditions
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const recheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Abort any in-progress installation
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      // Cancel any pending recheck
+      if (recheckTimeoutRef.current) {
+        clearTimeout(recheckTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Refresh all checks
   const refreshChecks = useCallback(() => {
+    // Cancel any pending recheck to avoid race condition
+    if (recheckTimeoutRef.current) {
+      clearTimeout(recheckTimeoutRef.current);
+      recheckTimeoutRef.current = null;
+    }
     check();
-    checkHomebrew().then(setHasHomebrew);
-    checkNode().then(setHasNode);
+    checkHomebrew().then((v) => isMountedRef.current && setHasHomebrew(v));
+    checkNode().then((v) => isMountedRef.current && setHasNode(v));
   }, [check]);
 
   useEffect(() => {
@@ -339,27 +381,34 @@ export function PrerequisitesCheck({ onComplete }: PrerequisitesCheckProps) {
     step: InstallStep,
     installFn: () => Promise<unknown>
   ): Promise<boolean> => {
+    // Create abort controller for this installation
+    abortControllerRef.current = new AbortController();
+
     setInstallingStep(step);
     setInstallOutput((prev) => ({ ...prev, [step]: [] }));
     setActionRequired((prev) => ({ ...prev, [step]: null }));
 
     const success = await waitForInstallComplete(
       installFn,
-      (line) => setInstallOutput((prev) => ({
+      (line) => isMountedRef.current && setInstallOutput((prev) => ({
         ...prev,
         [step]: [...(prev[step] || []), line],
       })),
-      (message) => setActionRequired((prev) => ({
+      (message) => isMountedRef.current && setActionRequired((prev) => ({
         ...prev,
         [step]: message,
-      }))
+      })),
+      abortControllerRef.current.signal
     );
+
+    if (!isMountedRef.current) return success;
 
     setInstallingStep(null);
     setActionRequired((prev) => ({ ...prev, [step]: null }));
 
     // Refresh all checks after installation - longer delay to give system time to update
-    setTimeout(() => {
+    recheckTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
       setInstallOutput((prev) => ({
         ...prev,
         [step]: [...(prev[step] || []), 'Rechecking...'],
@@ -477,7 +526,7 @@ export function PrerequisitesCheck({ onComplete }: PrerequisitesCheckProps) {
       {/* Dev test button - uncomment to test failure states
       {import.meta.env.DEV && (
         <button
-          onClick={() => setTestFailure(!testFailure)}
+          onClick={() => _setTestFailure(!testFailure)}
           className={`absolute -top-2 -right-2 text-[10px] px-2 py-1 rounded-md border transition-colors ${
             testFailure
               ? 'bg-error/20 border-error/30 text-error'
@@ -540,6 +589,7 @@ export function PrerequisitesCheck({ onComplete }: PrerequisitesCheckProps) {
             onInstall={item.onInstall}
             installLabel={item.installLabel}
             isInstalling={installingStep === item.key}
+            isAnyInstalling={installingStep !== null}
             installOutput={installOutput[item.key] || []}
             actionRequired={actionRequired[item.key]}
           />

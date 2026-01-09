@@ -53,6 +53,7 @@ env_logger = "0.11"
 base64 = "0.22"
 midly = "0.5"  # MIDI file parsing
 midir = "0.10"  # MIDI device I/O
+libc = "0.2.180"
 
 # macOS native UI for plugin editor windows (using modern objc2 crates)
 [target.'cfg(target_os = "macos")'.dependencies]
