@@ -1,10 +1,39 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Mutex;
+use std::time::Duration;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::time::timeout;
+
+// Track active Claude processes by project path so we can interrupt them
+static ACTIVE_PROCESSES: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+
+fn register_process(project_path: &str, pid: u32) {
+    let mut guard = ACTIVE_PROCESSES.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(HashMap::new());
+    }
+    if let Some(ref mut map) = *guard {
+        map.insert(project_path.to_string(), pid);
+    }
+}
+
+fn unregister_process(project_path: &str) {
+    let mut guard = ACTIVE_PROCESSES.lock().unwrap();
+    if let Some(ref mut map) = *guard {
+        map.remove(project_path);
+    }
+}
+
+fn get_process_pid(project_path: &str) -> Option<u32> {
+    let guard = ACTIVE_PROCESSES.lock().unwrap();
+    guard.as_ref().and_then(|map| map.get(project_path).copied())
+}
 
 #[derive(Serialize, Clone)]
 pub struct ClaudeResponse {
@@ -372,14 +401,21 @@ pub async fn send_to_claude(
     }
 
     // Spawn Claude CLI process with stream-json for detailed output
+    // stdin is set to null to prevent any blocking on input
     let mut child = Command::new("claude")
         .current_dir(&project_path)
         .args(&args)
         .env("PATH", super::get_extended_path())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to spawn Claude CLI: {}", e))?;
+
+    // Register process for potential interruption
+    if let Some(pid) = child.id() {
+        register_process(&project_path, pid);
+    }
 
     // Emit start event
     let _ = window.emit("claude-stream", ClaudeStreamEvent::Start {
@@ -407,10 +443,23 @@ pub async fn send_to_claude(
     let mut last_substantial_content: Option<String> = None;  // >10 chars, likely a real response
     let mut last_nonempty_content: Option<String> = None;     // Fallback for short but valid responses
 
-    // Read stdout and stderr concurrently
+    // Timeout settings: if no output for 3 minutes, consider it stalled
+    let read_timeout = Duration::from_secs(180);
+    let mut consecutive_timeouts = 0;
+    let max_consecutive_timeouts = 2; // Kill after 6 minutes of no output
+
+    // Read stdout and stderr concurrently with timeout protection
     loop {
-        tokio::select! {
-            line = stdout_reader.next_line() => {
+        let read_result = timeout(read_timeout, async {
+            tokio::select! {
+                line = stdout_reader.next_line() => ("stdout", line),
+                line = stderr_reader.next_line() => ("stderr", line),
+            }
+        }).await;
+
+        match read_result {
+            Ok(("stdout", line)) => {
+                consecutive_timeouts = 0; // Reset on any output
                 match line {
                     Ok(Some(json_line)) => {
                         // Try to extract session_id if present
@@ -454,7 +503,8 @@ pub async fn send_to_claude(
                     }
                 }
             }
-            line = stderr_reader.next_line() => {
+            Ok(("stderr", line)) => {
+                consecutive_timeouts = 0; // Reset on any output
                 match line {
                     Ok(Some(text)) => {
                         error_output.push_str(&text);
@@ -469,6 +519,28 @@ pub async fn send_to_claude(
                     Err(_) => {}
                 }
             }
+            Ok(_) => {} // Shouldn't happen
+            Err(_) => {
+                // Timeout occurred - no output for read_timeout duration
+                consecutive_timeouts += 1;
+                eprintln!("[WARN] Claude CLI read timeout ({}/{})", consecutive_timeouts, max_consecutive_timeouts);
+
+                let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+                    project_path: project_path.clone(),
+                    content: format!("[Warning] No output for {} seconds...", read_timeout.as_secs()),
+                });
+
+                if consecutive_timeouts >= max_consecutive_timeouts {
+                    eprintln!("[ERROR] Claude CLI appears stalled, terminating process");
+                    let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                        project_path: project_path.clone(),
+                        message: "Claude CLI stalled (no output for too long). Session terminated.".to_string(),
+                    });
+                    // Kill the process
+                    let _ = child.kill().await;
+                    break;
+                }
+            }
         }
     }
 
@@ -478,12 +550,33 @@ pub async fn send_to_claude(
         .await
         .map_err(|e| format!("Failed to wait for Claude CLI: {}", e))?;
 
-    if !status.success() && !error_output.is_empty() {
-        let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
-            project_path: project_path.clone(),
-            message: error_output.clone(),
-        });
-        return Err(format!("Claude CLI failed: {}", error_output));
+    // Check if process was already unregistered (indicates it was interrupted)
+    let was_interrupted = get_process_pid(&project_path).is_none();
+
+    // Unregister process now that it's complete (no-op if already unregistered by interrupt)
+    unregister_process(&project_path);
+
+    // Handle non-success exit
+    if !status.success() {
+        if !error_output.is_empty() {
+            // Process failed with error output
+            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                project_path: project_path.clone(),
+                message: error_output.clone(),
+            });
+            return Err(format!("Claude CLI failed: {}", error_output));
+        } else if was_interrupted {
+            // Process was killed by user interrupt - don't emit another error (interrupt_claude already did)
+            // Just return an error to prevent adding partial response as a message
+            return Err("Session interrupted".to_string());
+        } else {
+            // Process failed without error output (unexpected termination)
+            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                project_path: project_path.clone(),
+                message: "Claude CLI terminated unexpectedly".to_string(),
+            });
+            return Err("Claude CLI terminated unexpectedly".to_string());
+        }
     }
 
     // Helper to check if text looks like a "done" message
@@ -580,5 +673,43 @@ pub async fn test_claude_cli() -> Result<String, String> {
         Ok(version)
     } else {
         Err("Claude CLI not available".to_string())
+    }
+}
+
+/// Interrupt a running Claude session for a specific project
+#[tauri::command]
+pub async fn interrupt_claude(project_path: String, window: tauri::Window) -> Result<(), String> {
+    if let Some(pid) = get_process_pid(&project_path) {
+        eprintln!("[DEBUG] Interrupting Claude process {} for {}", pid, project_path);
+
+        // Send SIGTERM to the process (graceful termination)
+        #[cfg(unix)]
+        {
+            use std::process::Command as StdCommand;
+            let _ = StdCommand::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+        }
+
+        #[cfg(windows)]
+        {
+            use std::process::Command as StdCommand;
+            let _ = StdCommand::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .output();
+        }
+
+        // Unregister the process
+        unregister_process(&project_path);
+
+        // Emit a text event (not error) so the frontend shows a friendly message
+        let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+            project_path: project_path.clone(),
+            content: "Session stopped. Ready for your next message.".to_string(),
+        });
+
+        Ok(())
+    } else {
+        Err("No active Claude session for this project".to_string())
     }
 }

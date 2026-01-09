@@ -9,6 +9,9 @@ import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 
+// 30 minute timeout for Claude sessions (in milliseconds)
+const CLAUDE_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface AttachmentInput {
   originalName: string;
   sourcePath: string;
@@ -67,9 +70,61 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const isSavingRef = useRef(false);
   const saveQueueRef = useRef<ChatMessageType[] | null>(null);
   const streamingContentRef = useRef('');
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { addLine, setActive, clear } = useProjectOutput(project.path);
   const { pendingMessage, clearPendingMessage } = useChatStore();
   const { isClaudeBusy, setClaudeBusy, clearClaudeBusy, isProjectBusy, getClaudeStartTime } = useProjectBusyStore();
+
+  // Clear timeout helper
+  const clearTimeoutTimer = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
+
+  // Reset timeout helper - called on each streaming event
+  const resetTimeout = useCallback(() => {
+    clearTimeoutTimer();
+    timeoutRef.current = setTimeout(async () => {
+      // Timeout reached - interrupt Claude
+      console.warn('[ChatPanel] Claude session timed out after 30 minutes');
+      addLine('[WARNING] Session timed out after 30 minutes of no activity');
+      try {
+        await invoke('interrupt_claude', { projectPath: project.path });
+      } catch (err) {
+        console.error('Failed to interrupt Claude:', err);
+      }
+    }, CLAUDE_TIMEOUT_MS);
+  }, [clearTimeoutTimer, addLine, project.path]);
+
+  // Interrupt handler
+  const handleInterrupt = useCallback(async () => {
+    clearTimeoutTimer();
+    addLine('[Interrupting Claude...]');
+    try {
+      await invoke('interrupt_claude', { projectPath: project.path });
+    } catch (err) {
+      // If there's no active session, it might have just finished - that's fine
+      const errorStr = String(err);
+      if (errorStr.includes('No active Claude session')) {
+        addLine('[Session already finished]');
+      } else {
+        console.error('Failed to interrupt Claude:', err);
+        addLine(`[ERROR] Failed to interrupt: ${err}`);
+      }
+    }
+  }, [clearTimeoutTimer, addLine, project.path]);
+
+  // Cleanup timeout on unmount (important when switching projects mid-session)
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, []);
 
   // Check if THIS project is currently busy with Claude
   const isLoading = isClaudeBusy(project.path);
@@ -324,11 +379,17 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     }
     addLine('');
 
+    // Start the 30-minute timeout timer
+    resetTimeout();
+
     // Listen for streaming events - filter by project path to prevent cross-talk
     const unlisten = await listen<ClaudeStreamEvent>('claude-stream', (event) => {
       const data = event.payload;
       // Only process events for THIS project
       if (data.project_path !== project.path) return;
+
+      // Reset timeout on any activity from Claude
+      resetTimeout();
 
       if (data.type === 'text' && data.content) {
         streamingContentRef.current += data.content + '\n';
@@ -396,25 +457,35 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         });
       }
     } catch (err) {
-      // Add error message
-      const errorMessage: ChatMessageType = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `Sorry, something went wrong: ${err}`,
-        timestamp: new Date().toISOString(),
-        reverted: false,
-      };
-      const messagesWithError = [...messagesWithUser, errorMessage];
-      setMessages(messagesWithError);
-      messagesRef.current = messagesWithError; // Keep ref in sync immediately
+      // Check if this was a user-initiated interrupt (don't show error for that)
+      const errorStr = String(err);
+      const wasInterrupted = errorStr.includes('Session interrupted');
 
-      // Save error message explicitly
-      await invoke('save_chat_history', {
-        projectPath: project.path,
-        messages: messagesWithError,
-      }).catch((e) => console.error('Failed to save error message:', e));
+      if (!wasInterrupted) {
+        // Add error message for actual errors
+        const errorMessage: ChatMessageType = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `Sorry, something went wrong: ${err}`,
+          timestamp: new Date().toISOString(),
+          reverted: false,
+        };
+        const messagesWithError = [...messagesWithUser, errorMessage];
+        setMessages(messagesWithError);
+        messagesRef.current = messagesWithError; // Keep ref in sync immediately
+
+        // Save error message explicitly
+        await invoke('save_chat_history', {
+          projectPath: project.path,
+          messages: messagesWithError,
+        }).catch((e) => console.error('Failed to save error message:', e));
+      }
+      // For interrupts, the user message is already saved and the friendly
+      // "Session stopped" message was shown in the output panel
     } finally {
       unlisten();
+      // Clear the timeout timer since we're done
+      clearTimeoutTimer();
       // Only clear if we're still the active Claude session (prevents race with other projects)
       clearClaudeBusy(project.path);
       setStreamingContent('');
@@ -423,7 +494,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       addLine('');
       addLine('[Done]');
     }
-  }, [project, addLine, setActive, clear, setClaudeBusy, clearClaudeBusy]);
+  }, [project, addLine, setActive, clear, setClaudeBusy, clearClaudeBusy, resetTimeout, clearTimeoutTimer]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {
@@ -598,7 +669,9 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       {/* Input area */}
       <ChatInput
         onSend={handleSend}
+        onInterrupt={handleInterrupt}
         disabled={isLoading}
+        showInterrupt={isLoading}
         placeholder={messages.length === 0 ? 'Describe what you want to build...' : 'Ask for changes...'}
       />
     </div>

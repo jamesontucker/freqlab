@@ -13,7 +13,9 @@ interface PendingAttachment {
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: PendingAttachment[]) => void;
+  onInterrupt?: () => void;
   disabled?: boolean;
+  showInterrupt?: boolean;
   placeholder?: string;
 }
 
@@ -71,7 +73,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ChatInput({ onSend, disabled = false, placeholder = 'Describe what you want to build...' }: ChatInputProps) {
+export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt = false, placeholder = 'Describe what you want to build...' }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewErrors, setPreviewErrors] = useState<Set<string>>(new Set());
@@ -229,9 +231,19 @@ export function ChatInput({ onSend, disabled = false, placeholder = 'Describe wh
           )}
         </button>
       </div>
-      <p className="text-xs text-text-muted mt-2 px-1">
-        Press Enter to send, Shift+Enter for new line
-      </p>
+      <div className="flex items-center justify-between mt-2 px-1">
+        <p className="text-xs text-text-muted">
+          Press Enter to send, Shift+Enter for new line
+        </p>
+        {showInterrupt && onInterrupt && (
+          <button
+            onClick={onInterrupt}
+            className="text-xs text-error/70 hover:text-error transition-all duration-200 animate-fade-in"
+          >
+            Interrupt Claude
+          </button>
+        )}
+      </div>
     </div>
   );
 }

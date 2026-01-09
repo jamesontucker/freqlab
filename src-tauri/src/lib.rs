@@ -47,6 +47,7 @@ pub fn run() {
             commands::projects::get_workspace_path_string,
             commands::claude::send_to_claude,
             commands::claude::test_claude_cli,
+            commands::claude::interrupt_claude,
             commands::build::build_project,
             commands::build::open_output_folder,
             commands::git::revert_to_commit,
