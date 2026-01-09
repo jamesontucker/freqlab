@@ -19,9 +19,6 @@ function cleanMessageContent(content: string): string {
   return content;
 }
 
-// Regex to match hex color codes (#RGB or #RRGGBB)
-const hexColorRegex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
-
 // Render text with color swatches for hex codes
 function renderWithColorSwatches(text: string): ReactNode[] {
   const parts: ReactNode[] = [];

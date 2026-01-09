@@ -1,5 +1,5 @@
 import { useSettingsStore } from '../../stores/settingsStore';
-import type { ChatStyle, ClaudeModel } from '../../types';
+import type { ClaudeModel } from '../../types';
 
 interface ModelOption {
   id: ClaudeModel;
