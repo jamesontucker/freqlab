@@ -1,12 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import type { ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput, type PendingAttachment } from './ChatInput';
 import { useProjectOutput } from '../../stores/outputStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 
 // 30 minute timeout for Claude sessions (in milliseconds)
@@ -47,6 +50,92 @@ const THINKING_PHRASES = [
   'Processing...',
 ];
 
+// Render text with color swatches for hex codes
+function renderWithColorSwatches(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    // Add the color swatch with hex code (no code styling, just plain text)
+    const hexColor = match[0];
+    parts.push(
+      <span key={match.index} className="inline-flex items-center gap-1">
+        <span
+          className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
+          style={{ backgroundColor: hexColor }}
+        />
+        <span className="text-sm font-mono">{hexColor}</span>
+      </span>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
+
+// Process children to find and replace hex codes in text nodes
+function processChildren(children: ReactNode): ReactNode {
+  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+  if (typeof children === 'string') {
+    if (regex.test(children)) {
+      return renderWithColorSwatches(children);
+    }
+    return children;
+  }
+  if (Array.isArray(children)) {
+    return children.map((child, i) => {
+      const testRegex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+      if (typeof child === 'string' && testRegex.test(child)) {
+        return <span key={i}>{renderWithColorSwatches(child)}</span>;
+      }
+      return child;
+    });
+  }
+  return children;
+}
+
+// Custom components for ReactMarkdown to render color swatches
+const markdownComponents = {
+  code: ({ children, className }: { children?: ReactNode; className?: string }) => {
+    if (className) {
+      return <code className={className}>{children}</code>;
+    }
+    const text = String(children);
+    const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+    if (regex.test(text)) {
+      const hexColor = text.match(/#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/)?.[0];
+      if (hexColor) {
+        // If it's just a hex code, show swatch + plain text (no code styling)
+        return (
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
+              style={{ backgroundColor: hexColor }}
+            />
+            <span className="text-sm font-mono">{hexColor}</span>
+          </span>
+        );
+      }
+    }
+    return <code className="bg-black/20 px-1 py-0.5 rounded text-sm">{children}</code>;
+  },
+  p: ({ children }: { children?: ReactNode }) => {
+    return <p>{processChildren(children)}</p>;
+  },
+  li: ({ children }: { children?: ReactNode }) => {
+    return <li>{processChildren(children)}</li>;
+  },
+};
+
 export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [activeVersion, setActiveVersion] = useState<number | null>(null);
@@ -71,9 +160,12 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const saveQueueRef = useRef<ChatMessageType[] | null>(null);
   const streamingContentRef = useRef('');
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const { addLine, setActive, clear } = useProjectOutput(project.path);
+  const { addLine, clear } = useProjectOutput(project.path);
   const { pendingMessage, clearPendingMessage } = useChatStore();
   const { isClaudeBusy, setClaudeBusy, clearClaudeBusy, isProjectBusy, getClaudeStartTime } = useProjectBusyStore();
+  const chatStyle = useSettingsStore((state) => state.aiSettings.chatStyle);
+  // Track chat style for current processing session (initialized from setting, captured when chat starts)
+  const activeChatStyleRef = useRef(chatStyle);
 
   // Clear timeout helper
   const clearTimeoutTimer = useCallback(() => {
@@ -310,6 +402,9 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   }, [isLoading, project.path, getClaudeStartTime]);
 
   const handleSend = useCallback(async (content: string, attachments?: PendingAttachment[]) => {
+    // Capture current chat style at start of processing (so changing settings mid-chat doesn't affect display)
+    activeChatStyleRef.current = chatStyle;
+
     // Use ref for current messages (avoids stale closure issues)
     const currentMessages = messagesRef.current;
 
@@ -368,9 +463,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       console.error('Failed to save user message:', err);
     }
 
-    // Clear and activate output panel
+    // Clear output panel (user controls expand/collapse)
     clear();
-    setActive(true);
     // Show appropriate message based on content
     if (content) {
       addLine(`> Processing: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
@@ -462,11 +556,51 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         });
       }
     } catch (err) {
-      // Check if this was a user-initiated interrupt (don't show error for that)
+      // Check if this was a user-initiated interrupt
       const errorStr = String(err);
       const wasInterrupted = errorStr.includes('Session interrupted');
 
-      if (!wasInterrupted) {
+      if (wasInterrupted) {
+        if (activeChatStyleRef.current === 'minimal') {
+          // Minimal mode: show interrupt message
+          const interruptMessage: ChatMessageType = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: 'Claude was interrupted.',
+            timestamp: new Date().toISOString(),
+            reverted: false,
+          };
+          const messagesWithInterrupt = [...messagesWithUser, interruptMessage];
+          setMessages(messagesWithInterrupt);
+          messagesRef.current = messagesWithInterrupt;
+
+          await invoke('save_chat_history', {
+            projectPath: project.path,
+            messages: messagesWithInterrupt,
+          }).catch((e) => console.error('Failed to save interrupt message:', e));
+        } else {
+          // Conversational mode: keep partial streaming content if any
+          const partialContent = streamingContentRef.current.trim();
+          if (partialContent) {
+            const partialMessage: ChatMessageType = {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: partialContent,
+              timestamp: new Date().toISOString(),
+              reverted: false,
+            };
+            const messagesWithPartial = [...messagesWithUser, partialMessage];
+            setMessages(messagesWithPartial);
+            messagesRef.current = messagesWithPartial;
+
+            await invoke('save_chat_history', {
+              projectPath: project.path,
+              messages: messagesWithPartial,
+            }).catch((e) => console.error('Failed to save partial message:', e));
+          }
+          // If no content yet, just stop - user message remains
+        }
+      } else {
         // Add error message for actual errors
         const errorMessage: ChatMessageType = {
           id: crypto.randomUUID(),
@@ -477,16 +611,13 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         };
         const messagesWithError = [...messagesWithUser, errorMessage];
         setMessages(messagesWithError);
-        messagesRef.current = messagesWithError; // Keep ref in sync immediately
+        messagesRef.current = messagesWithError;
 
-        // Save error message explicitly
         await invoke('save_chat_history', {
           projectPath: project.path,
           messages: messagesWithError,
         }).catch((e) => console.error('Failed to save error message:', e));
       }
-      // For interrupts, the user message is already saved and the friendly
-      // "Session stopped" message was shown in the output panel
     } finally {
       unlisten();
       // Clear the timeout timer since we're done
@@ -495,11 +626,10 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       clearClaudeBusy(project.path);
       setStreamingContent('');
       streamingContentRef.current = '';
-      setActive(false);
       addLine('');
       addLine('[Done]');
     }
-  }, [project, addLine, setActive, clear, setClaudeBusy, clearClaudeBusy, resetTimeout, clearTimeoutTimer]);
+  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, resetTimeout, clearTimeoutTimer, chatStyle]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {
@@ -629,6 +759,65 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                 !isBusy &&
                 message.version !== effectiveActiveVersion;
 
+              // In conversational mode, render assistant messages as multiple bubbles
+              // Split by double newlines to keep paragraphs/lists together
+              if (chatStyle === 'conversational' && message.role === 'assistant') {
+                const blocks = message.content.split(/\n\n+/).filter((block) => block.trim());
+                return (
+                  <div key={message.id} className={`space-y-2 ${isInactiveVersion ? 'opacity-50' : ''}`}>
+                    {blocks.map((block, index) => {
+                      // Remove trailing colon from block content
+                      const cleanBlock = block.trimEnd().endsWith(':') ? block.trimEnd().slice(0, -1) : block;
+                      const isLastBlock = index === blocks.length - 1;
+                      return (
+                        <div key={index} className="flex justify-start">
+                          <div className={`max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 bg-bg-tertiary ${isCurrentVersion && isLastBlock ? 'ring-2 ring-accent/50' : ''}`}>
+                            <div className="text-sm text-text-primary break-words prose prose-sm prose-invert max-w-none prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:bg-black/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-strong:text-text-primary">
+                              <ReactMarkdown components={markdownComponents}>{cleanBlock}</ReactMarkdown>
+                            </div>
+                            {/* Show version badge on last bubble only */}
+                            {isLastBlock && message.version && (
+                              <div className="flex items-center justify-between mt-1 text-text-muted">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs">
+                                    {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${isCurrentVersion ? 'bg-violet-500 text-white' : 'bg-violet-500/20 text-violet-400'}`}>
+                                    v{message.version}{isCurrentVersion ? ' (current)' : ''}
+                                  </span>
+                                </div>
+                                {canSwitchToVersion && (
+                                  <button
+                                    onClick={() => handleVersionChange(message.version!, message.commitHash!)}
+                                    className="text-xs hover:text-accent transition-colors flex items-center gap-1"
+                                  >
+                                    {isInactiveVersion ? (
+                                      <>
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                                        </svg>
+                                        Restore to v{message.version}
+                                      </>
+                                    ) : (
+                                      <>
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                        </svg>
+                                        Revert to v{message.version}
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
               return (
                 <ChatMessage
                   key={message.id}
@@ -644,27 +833,60 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
               );
             })}
             {isLoading && (
-              <div className="flex justify-start">
-                <div className="rounded-2xl rounded-bl-md px-4 py-3 bg-bg-tertiary">
-                  <div className="flex items-center gap-3 text-text-muted">
-                    <div className="flex gap-1">
-                      <div className="w-1.5 h-4 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '0ms' }} />
-                      <div className="w-1.5 h-6 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '150ms' }} />
-                      <div className="w-1.5 h-4 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '300ms' }} />
-                      <div className="w-1.5 h-5 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '450ms' }} />
+              activeChatStyleRef.current === 'conversational' ? (
+                // Conversational mode: Show each message as a separate bubble
+                <>
+                  {streamingContent
+                    .split(/\n\n+/)
+                    .filter((block) => block.trim())
+                    .map((block, index) => {
+                      // Remove trailing colon from block
+                      const cleanBlock = block.trimEnd().endsWith(':') ? block.trimEnd().slice(0, -1) : block;
+                      return (
+                        <div key={index} className="flex justify-start">
+                          <div className="max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 bg-bg-tertiary">
+                            <div className="text-sm text-text-primary break-words prose prose-sm prose-invert max-w-none prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:bg-black/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-strong:text-text-primary">
+                              <ReactMarkdown components={markdownComponents}>{cleanBlock}</ReactMarkdown>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {/* Typing indicator */}
+                  <div className="flex justify-start">
+                    <div className="rounded-2xl rounded-bl-md px-4 py-2.5 bg-bg-tertiary">
+                      <div className="flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-text-muted animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '0ms' }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-text-muted animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '150ms' }} />
+                        <div className="w-1.5 h-1.5 rounded-full bg-text-muted animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '300ms' }} />
+                      </div>
                     </div>
-                    <span className="text-sm transition-all duration-300">{THINKING_PHRASES[thinkingPhraseIndex]}</span>
-                    <span className="text-xs text-text-muted tabular-nums">
-                      {elapsedSeconds < 60
-                        ? `${elapsedSeconds}s`
-                        : `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`}
-                    </span>
                   </div>
-                  <p className="text-xs text-text-muted mt-2">
-                    View progress in the output panel below
-                  </p>
+                </>
+              ) : (
+                // Minimal mode: Show thinking indicator
+                <div className="flex justify-start">
+                  <div className="rounded-2xl rounded-bl-md px-4 py-2.5 bg-bg-tertiary">
+                    <div className="flex items-center gap-3 text-text-muted">
+                      <div className="flex gap-1">
+                        <div className="w-1.5 h-4 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '0ms' }} />
+                        <div className="w-1.5 h-6 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '150ms' }} />
+                        <div className="w-1.5 h-4 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '300ms' }} />
+                        <div className="w-1.5 h-5 rounded-full bg-accent animate-[pulse_1s_ease-in-out_infinite]" style={{ animationDelay: '450ms' }} />
+                      </div>
+                      <span className="text-sm transition-all duration-300">{THINKING_PHRASES[thinkingPhraseIndex]}</span>
+                      <span className="text-xs text-text-muted tabular-nums">
+                        {elapsedSeconds < 60
+                          ? `${elapsedSeconds}s`
+                          : `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`}
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted mt-2">
+                      View progress in the output panel below
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )
             )}
             <div ref={messagesEndRef} />
           </>

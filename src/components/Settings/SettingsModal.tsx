@@ -4,6 +4,7 @@ import { ThemePicker } from './ThemePicker';
 import { BrandingSettings } from './BrandingSettings';
 import { DawPathsSettings } from './DawPathsSettings';
 import { AudioSettings } from './AudioSettings';
+import { AISettings } from './AISettings';
 import { DevSettings } from './DevSettings';
 import { UpdateSettings } from './UpdateSettings';
 import { useUpdateStore } from '../../stores/updateStore';
@@ -14,7 +15,7 @@ interface SettingsModalProps {
   initialTab?: string;
 }
 
-type TabId = 'general' | 'audio' | 'branding' | 'daw-paths' | 'updates' | 'dev';
+type TabId = 'general' | 'audio' | 'ai' | 'branding' | 'daw-paths' | 'updates' | 'dev';
 
 interface Tab {
   id: TabId;
@@ -40,6 +41,23 @@ const tabs: Tab[] = [
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'ai',
+    label: 'Chat',
+    icon: (
+      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+        <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+        <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+        <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+        <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+        <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+        <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+        <path d="M6 18a4 4 0 0 1-1.967-.516" />
+        <path d="M19.967 17.484A4 4 0 0 1 18 18" />
       </svg>
     ),
   },
@@ -88,7 +106,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
 
   // Helper to validate tab ID
   const isValidTabId = (id: string): id is TabId => {
-    return ['general', 'audio', 'branding', 'daw-paths', 'updates', 'dev'].includes(id);
+    return ['general', 'audio', 'ai', 'branding', 'daw-paths', 'updates', 'dev'].includes(id);
   };
 
   // Set initial tab when modal opens
@@ -134,6 +152,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
         <div className="flex-1 min-w-0">
           {activeTab === 'general' && <ThemePicker />}
           {activeTab === 'audio' && <AudioSettings />}
+          {activeTab === 'ai' && <AISettings />}
           {activeTab === 'branding' && <BrandingSettings />}
           {activeTab === 'daw-paths' && <DawPathsSettings />}
           {activeTab === 'updates' && <UpdateSettings />}

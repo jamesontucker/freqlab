@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings } from '../types';
+import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings, AISettings, ChatStyle } from '../types';
 
 const defaultDawPaths: DawPaths = {
   reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
@@ -25,6 +25,10 @@ const defaultAudioSettings: AudioSettings = {
   bufferSize: 512,
 };
 
+const defaultAISettings: AISettings = {
+  chatStyle: 'conversational',
+};
+
 interface SettingsState extends AppConfig {
   // Audio settings (what the user has configured)
   audioSettings: AudioSettings;
@@ -34,6 +38,10 @@ interface SettingsState extends AppConfig {
   updateAudioSetting: <K extends keyof AudioSettings>(key: K, value: AudioSettings[K]) => void;
   // Mark current audioSettings as applied (called after engine init)
   markAudioSettingsApplied: () => void;
+  // AI settings
+  aiSettings: AISettings;
+  setAISettings: (settings: AISettings) => void;
+  setChatStyle: (style: ChatStyle) => void;
   // Other settings
   setSetupComplete: (complete: boolean) => void;
   setWorkspacePath: (path: string) => void;
@@ -67,6 +75,8 @@ export const useSettingsStore = create<SettingsState>()(
       // Audio settings defaults
       audioSettings: defaultAudioSettings,
       appliedAudioSettings: null, // Set on first engine init
+      // AI settings defaults
+      aiSettings: defaultAISettings,
 
       // Audio settings setters
       setAudioSettings: (settings) => set({ audioSettings: settings }),
@@ -80,6 +90,13 @@ export const useSettingsStore = create<SettingsState>()(
       markAudioSettingsApplied: () =>
         set((state) => ({
           appliedAudioSettings: { ...state.audioSettings },
+        })),
+
+      // AI settings setters
+      setAISettings: (settings) => set({ aiSettings: settings }),
+      setChatStyle: (style) =>
+        set((state) => ({
+          aiSettings: { ...state.aiSettings, chatStyle: style },
         })),
 
       setSetupComplete: (complete) => set({ setupComplete: complete }),

@@ -3,11 +3,10 @@ import { useProjectOutput } from '../../stores/outputStore';
 import { useProjectStore } from '../../stores/projectStore';
 
 export function OutputPanel() {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true); // Start collapsed by default
   const { activeProject } = useProjectStore();
   const { lines, isActive, clear } = useProjectOutput(activeProject?.path ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const wasActive = useRef(false);
 
   // Auto-scroll to bottom when new lines are added
   useEffect(() => {
@@ -15,14 +14,6 @@ export function OutputPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [lines, isCollapsed]);
-
-  // Auto-expand only when activity starts (not continuously)
-  useEffect(() => {
-    if (isActive && !wasActive.current) {
-      setIsCollapsed(false);
-    }
-    wasActive.current = isActive;
-  }, [isActive]);
 
   return (
     <div

@@ -1,6 +1,7 @@
 import type { ChatMessage as ChatMessageType } from '../../types';
 import { AttachmentPreview } from './AttachmentPreview';
 import ReactMarkdown from 'react-markdown';
+import type { ReactNode } from 'react';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -8,6 +9,111 @@ interface ChatMessageProps {
   isCurrentVersion?: boolean;  // This is the currently active version
   onVersionClick?: () => void;  // Click to switch to this version
 }
+
+// Remove trailing colon from message content (common artifact from Claude's responses)
+function cleanMessageContent(content: string): string {
+  const trimmed = content.trimEnd();
+  if (trimmed.endsWith(':')) {
+    return trimmed.slice(0, -1);
+  }
+  return content;
+}
+
+// Regex to match hex color codes (#RGB or #RRGGBB)
+const hexColorRegex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+
+// Render text with color swatches for hex codes
+function renderWithColorSwatches(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+
+  while ((match = regex.exec(text)) !== null) {
+    // Add text before the match
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    // Add the color swatch with hex code (no code styling, just plain text)
+    const hexColor = match[0];
+    parts.push(
+      <span key={match.index} className="inline-flex items-center gap-1">
+        <span
+          className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
+          style={{ backgroundColor: hexColor }}
+        />
+        <span className="text-sm font-mono">{hexColor}</span>
+      </span>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
+
+// Process children to find and replace hex codes in text nodes
+function processChildren(children: ReactNode): ReactNode {
+  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+  if (typeof children === 'string') {
+    if (regex.test(children)) {
+      return renderWithColorSwatches(children);
+    }
+    return children;
+  }
+  if (Array.isArray(children)) {
+    return children.map((child, i) => {
+      const testRegex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+      if (typeof child === 'string' && testRegex.test(child)) {
+        return <span key={i}>{renderWithColorSwatches(child)}</span>;
+      }
+      return child;
+    });
+  }
+  return children;
+}
+
+// Custom components for ReactMarkdown to render color swatches
+const markdownComponents = {
+  // Handle inline code that might contain hex colors
+  code: ({ children, className }: { children?: ReactNode; className?: string }) => {
+    // If it's a code block (has language class), render normally
+    if (className) {
+      return <code className={className}>{children}</code>;
+    }
+    // For inline code, check for hex colors
+    const text = String(children);
+    const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
+    if (regex.test(text)) {
+      const hexColor = text.match(/#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/)?.[0];
+      if (hexColor) {
+        // If it's just a hex code, show swatch + plain text (no code styling)
+        return (
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
+              style={{ backgroundColor: hexColor }}
+            />
+            <span className="text-sm font-mono">{hexColor}</span>
+          </span>
+        );
+      }
+    }
+    return <code className="bg-black/20 px-1 py-0.5 rounded text-sm">{children}</code>;
+  },
+  // Handle paragraph text that might contain hex colors
+  p: ({ children }: { children?: ReactNode }) => {
+    return <p>{processChildren(children)}</p>;
+  },
+  // Handle list items
+  li: ({ children }: { children?: ReactNode }) => {
+    return <li>{processChildren(children)}</li>;
+  },
+};
 
 export function ChatMessage({ message, isInactive, isCurrentVersion, onVersionClick }: ChatMessageProps) {
   const isUser = message.role === 'user';
@@ -17,7 +123,7 @@ export function ChatMessage({ message, isInactive, isCurrentVersion, onVersionCl
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${isGreyedOut ? 'opacity-50' : ''}`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+        className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
           isUser
             ? 'bg-accent text-white rounded-br-md'
             : 'bg-bg-tertiary text-text-primary rounded-bl-md'
@@ -35,7 +141,7 @@ export function ChatMessage({ message, isInactive, isCurrentVersion, onVersionCl
           <div className="text-sm whitespace-pre-wrap break-words">{message.content}</div>
         ) : (
           <div className="text-sm prose prose-sm prose-invert max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-headings:my-2 prose-code:bg-black/20 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm prose-pre:bg-black/30 prose-pre:p-3 prose-pre:rounded-lg prose-strong:text-text-primary prose-a:text-accent">
-            <ReactMarkdown>{message.content}</ReactMarkdown>
+            <ReactMarkdown components={markdownComponents}>{cleanMessageContent(message.content)}</ReactMarkdown>
           </div>
         )}
         {message.attachments && message.attachments.length > 0 && (

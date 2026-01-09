@@ -41,6 +41,12 @@ export interface AudioSettings {
   bufferSize: number;
 }
 
+export type ChatStyle = 'minimal' | 'conversational';
+
+export interface AISettings {
+  chatStyle: ChatStyle;
+}
+
 export interface AppConfig {
   workspacePath: string;
   outputPath: string;
