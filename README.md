@@ -7,6 +7,7 @@
   <strong>A macOS app for creating VST3/CLAP audio plugins through conversation.</strong>
 </p>
 
+> [!NOTE]
 > This is a personal side project I initally build for my wife who's a sound designer and is not consistently maintained. It was a vibe experiement, so use as-is.
 > Also go hire a dev if you're looking to take plugin development seriously ;)
 
@@ -21,7 +22,7 @@ freqlab was built for producers and sound designers who aren't developers, but w
 ### The Workflow
 
 ```
-Describe → Build → Preview → Iterate
+Describe → Build → Preview → Iterate → Publish
 ```
 
 1. Create a plugin project and choose a template
@@ -59,12 +60,12 @@ Describe → Build → Preview → Iterate
 
 ### MIDI for Instruments
 
-| Feature                | Description                                                 |
-| ---------------------- | ----------------------------------------------------------- |
-| **Piano keyboard**     | On-screen keyboard to play notes and test your instrument   |
-| **Pattern sequencer**  | Create and loop MIDI patterns with adjustable tempo         |
-| **MIDI file playback** | Load and play standard MIDI files through your plugin       |
-| **Hardware MIDI**      | Connect your MIDI keyboard or controller                    |
+| Feature                | Description                                               |
+| ---------------------- | --------------------------------------------------------- |
+| **Piano keyboard**     | On-screen keyboard to play notes and test your instrument |
+| **Pattern sequencer**  | Create and loop MIDI patterns with adjustable tempo       |
+| **MIDI file playback** | Load and play standard MIDI files through your plugin     |
+| **Hardware MIDI**      | Connect your MIDI keyboard or controller                  |
 
 ### Build System
 
