@@ -468,6 +468,113 @@ mod macos {
         let frame = window_ref.frame();
         Some((frame.origin.x, frame.origin.y))
     }
+
+    /// Context for main thread window visibility check
+    struct WindowVisibleContext {
+        window: *mut c_void,
+        result: bool,
+    }
+
+    /// Callback for checking window visibility on main thread
+    /// Returns true if window is visible OR miniaturized (in dock)
+    extern "C" fn check_window_visible_on_main(ctx: *mut std::ffi::c_void) {
+        let ctx = unsafe { &mut *(ctx as *mut WindowVisibleContext) };
+        if ctx.window.is_null() {
+            ctx.result = false;
+            return;
+        }
+        unsafe {
+            let window_ref = &*(ctx.window as *const NSWindow);
+            // Window is "open" if it's visible OR minimized to dock
+            // Only return false if user actually closed the window with X
+            ctx.result = window_ref.isVisible() || window_ref.isMiniaturized();
+        }
+    }
+
+    /// Check if an editor window is visible on screen or minimized to dock
+    /// This function dispatches to the main thread if needed, which is required
+    /// for reliable NSWindow property access on macOS.
+    /// Returns true if window is visible OR miniaturized (user hasn't closed it with X)
+    pub fn is_window_visible(window: *mut c_void) -> bool {
+        if window.is_null() {
+            return false;
+        }
+
+        let on_main = is_main_thread();
+        if on_main {
+            // Already on main thread, check directly
+            unsafe {
+                let window_ref = &*(window as *const NSWindow);
+                // Window is "open" if it's visible OR minimized to dock
+                window_ref.isVisible() || window_ref.isMiniaturized()
+            }
+        } else {
+            // Dispatch to main thread synchronously
+            let mut ctx = WindowVisibleContext {
+                window,
+                result: false,
+            };
+
+            unsafe {
+                dispatch_sync_f(
+                    main_queue(),
+                    &mut ctx as *mut WindowVisibleContext as *mut std::ffi::c_void,
+                    check_window_visible_on_main,
+                );
+            }
+
+            ctx.result
+        }
+    }
+
+    /// Context for deminiaturizing a window
+    struct DeminiaturizeContext {
+        window: *mut c_void,
+    }
+
+    /// Callback for deminiaturizing window on main thread
+    extern "C" fn deminiaturize_window_on_main(ctx: *mut std::ffi::c_void) {
+        let ctx = unsafe { &*(ctx as *mut DeminiaturizeContext) };
+        if ctx.window.is_null() {
+            return;
+        }
+        unsafe {
+            let window_ref = &*(ctx.window as *const NSWindow);
+            if window_ref.isMiniaturized() {
+                window_ref.deminiaturize(None);
+            }
+            // Also bring to front
+            window_ref.makeKeyAndOrderFront(None);
+        }
+    }
+
+    /// Restore a minimized window and bring it to front
+    /// This function dispatches to the main thread if needed
+    pub fn restore_window(window: *mut c_void) {
+        if window.is_null() {
+            return;
+        }
+
+        let on_main = is_main_thread();
+        if on_main {
+            unsafe {
+                let window_ref = &*(window as *const NSWindow);
+                if window_ref.isMiniaturized() {
+                    window_ref.deminiaturize(None);
+                }
+                window_ref.makeKeyAndOrderFront(None);
+            }
+        } else {
+            let mut ctx = DeminiaturizeContext { window };
+            unsafe {
+                dispatch_sync_f(
+                    main_queue(),
+                    &mut ctx as *mut DeminiaturizeContext as *mut std::ffi::c_void,
+                    deminiaturize_window_on_main,
+                );
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -498,3 +605,11 @@ pub unsafe fn destroy_editor_window(_plugin: *const ClapPlugin, _window: *mut c_
 pub unsafe fn get_window_position(_window: *mut c_void) -> Option<(f64, f64)> {
     None
 }
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_window_visible(_window: *mut c_void) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn restore_window(_window: *mut c_void) {}

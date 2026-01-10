@@ -69,7 +69,7 @@ export function PreviewPanel() {
     setEngineInitialized,
   } = usePreviewStore.getState();
 
-  const { activeProject } = useProjectStore();
+  const activeProject = useProjectStore((s) => s.activeProject);
   const { audioSettings, markAudioSettingsApplied } = useSettingsStore();
   const [engineError, setEngineError] = useState<string | null>(null);
   // Collapsible section state
@@ -176,7 +176,12 @@ export function PreviewPanel() {
           levelListenerRef.current = meteringUnlisten;
         }
         setDemoSamples(samples);
-        setLoadedPlugin(pluginState);
+        // Only set loadedPlugin from backend state if we don't already have an active plugin
+        // This prevents overwriting the toggle's state when panel opens/closes
+        const currentStatus = usePreviewStore.getState().loadedPlugin.status;
+        if (currentStatus !== 'active') {
+          setLoadedPlugin(pluginState);
+        }
         pluginListenersRef.current = pluginListeners;
       } catch (err) {
         if (isCancelled) return;
@@ -207,8 +212,9 @@ export function PreviewPanel() {
   }, [isOpen, setDemoSamples, setLoadedPlugin]);
 
   // Check if plugin is available when project changes
+  // Note: We check even when panel is closed so the build button reflects correct state
   useEffect(() => {
-    if (!activeProject || !isOpen) {
+    if (!activeProject) {
       setPluginAvailable(false);
       return;
     }
@@ -233,16 +239,24 @@ export function PreviewPanel() {
     };
 
     checkPluginAvailability();
-  }, [activeProject, isOpen]);
+  }, [activeProject]);
 
   // Plugin idle loop: Call pluginIdle() periodically when plugin is active
   // This ensures GUI parameter changes are processed even without audio playing
+  // Also polls editor status to detect manual window close
+  const setEditorOpen = usePreviewStore.getState().setEditorOpen;
   useEffect(() => {
     if (!isOpen || !engineInitialized || loadedPlugin.status !== 'active') return;
 
     const intervalId = setInterval(async () => {
       try {
         await previewApi.pluginIdle();
+        // Check if editor window was closed by user
+        const isEditorOpen = await previewApi.pluginIsEditorOpen();
+        const currentEditorOpen = usePreviewStore.getState().editorOpen;
+        if (currentEditorOpen !== isEditorOpen) {
+          setEditorOpen(isEditorOpen);
+        }
       } catch (err) {
         // Silently ignore errors - plugin may have been unloaded
       }
@@ -251,7 +265,7 @@ export function PreviewPanel() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [isOpen, engineInitialized, loadedPlugin.status]);
+  }, [isOpen, engineInitialized, loadedPlugin.status, setEditorOpen]);
 
   // Listen for build completion: update plugin availability AND trigger hot reload if active
   // Combined into single listener to avoid duplicate event handlers
@@ -322,6 +336,7 @@ export function PreviewPanel() {
                   const hasEditor = await previewApi.pluginHasEditor();
                   if (hasEditor) {
                     await previewApi.pluginOpenEditor();
+                    setEditorOpen(true);
                   }
                 }
               } catch (err) {
@@ -354,10 +369,17 @@ export function PreviewPanel() {
   // Plugin unloading is handled by PluginViewerToggle component
   const prevProjectNameRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    // Detect project change (not just initial mount)
+    // Detect actual project change (not initial mount, not brief null states)
+    // Requires BOTH old and new names to be defined and different
+    const currentName = activeProject?.name;
     const projectChanged = prevProjectNameRef.current !== undefined &&
-                           prevProjectNameRef.current !== activeProject?.name;
-    prevProjectNameRef.current = activeProject?.name;
+                           currentName !== undefined &&
+                           prevProjectNameRef.current !== currentName;
+
+    // Only update ref when we have an actual project name (prevents null/undefined from corrupting the ref)
+    if (currentName !== undefined) {
+      prevProjectNameRef.current = currentName;
+    }
 
     // Only act on actual project changes, not every render
     if (!projectChanged) return;
@@ -374,6 +396,7 @@ export function PreviewPanel() {
 
     // Reset plugin state - actual unloading handled by PluginViewerToggle
     setLoadedPlugin({ status: 'unloaded' });
+    setEditorOpen(false);
 
     // Close editor and unload from backend to ensure clean state
     previewApi.pluginCloseEditor().catch(() => {});
@@ -386,7 +409,7 @@ export function PreviewPanel() {
     } else {
       setWebviewNeedsFreshBuild(false);
     }
-  }, [activeProject?.name, activeProject?.uiFramework, setPlaying, setLoadedPlugin, setWebviewNeedsFreshBuild]);
+  }, [activeProject?.name, activeProject?.uiFramework, setPlaying, setLoadedPlugin, setWebviewNeedsFreshBuild, setEditorOpen]);
 
   // Listen for build completion even when panel is closed to update plugin availability
   // This ensures the Plugin Viewer toggle in the header updates when builds complete

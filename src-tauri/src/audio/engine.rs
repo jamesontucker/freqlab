@@ -630,14 +630,26 @@ impl AudioEngineHandle {
         *self.shared.last_editor_position.write() = position;
     }
 
-    /// Check if the plugin editor is open
+    /// Check if the plugin editor is open AND visible
+    /// Returns true only if the editor window exists and is actually visible on screen
+    /// (handles the case where user manually closed the window with X button)
     pub fn is_plugin_editor_open(&self) -> bool {
-        self.shared
+        let result = self.shared
             .plugin_instance
             .read()
             .as_ref()
-            .map(|p| p.is_editor_open())
-            .unwrap_or(false)
+            .map(|p| {
+                let editor_open = p.is_editor_open();
+                let window_visible = p.is_editor_window_visible();
+                log::debug!(
+                    "is_plugin_editor_open: editor_open={}, window_visible={}",
+                    editor_open,
+                    window_visible
+                );
+                editor_open && window_visible
+            })
+            .unwrap_or(false);
+        result
     }
 
     /// Flush plugin parameters and handle callbacks

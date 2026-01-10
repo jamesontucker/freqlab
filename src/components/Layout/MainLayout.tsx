@@ -48,19 +48,15 @@ export function MainLayout() {
   const selectProject = useProjectStore.getState().selectProject;
   const updateProject = useProjectStore.getState().updateProject;
   const addToast = useToastStore.getState().addToast;
-  const setPluginAvailable = usePreviewStore.getState().setPluginAvailable;
 
   // Check if a build exists for the current version
-  // Also called as onVersionChange - always resets plugin availability since code changed
+  // Called on project change and version change
+  // Note: Does NOT reset pluginAvailable - that's handled separately when version actually changes
   const checkBuildExists = useCallback(async () => {
     if (!activeProject) {
       setHasBuild(false);
-      setPluginAvailable(false);
       return;
     }
-
-    // Always reset plugin availability on version change - code changed, need fresh build
-    setPluginAvailable(false);
 
     try {
       const version = await invoke<number>('get_current_version', {
@@ -76,7 +72,7 @@ export function MainLayout() {
     } catch {
       setHasBuild(false);
     }
-  }, [activeProject, setPluginAvailable]);
+  }, [activeProject]);
 
   // Check build status when project changes
   useEffect(() => {

@@ -104,6 +104,7 @@ interface PreviewState {
   webviewNeedsFreshBuild: boolean;
   pluginLoading: boolean;
   engineInitialized: boolean;
+  editorOpen: boolean;
 
   // Actions
   setOpen: (open: boolean) => void;
@@ -131,6 +132,7 @@ interface PreviewState {
   setWebviewNeedsFreshBuild: (needs: boolean) => void;
   setPluginLoading: (loading: boolean) => void;
   setEngineInitialized: (initialized: boolean) => void;
+  setEditorOpen: (open: boolean) => void;
   reset: () => void;
 }
 
@@ -182,6 +184,7 @@ const initialState = {
   webviewNeedsFreshBuild: false,
   pluginLoading: false,
   engineInitialized: false,
+  editorOpen: false,
 };
 
 export const usePreviewStore = create<PreviewState>()((set) => ({
@@ -231,6 +234,7 @@ export const usePreviewStore = create<PreviewState>()((set) => ({
   setWebviewNeedsFreshBuild: (needs) => set({ webviewNeedsFreshBuild: needs }),
   setPluginLoading: (loading) => set({ pluginLoading: loading }),
   setEngineInitialized: (initialized) => set({ engineInitialized: initialized }),
+  setEditorOpen: (open) => set({ editorOpen: open }),
 
   reset: () => set(initialState),
 }));

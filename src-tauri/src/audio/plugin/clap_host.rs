@@ -24,9 +24,6 @@ pub fn take_callback_request() -> bool {
     CALLBACK_REQUESTED.swap(false, Ordering::SeqCst)
 }
 
-#[cfg(target_os = "macos")]
-use objc2_app_kit::NSWindow;
-
 /// Host name and version info
 const HOST_NAME: &str = "freqlab";
 const HOST_VENDOR: &str = "freqlab";
@@ -1014,12 +1011,16 @@ impl PluginInstance {
 
         // Check if editor is already open
         if self.editor_open {
-            // Check if the window is still visible
+            // Check if the window is still visible or minimized
             if self.is_editor_window_visible() {
-                log::info!("open_editor_at: Editor window already open and visible");
+                log::info!("open_editor_at: Editor window already open, restoring/bringing to front");
+                // Restore if minimized, bring to front
+                if let Some(window) = self.editor_window {
+                    editor::restore_window(window);
+                }
                 return Ok(());
             } else {
-                // Window was closed by user, clean up
+                // Window was closed by user (clicked X), clean up
                 log::info!("open_editor_at: Editor window was closed, cleaning up");
                 self.close_editor_window();
                 self.editor_open = false;
@@ -1152,14 +1153,12 @@ impl PluginInstance {
     }
 
     /// Check if the editor window is still visible (for editor_host event loop)
+    /// Uses main thread dispatch for reliable NSWindow property access
     #[cfg(target_os = "macos")]
     pub fn is_editor_window_visible(&self) -> bool {
         if let Some(window) = self.editor_window {
-            unsafe {
-                // Borrow the window without taking ownership
-                let window_ref = &*(window as *const NSWindow);
-                window_ref.isVisible()
-            }
+            // Use the main-thread-safe visibility check from editor module
+            editor::is_window_visible(window)
         } else {
             false
         }

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -16,6 +17,7 @@ export function PluginViewerToggle() {
   const webviewNeedsFreshBuild = usePreviewStore((s) => s.webviewNeedsFreshBuild);
   const pluginLoading = usePreviewStore((s) => s.pluginLoading);
   const engineInitialized = usePreviewStore((s) => s.engineInitialized);
+  const editorOpen = usePreviewStore((s) => s.editorOpen);
   const activeProject = useProjectStore((s) => s.activeProject);
   const audioSettings = useSettingsStore((s) => s.audioSettings);
 
@@ -25,6 +27,7 @@ export function PluginViewerToggle() {
   const setLoadedPlugin = usePreviewStore.getState().setLoadedPlugin;
   const setPluginAvailable = usePreviewStore.getState().setPluginAvailable;
   const setEngineInitialized = usePreviewStore.getState().setEngineInitialized;
+  const setEditorOpen = usePreviewStore.getState().setEditorOpen;
 
   const handleToggle = async () => {
     if (!activeProject) return;
@@ -33,6 +36,7 @@ export function PluginViewerToggle() {
       // Disable: close editor and unload plugin
       try {
         await previewApi.pluginCloseEditor();
+        setEditorOpen(false);
         await previewApi.pluginUnload();
         await previewApi.setPluginIsInstrument(false);
         setLoadedPlugin({ status: 'unloaded' });
@@ -74,7 +78,10 @@ export function PluginViewerToggle() {
           if (!webviewNeedsFreshBuild || activeProject.uiFramework !== 'webview') {
             const hasEditor = await previewApi.pluginHasEditor();
             if (hasEditor) {
+              console.log('[PluginViewerToggle] Opening editor...');
               await previewApi.pluginOpenEditor();
+              console.log('[PluginViewerToggle] Editor opened, setting editorOpen=true');
+              setEditorOpen(true);
             }
           }
         }
@@ -90,10 +97,35 @@ export function PluginViewerToggle() {
   const handleOpenEditor = async () => {
     try {
       await previewApi.pluginOpenEditor();
+      setEditorOpen(true);
     } catch (err) {
       console.error('Failed to open editor:', err);
     }
   };
+
+  // Poll editor status when plugin is active to detect manual window close
+  useEffect(() => {
+    if (loadedPlugin.status !== 'active' || !loadedPlugin.has_editor) return;
+
+    console.log('[PluginViewerToggle] Starting editor status polling');
+    const intervalId = setInterval(async () => {
+      try {
+        const isOpen = await previewApi.pluginIsEditorOpen();
+        const current = usePreviewStore.getState().editorOpen;
+        if (current !== isOpen) {
+          console.log(`[PluginViewerToggle] Editor status changed: ${current} -> ${isOpen}`);
+          setEditorOpen(isOpen);
+        }
+      } catch {
+        // Ignore errors - plugin may have been unloaded
+      }
+    }, 250); // Poll every 250ms
+
+    return () => {
+      console.log('[PluginViewerToggle] Stopping editor status polling');
+      clearInterval(intervalId);
+    };
+  }, [loadedPlugin.status, loadedPlugin.has_editor, setEditorOpen]);
 
   // Don't render if no active project
   if (!activeProject) {
@@ -201,8 +233,8 @@ export function PluginViewerToggle() {
         {isActive ? 'Disable Plugin' : 'View Plugin'}
       </button>
 
-      {/* Reopen button (when active and has editor) */}
-      {isActive && loadedPlugin.has_editor && !needsFreshBuild && (
+      {/* Reopen button (when active and has editor, but editor is closed) */}
+      {isActive && loadedPlugin.has_editor && !needsFreshBuild && !editorOpen && (
         <button
           onClick={handleOpenEditor}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-bg-tertiary text-text-primary hover:bg-accent/20 hover:text-accent border border-border hover:border-accent/30 transition-all duration-200"
