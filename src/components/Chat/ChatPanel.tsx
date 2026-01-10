@@ -515,6 +515,9 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       const wasInterrupted = errorStr.includes('Session interrupted');
 
       if (wasInterrupted) {
+        // Clear any pending build to prevent auto-build from triggering on interrupt
+        usePreviewStore.getState().setPendingBuildVersion(null);
+
         if (activeChatStyleRef.current === 'minimal') {
           // Minimal mode: show interrupt message
           const interruptMessage: ChatMessageType = {
