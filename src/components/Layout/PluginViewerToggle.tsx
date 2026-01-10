@@ -9,21 +9,22 @@ function getFolderName(projectPath: string): string {
 }
 
 export function PluginViewerToggle() {
-  const {
-    loadedPlugin,
-    pluginAvailable,
-    currentPluginVersion,
-    webviewNeedsFreshBuild,
-    pluginLoading,
-    setPluginLoading,
-    setWebviewNeedsFreshBuild,
-    setLoadedPlugin,
-    setPluginAvailable,
-    engineInitialized,
-    setEngineInitialized,
-  } = usePreviewStore();
-  const { activeProject } = useProjectStore();
-  const { audioSettings } = useSettingsStore();
+  // === REACTIVE STATE (with selectors) ===
+  const loadedPlugin = usePreviewStore((s) => s.loadedPlugin);
+  const pluginAvailable = usePreviewStore((s) => s.pluginAvailable);
+  const currentPluginVersion = usePreviewStore((s) => s.currentPluginVersion);
+  const webviewNeedsFreshBuild = usePreviewStore((s) => s.webviewNeedsFreshBuild);
+  const pluginLoading = usePreviewStore((s) => s.pluginLoading);
+  const engineInitialized = usePreviewStore((s) => s.engineInitialized);
+  const activeProject = useProjectStore((s) => s.activeProject);
+  const audioSettings = useSettingsStore((s) => s.audioSettings);
+
+  // === STABLE ACTION REFERENCES ===
+  const setPluginLoading = usePreviewStore.getState().setPluginLoading;
+  const setWebviewNeedsFreshBuild = usePreviewStore.getState().setWebviewNeedsFreshBuild;
+  const setLoadedPlugin = usePreviewStore.getState().setLoadedPlugin;
+  const setPluginAvailable = usePreviewStore.getState().setPluginAvailable;
+  const setEngineInitialized = usePreviewStore.getState().setEngineInitialized;
 
   const handleToggle = async () => {
     if (!activeProject) return;

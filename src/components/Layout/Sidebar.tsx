@@ -7,9 +7,10 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNewPlugin }: SidebarProps) {
-    const { sidebarCollapsed, toggleSidebar } = useLayoutStore()
-    const { buildingPath } = useProjectBusyStore()
-    const anyBuildInProgress = buildingPath !== null
+    // Use selectors for reactive state
+    const sidebarCollapsed = useLayoutStore((s) => s.sidebarCollapsed)
+    const toggleSidebar = useLayoutStore.getState().toggleSidebar
+    const anyBuildInProgress = useProjectBusyStore((s) => s.buildingPath !== null)
 
     return (
         <aside

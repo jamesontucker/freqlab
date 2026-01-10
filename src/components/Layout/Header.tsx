@@ -33,11 +33,15 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
   const [showShareImport, setShowShareImport] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>();
-  const { isOpen: isPreviewOpen, toggleOpen: togglePreview } = usePreviewStore();
-  const updateStatus = useUpdateStore((state) => state.status);
+
+  // === REACTIVE STATE (with selectors) ===
+  const isPreviewOpen = usePreviewStore((s) => s.isOpen);
+  const updateStatus = useUpdateStore((s) => s.status);
   const hasUpdate = updateStatus === 'available';
-  const { buildingPath } = useProjectBusyStore();
-  const anyBuildInProgress = buildingPath !== null;
+  const anyBuildInProgress = useProjectBusyStore((s) => s.buildingPath !== null);
+
+  // === STABLE ACTION REFERENCES ===
+  const togglePreview = usePreviewStore.getState().toggleOpen;
 
   // Listen for open-settings events (e.g., from toast actions)
   useEffect(() => {

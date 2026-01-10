@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, memo, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { ProjectMeta } from '../../types';
 import { Modal } from '../Common/Modal';
@@ -12,10 +12,10 @@ interface ProjectCardProps {
   collapsed?: boolean;
   disabled?: boolean;
   onClick: () => void;
-  onDelete: () => Promise<void>;
+  onDelete: () => void;
 }
 
-export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = false, disabled = false, onClick, onDelete }: ProjectCardProps) {
+export const ProjectCard = memo(function ProjectCard({ project, isActive, isBusy, busyType, collapsed = false, disabled = false, onClick, onDelete }: ProjectCardProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
@@ -37,8 +37,9 @@ export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = f
       setShowTooltip(true);
     }
   };
-  const timeAgo = (dateStr: string) => {
-    const date = new Date(dateStr);
+  // Memoize timeAgo to avoid recalculating on every render
+  const timeAgoText = useMemo(() => {
+    const date = new Date(project.updated_at);
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const minutes = Math.floor(diff / 60000);
@@ -49,7 +50,7 @@ export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = f
     if (hours > 0) return `${hours}h ago`;
     if (minutes > 0) return `${minutes}m ago`;
     return 'Just now';
-  };
+  }, [project.updated_at]);
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -181,7 +182,7 @@ export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = f
             {/* Bottom row: Time + Delete */}
             <div className="flex items-center justify-between mt-0.5">
               <span className="text-[11px] text-text-muted">
-                {timeAgo(project.updated_at)}
+                {timeAgoText}
               </span>
               <button
                 onClick={handleDeleteClick}
@@ -234,4 +235,4 @@ export function ProjectCard({ project, isActive, isBusy, busyType, collapsed = f
       </Modal>
     </>
   );
-}
+});

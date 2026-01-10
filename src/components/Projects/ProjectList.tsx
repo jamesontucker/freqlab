@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { ProjectCard } from './ProjectCard';
@@ -9,12 +9,64 @@ interface ProjectListProps {
 }
 
 export function ProjectList({ collapsed = false }: ProjectListProps) {
-  const { projects, activeProject, loading, error, loadProjects, selectProject, deleteProject } = useProjectStore();
-  const { isClaudeBusy, buildingPath } = useProjectBusyStore();
+  // === REACTIVE STATE (with selectors) ===
+  const projects = useProjectStore((s) => s.projects);
+  const activeProjectId = useProjectStore((s) => s.activeProject?.id ?? null);
+  const loading = useProjectStore((s) => s.loading);
+  const error = useProjectStore((s) => s.error);
+
+  // Subscribe to busy state as primitives for proper memoization
+  const buildingPath = useProjectBusyStore((s) => s.buildingPath);
+  // Get the Set directly - we'll check membership in the card
+  const claudeBusyPaths = useProjectBusyStore((s) => s.claudeBusyPaths);
+
+  // === STABLE ACTION REFERENCES ===
+  const loadProjects = useProjectStore.getState().loadProjects;
+  const selectProject = useProjectStore.getState().selectProject;
+  const deleteProject = useProjectStore.getState().deleteProject;
+
+  // === ALL HOOKS MUST BE BEFORE EARLY RETURNS ===
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  // Derive busy state for a project - memoized to avoid recalculating
+  const getBusyState = useCallback((projectPath: string): { isBusy: boolean; busyType: 'claude' | 'build' | null } => {
+    if (claudeBusyPaths.has(projectPath)) {
+      return { isBusy: true, busyType: 'claude' };
+    }
+    if (buildingPath === projectPath) {
+      return { isBusy: true, busyType: 'build' };
+    }
+    return { isBusy: false, busyType: null };
+  }, [claudeBusyPaths, buildingPath]);
+
+  // Disable project selection when any build is in progress
+  const anyBuildInProgress = buildingPath !== null;
+
+  // Memoize the project items to prevent unnecessary recalculations
+  const projectItems = useMemo(() => {
+    return projects.map((project) => {
+      const { isBusy, busyType } = getBusyState(project.path);
+      const isCurrentProject = activeProjectId === project.id;
+      return {
+        project,
+        isActive: isCurrentProject,
+        isBusy,
+        busyType,
+        disabled: anyBuildInProgress && !isCurrentProject,
+      };
+    });
+  }, [projects, activeProjectId, getBusyState, anyBuildInProgress]);
+
+  // Stable callback for delete - memoize with project path
+  const handleDelete = useCallback(async (projectPath: string) => {
+    const folderName = projectPath.split('/').pop() || '';
+    await deleteProject(folderName, projectPath);
+  }, [deleteProject]);
+
+  // === EARLY RETURNS (after all hooks) ===
 
   if (loading && projects.length === 0) {
     return (
@@ -57,42 +109,21 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
     );
   }
 
-  const getBusyState = (projectPath: string): { isBusy: boolean; busyType: 'claude' | 'build' | null } => {
-    if (isClaudeBusy(projectPath)) {
-      return { isBusy: true, busyType: 'claude' };
-    }
-    if (buildingPath === projectPath) {
-      return { isBusy: true, busyType: 'build' };
-    }
-    return { isBusy: false, busyType: null };
-  };
-
-  // Disable project selection when any build is in progress
-  const anyBuildInProgress = buildingPath !== null;
-
   return (
     <div className={collapsed ? 'space-y-1 flex flex-col items-center' : 'space-y-1'}>
-      {projects.map((project) => {
-        const { isBusy, busyType } = getBusyState(project.path);
-        const isCurrentProject = activeProject?.id === project.id;
-        return (
-          <ProjectCard
-            key={project.id}
-            project={project}
-            isActive={isCurrentProject}
-            isBusy={isBusy}
-            busyType={busyType}
-            collapsed={collapsed}
-            disabled={anyBuildInProgress && !isCurrentProject}
-            onClick={() => selectProject(project)}
-            onDelete={async () => {
-              // Extract folder name from path for filesystem operations
-              const folderName = project.path.split('/').pop() || '';
-              await deleteProject(folderName, project.path);
-            }}
-          />
-        );
-      })}
+      {projectItems.map(({ project, isActive, isBusy, busyType, disabled }) => (
+        <ProjectCard
+          key={project.id}
+          project={project}
+          isActive={isActive}
+          isBusy={isBusy}
+          busyType={busyType}
+          collapsed={collapsed}
+          disabled={disabled}
+          onClick={() => selectProject(project)}
+          onDelete={() => handleDelete(project.path)}
+        />
+      ))}
     </div>
   );
 }
