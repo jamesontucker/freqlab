@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ReactNode } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
@@ -11,6 +10,7 @@ import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
+import { markdownComponents } from './markdownUtils';
 
 // 30 minute timeout for Claude sessions (in milliseconds)
 const CLAUDE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -50,96 +50,9 @@ const THINKING_PHRASES = [
   'Processing...',
 ];
 
-// Render text with color swatches for hex codes
-function renderWithColorSwatches(text: string): ReactNode[] {
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
-  let match;
-  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
-    }
-    // Add the color swatch with hex code (no code styling, just plain text)
-    const hexColor = match[0];
-    parts.push(
-      <span key={match.index} className="inline-flex items-center gap-1">
-        <span
-          className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
-          style={{ backgroundColor: hexColor }}
-        />
-        <span className="text-sm font-mono">{hexColor}</span>
-      </span>
-    );
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
-  }
-
-  return parts.length > 0 ? parts : [text];
-}
-
-// Process children to find and replace hex codes in text nodes
-function processChildren(children: ReactNode): ReactNode {
-  const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
-  if (typeof children === 'string') {
-    if (regex.test(children)) {
-      return renderWithColorSwatches(children);
-    }
-    return children;
-  }
-  if (Array.isArray(children)) {
-    return children.map((child, i) => {
-      const testRegex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
-      if (typeof child === 'string' && testRegex.test(child)) {
-        return <span key={i}>{renderWithColorSwatches(child)}</span>;
-      }
-      return child;
-    });
-  }
-  return children;
-}
-
-// Custom components for ReactMarkdown to render color swatches
-const markdownComponents = {
-  code: ({ children, className }: { children?: ReactNode; className?: string }) => {
-    if (className) {
-      return <code className={className}>{children}</code>;
-    }
-    const text = String(children);
-    const regex = /#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/g;
-    if (regex.test(text)) {
-      const hexColor = text.match(/#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/)?.[0];
-      if (hexColor) {
-        // If it's just a hex code, show swatch + plain text (no code styling)
-        return (
-          <span className="inline-flex items-center gap-1">
-            <span
-              className="inline-block w-5 h-3.5 rounded-sm border border-white/20"
-              style={{ backgroundColor: hexColor }}
-            />
-            <span className="text-sm font-mono">{hexColor}</span>
-          </span>
-        );
-      }
-    }
-    return <code className="bg-black/20 px-1 py-0.5 rounded text-sm">{children}</code>;
-  },
-  p: ({ children }: { children?: ReactNode }) => {
-    return <p>{processChildren(children)}</p>;
-  },
-  li: ({ children }: { children?: ReactNode }) => {
-    return <li>{processChildren(children)}</li>;
-  },
-};
-
 export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [activeVersion, setActiveVersion] = useState<number | null>(null);
-  const [streamingContent, setStreamingContent] = useState('');
   const [thinkingPhraseIndex, setThinkingPhraseIndex] = useState(0);
   // Initialize elapsed time from store to prevent "0s flash" when switching to a loading project
   const [elapsedSeconds, setElapsedSeconds] = useState(() => {
@@ -160,10 +73,32 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const saveQueueRef = useRef<ChatMessageType[] | null>(null);
   const streamingContentRef = useRef('');
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Flag to skip loadHistory when handleSend just completed (prevents race condition)
+  const handleSendCompletedRef = useRef(false);
   const { addLine, clear } = useProjectOutput(project.path);
-  const { pendingMessage, clearPendingMessage } = useChatStore();
-  const { isClaudeBusy, setClaudeBusy, clearClaudeBusy, isProjectBusy, getClaudeStartTime } = useProjectBusyStore();
-  const aiSettings = useSettingsStore((state) => state.aiSettings);
+
+  // Use selector for pendingMessage (reactive), getState() for stable action references
+  const pendingMessage = useChatStore((s) => s.pendingMessage);
+  const clearPendingMessage = useChatStore.getState().clearPendingMessage;
+
+  // Streaming content stored in Zustand (survives component unmount/remount when switching projects)
+  const streamingContent = useChatStore((s) => s.streamingContent[project.path] || '');
+  const setStreamingContent = useChatStore.getState().setStreamingContent;
+  const clearStreamingContent = useChatStore.getState().clearStreamingContent;
+
+  // Subscribe to derived busy state booleans (triggers re-render when they change)
+  // Using selectors ensures component re-renders when Claude busy state changes
+  const isLoading = useProjectBusyStore((s) => s.claudeBusyPaths.has(project.path));
+  const isBusy = useProjectBusyStore((s) =>
+    s.claudeBusyPaths.has(project.path) || s.buildingPath === project.path
+  );
+
+  // Get stable action references via getState() (no subscription needed for actions)
+  const setClaudeBusy = useProjectBusyStore.getState().setClaudeBusy;
+  const clearClaudeBusy = useProjectBusyStore.getState().clearClaudeBusy;
+  const getClaudeStartTime = useProjectBusyStore.getState().getClaudeStartTime;
+
+  const aiSettings = useSettingsStore((s) => s.aiSettings);
   const chatStyle = aiSettings.chatStyle;
   // Track chat style for current processing session (initialized from setting, captured when chat starts)
   const activeChatStyleRef = useRef(chatStyle);
@@ -219,11 +154,6 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     };
   }, []);
 
-  // Check if THIS project is currently busy with Claude
-  const isLoading = isClaudeBusy(project.path);
-  // Check if project is busy with anything (Claude or building)
-  const isBusy = isProjectBusy(project.path);
-
   // Load chat history from disk
   const loadHistory = useCallback(async () => {
     try {
@@ -261,17 +191,24 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     }
 
     if (claudeJustFinished) {
-      // Claude just finished working on THIS project - reload to get the saved result
-      // Don't reset state, just reload from disk (preserves smooth UX)
+      // Claude just finished working on THIS project
+      // If handleSend just completed, it already set the correct state - skip reload
+      // This prevents a race condition where loadHistory would overwrite with stale disk data
+      if (handleSendCompletedRef.current) {
+        handleSendCompletedRef.current = false;
+        return;
+      }
+      // Otherwise reload to get the saved result (e.g., after component remount during Claude work)
       loadHistory();
       return;
     }
 
     // Project changed or initial mount - reset and reload
+    // Note: streamingContent is NOT cleared here - it's stored in Zustand per-project
+    // and should be preserved when switching back to a project with active streaming
     setMessages([]);
     setActiveVersion(null);
     setIsHistoryLoaded(false);
-    setStreamingContent('');
     loadHistory();
   }, [project.path, loadHistory, isLoading]);
 
@@ -451,7 +388,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     setMessages(messagesWithUser);
     messagesRef.current = messagesWithUser; // Keep ref in sync immediately
     setClaudeBusy(project.path);
-    setStreamingContent('');
+    clearStreamingContent(project.path);
     streamingContentRef.current = '';
 
     // Save user message immediately (don't rely on effect in case of unmount)
@@ -489,11 +426,11 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       if (data.type === 'text' && data.content) {
         // Use \n\n so each message becomes a separate bubble in conversational mode
         streamingContentRef.current += data.content + '\n\n';
-        setStreamingContent(streamingContentRef.current);
+        setStreamingContent(project.path, streamingContentRef.current);
         addLine(data.content);
       } else if (data.type === 'error' && data.message) {
         streamingContentRef.current += `\nError: ${data.message}`;
-        setStreamingContent(streamingContentRef.current);
+        setStreamingContent(project.path, streamingContentRef.current);
         addLine(`[ERROR] ${data.message}`);
       } else if (data.type === 'start') {
         addLine('[Started working...]');
@@ -560,6 +497,10 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
           version: nextVersion,
         });
       }
+
+      // Mark that handleSend completed successfully - prevents the claudeJustFinished
+      // effect from calling loadHistory and overwriting our freshly-set state
+      handleSendCompletedRef.current = true;
     } catch (err) {
       // Check if this was a user-initiated interrupt
       const errorStr = String(err);
@@ -629,12 +570,12 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       clearTimeoutTimer();
       // Only clear if we're still the active Claude session (prevents race with other projects)
       clearClaudeBusy(project.path);
-      setStreamingContent('');
+      clearStreamingContent(project.path);
       streamingContentRef.current = '';
       addLine('');
       addLine('[Done]');
     }
-  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, resetTimeout, clearTimeoutTimer, chatStyle]);
+  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {
@@ -680,10 +621,12 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     }
   }, [project.path, messages, activeVersion, addLine, setClaudeBusy, clearClaudeBusy]);
 
-  // Calculate current effective version for header display
-  const latestVersionForHeader = messages.reduce((max, m) =>
-    m.version && m.version > max ? m.version : max, 0);
-  const effectiveVersionForHeader = activeVersion ?? latestVersionForHeader;
+  // Memoize version calculations - used by header and message list
+  const latestVersion = useMemo(() =>
+    messages.reduce((max, m) => m.version && m.version > max ? m.version : max, 0),
+    [messages]
+  );
+  const effectiveActiveVersion = activeVersion ?? latestVersion;
 
   return (
     <div className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in">
@@ -701,15 +644,15 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         {/* Spacer */}
         <div className="flex-1" />
         {/* Version info */}
-        {effectiveVersionForHeader > 0 && (
+        {effectiveActiveVersion > 0 && (
           <>
             <span className="text-[10px] text-text-muted">Active Version:</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-400 font-medium">
-              v{effectiveVersionForHeader}
+              v{effectiveActiveVersion}
             </span>
-            {activeVersion && activeVersion < latestVersionForHeader && (
+            {activeVersion && activeVersion < latestVersion && (
               <span className="text-[10px] text-warning">
-                (latest: v{latestVersionForHeader})
+                (latest: v{latestVersion})
               </span>
             )}
           </>
@@ -740,11 +683,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         ) : (
           <>
             {messages.map((message) => {
-              // Get max version to treat as "current" when activeVersion is null
-              const latestVersion = messages.reduce((max, m) =>
-                m.version && m.version > max ? m.version : max, 0);
-              const effectiveActiveVersion = activeVersion ?? latestVersion;
-
+              // Use memoized effectiveActiveVersion (calculated once, not per-message)
               // Determine if this version is "inactive" (ahead of current active version)
               const isInactiveVersion = message.version != null &&
                 effectiveActiveVersion > 0 &&
