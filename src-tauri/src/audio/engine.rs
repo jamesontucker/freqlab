@@ -799,7 +799,12 @@ impl AudioEngine {
                 &stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let is_playing = shared_clone.is_playing.load(Ordering::SeqCst);
-                    let has_plugin = shared_clone.plugin_instance.read().is_some();
+                    // Use try_read to avoid blocking audio thread if main thread holds write lock
+                    // during plugin load/unload. If we can't read, assume no plugin.
+                    let has_plugin = shared_clone.plugin_instance
+                        .try_read()
+                        .map(|guard| guard.is_some())
+                        .unwrap_or(false);
                     let is_instrument = shared_clone.is_instrument_plugin.load(Ordering::SeqCst);
 
                     // For instrument plugins, we need to process even when not "playing"
@@ -815,7 +820,12 @@ impl AudioEngine {
                         return;
                     }
 
-                    let input_source = shared_clone.input_source.read().clone();
+                    // Use try_read for input_source to avoid blocking during source changes
+                    // If we can't read, use None which outputs silence for this callback
+                    let input_source = shared_clone.input_source
+                        .try_read()
+                        .map(|guard| guard.clone())
+                        .unwrap_or(InputSource::None);
 
                     // Generate input samples
                     match input_source {
@@ -945,26 +955,38 @@ impl AudioEngine {
 
                     // ALWAYS apply pending state when we have a plugin, regardless of buffer size
                     // This is critical for syncing parameter changes from the editor
+                    // Use try_write to avoid blocking audio thread if main thread holds the lock
                     if has_plugin {
-                        let mut plugin_lock = shared_clone.plugin_instance.write();
-                        if let Some(ref mut plugin) = *plugin_lock {
-                            plugin.apply_pending_state();
+                        if let Some(mut plugin_lock) = shared_clone.plugin_instance.try_write() {
+                            if let Some(ref mut plugin) = *plugin_lock {
+                                plugin.apply_pending_state();
+                            }
                         }
-                        drop(plugin_lock);
+                        // If we can't get the lock, skip this cycle - parameter sync can wait
                     }
 
                     if has_plugin && data.len() <= max_buffer_size {
                         // Copy input to buffer
                         input_buffer[..data.len()].copy_from_slice(data);
 
-                        // Try to process through plugin
-                        let mut plugin_lock = shared_clone.plugin_instance.write();
-                        if let Some(ref mut plugin) = *plugin_lock {
+                        // Try to process through plugin using try_write to avoid blocking
+                        // If main thread holds the lock (during reload/param update), pass through input unchanged
+                        let plugin_processed = if let Some(mut plugin_lock) = shared_clone.plugin_instance.try_write() {
+                            if let Some(ref mut plugin) = *plugin_lock {
+                                plugin
+                                    .process(&input_buffer[..data.len()], &mut output_buffer[..data.len()])
+                                    .is_ok()
+                            } else {
+                                false
+                            }
+                        } else {
+                            // Couldn't get lock - main thread is busy with plugin
+                            // For effects: pass through input unchanged (no glitch)
+                            // For instruments: the input_buffer already has generated audio
+                            false
+                        };
 
-                            if plugin
-                                .process(&input_buffer[..data.len()], &mut output_buffer[..data.len()])
-                                .is_ok()
-                            {
+                        if plugin_processed {
                                 // Apply crossfade if reloading
                                 let crossfade_state =
                                     shared_clone.crossfade_state.load(Ordering::SeqCst);
@@ -1017,8 +1039,9 @@ impl AudioEngine {
                                             .store(position, Ordering::SeqCst);
                                     }
                                 }
-                            }
                         }
+                        // If plugin_processed is false (couldn't get lock), data already has input audio
+                        // which passes through unchanged - this avoids audio glitches during hot reload
                     }
 
                     // Apply master volume before limiting

@@ -224,6 +224,13 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       if (now - lastSyncTime < SYNC_DEBOUNCE_MS) return;
       lastSyncTime = now;
 
+      // If handleSend just completed, it set the correct state - skip reload
+      // This prevents race condition where we'd read stale disk data during save
+      if (handleSendCompletedRef.current) {
+        handleSendCompletedRef.current = false;
+        return;
+      }
+
       if (!isLoading) {
         // Reload from disk to catch any updates that happened while unfocused
         loadHistory();
@@ -484,23 +491,19 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         setActiveVersion(nextVersion);
       }
 
+      // Mark state as authoritative BEFORE async saves - prevents race condition
+      // where focus event could trigger loadHistory during the await calls below
+      // and overwrite our freshly-set state with stale disk data
+      handleSendCompletedRef.current = true;
+
       // Now persist to disk (async operations after state is consistent)
+      // Pass activeVersion explicitly to make this atomic - prevents race condition
+      // where focus events could read stale disk data between save and version update
       await invoke('save_chat_history', {
         projectPath: project.path,
         messages: messagesWithAssistant,
+        activeVersion: nextVersion ?? null,  // null preserves existing, number sets it
       });
-
-      // Persist activeVersion to disk so it survives reload
-      if (nextVersion) {
-        await invoke('update_active_version', {
-          projectPath: project.path,
-          version: nextVersion,
-        });
-      }
-
-      // Mark that handleSend completed successfully - prevents the claudeJustFinished
-      // effect from calling loadHistory and overwriting our freshly-set state
-      handleSendCompletedRef.current = true;
     } catch (err) {
       // Check if this was a user-initiated interrupt
       const errorStr = String(err);

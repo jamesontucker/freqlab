@@ -350,9 +350,9 @@ pub async fn send_to_claude(
 ) -> Result<ClaudeResponse, String> {
     // Ensure git is initialized for this project (handles existing projects)
     if !super::git::is_git_repo(&project_path) {
-        super::git::init_repo(&project_path)?;
+        super::git::init_repo(&project_path).await?;
         super::git::create_gitignore(&project_path)?;
-        super::git::commit_changes(&project_path, "Initialize git for version control")?;
+        super::git::commit_changes(&project_path, "Initialize git for version control").await?;
     }
 
     // Ensure .vstworkshop/ is not tracked by git (fixes existing projects)
@@ -669,7 +669,7 @@ pub async fn send_to_claude(
     } else {
         message.clone()
     };
-    let commit_hash = super::git::commit_changes(&project_path, &commit_msg).ok();
+    let commit_hash = super::git::commit_changes(&project_path, &commit_msg).await.ok();
 
     Ok(ClaudeResponse {
         content: final_content,

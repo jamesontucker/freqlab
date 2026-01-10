@@ -53,11 +53,14 @@ fn get_chat_file_path(project_path: &str) -> PathBuf {
         .join("chat.json")
 }
 
-/// Save chat history, optionally preserving activeVersion
+/// Save chat history with optional explicit activeVersion
+/// If activeVersion is provided, it will be used (even if None to clear it)
+/// If activeVersion is not provided (undefined in JS), preserves existing value from disk
 #[tauri::command]
 pub async fn save_chat_history(
     project_path: String,
     messages: Vec<ChatMessage>,
+    active_version: Option<Option<u32>>,  // None = preserve existing, Some(x) = use x
 ) -> Result<(), String> {
     let chat_file = get_chat_file_path(&project_path);
 
@@ -67,20 +70,28 @@ pub async fn save_chat_history(
             .map_err(|e| format!("Failed to create chat directory: {}", e))?;
     }
 
-    // Try to preserve existing activeVersion
-    let existing_active_version = if chat_file.exists() {
-        fs::read_to_string(&chat_file)
-            .ok()
-            .and_then(|c| serde_json::from_str::<ChatHistory>(&c).ok())
-            .and_then(|h| h.active_version)
-    } else {
-        None
+    // Determine activeVersion to use:
+    // - If explicitly provided (Some), use that value
+    // - If not provided (None), preserve existing from disk
+    let final_active_version = match active_version {
+        Some(v) => v,  // Explicit value provided (could be Some(n) or None)
+        None => {
+            // Not provided - preserve existing
+            if chat_file.exists() {
+                fs::read_to_string(&chat_file)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<ChatHistory>(&c).ok())
+                    .and_then(|h| h.active_version)
+            } else {
+                None
+            }
+        }
     };
 
     let history = ChatHistory {
         messages,
         last_updated: chrono::Utc::now().to_rfc3339(),
-        active_version: existing_active_version,
+        active_version: final_active_version,
     };
 
     let json = serde_json::to_string_pretty(&history)

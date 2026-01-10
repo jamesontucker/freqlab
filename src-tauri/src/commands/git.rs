@@ -7,8 +7,8 @@ fn git_command() -> Command {
     cmd
 }
 
-/// Initialize a git repository in the given path
-pub fn init_repo(path: &str) -> Result<(), String> {
+/// Initialize a git repository in the given path (blocking - use init_repo_async for async contexts)
+fn init_repo_sync(path: &str) -> Result<(), String> {
     let output = git_command()
         .current_dir(path)
         .args(["init"])
@@ -32,6 +32,14 @@ pub fn init_repo(path: &str) -> Result<(), String> {
         .output();
 
     Ok(())
+}
+
+/// Initialize a git repository in the given path (async - runs on blocking thread pool)
+pub async fn init_repo(path: &str) -> Result<(), String> {
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || init_repo_sync(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Create a .gitignore file with standard Rust ignores
@@ -61,8 +69,8 @@ target/
     Ok(())
 }
 
-/// Stage all changes and commit with the given message
-pub fn commit_changes(path: &str, message: &str) -> Result<String, String> {
+/// Stage all changes and commit with the given message (blocking - use commit_changes for async)
+fn commit_changes_sync(path: &str, message: &str) -> Result<String, String> {
     // Stage all changes
     let add_output = git_command()
         .current_dir(path)
@@ -104,11 +112,20 @@ pub fn commit_changes(path: &str, message: &str) -> Result<String, String> {
     }
 
     // Return the commit hash
-    get_current_commit(path)
+    get_current_commit_sync(path)
 }
 
-/// Get the current HEAD commit hash
-pub fn get_current_commit(path: &str) -> Result<String, String> {
+/// Stage all changes and commit with the given message (async - runs on blocking thread pool)
+pub async fn commit_changes(path: &str, message: &str) -> Result<String, String> {
+    let path = path.to_string();
+    let message = message.to_string();
+    tokio::task::spawn_blocking(move || commit_changes_sync(&path, &message))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Get the current HEAD commit hash (blocking)
+fn get_current_commit_sync(path: &str) -> Result<String, String> {
     let output = git_command()
         .current_dir(path)
         .args(["rev-parse", "HEAD"])
@@ -124,20 +141,26 @@ pub fn get_current_commit(path: &str) -> Result<String, String> {
     Ok(hash)
 }
 
-/// Revert files to a specific commit (non-destructive - creates new commit)
-/// Only reverts source code files, not app state (.vstworkshop/)
-#[tauri::command]
-pub async fn revert_to_commit(
-    project_path: String,
-    commit_hash: String,
-    original_prompt: String,
+/// Get the current HEAD commit hash (async - runs on blocking thread pool)
+pub async fn get_current_commit(path: &str) -> Result<String, String> {
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || get_current_commit_sync(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Revert files to a specific commit - blocking implementation
+fn revert_to_commit_sync(
+    project_path: &str,
+    commit_hash: &str,
+    original_prompt: &str,
 ) -> Result<String, String> {
     eprintln!("[DEBUG] revert_to_commit: commit={}, path={}", commit_hash, project_path);
 
     // Verify the commit exists first
     let verify = git_command()
-        .current_dir(&project_path)
-        .args(["cat-file", "-t", &commit_hash])
+        .current_dir(project_path)
+        .args(["cat-file", "-t", commit_hash])
         .output()
         .map_err(|e| format!("Failed to verify commit: {}", e))?;
 
@@ -148,11 +171,11 @@ pub async fn revert_to_commit(
     // Checkout only source files from the target commit with force flag
     // Exclude .vstworkshop/ which contains chat history and session state
     let checkout_output = git_command()
-        .current_dir(&project_path)
+        .current_dir(project_path)
         .args([
             "checkout",
             "-f",  // Force checkout
-            &commit_hash,
+            commit_hash,
             "--",
             "src/",
             "Cargo.toml",
@@ -173,13 +196,13 @@ pub async fn revert_to_commit(
 
     // Also try Cargo.lock (optional, may not exist)
     let _ = git_command()
-        .current_dir(&project_path)
-        .args(["checkout", "-f", &commit_hash, "--", "Cargo.lock"])
+        .current_dir(project_path)
+        .args(["checkout", "-f", commit_hash, "--", "Cargo.lock"])
         .output();
 
     // Create a new commit for the revert (if there are changes)
-    let revert_message = format!("Reverted to: {}", truncate_string(&original_prompt, 50));
-    match commit_changes(&project_path, &revert_message) {
+    let revert_message = format!("Reverted to: {}", truncate_string(original_prompt, 50));
+    match commit_changes_sync(project_path, &revert_message) {
         Ok(hash) => {
             eprintln!("[DEBUG] Created revert commit: {}", hash);
             Ok(hash)
@@ -187,10 +210,26 @@ pub async fn revert_to_commit(
         Err(e) if e == "no_changes" => {
             // No changes to commit - files were already at this state
             eprintln!("[DEBUG] No changes after checkout (files already at target state)");
-            get_current_commit(&project_path)
+            get_current_commit_sync(project_path)
         }
         Err(e) => Err(e),
     }
+}
+
+/// Revert files to a specific commit (non-destructive - creates new commit)
+/// Only reverts source code files, not app state (.vstworkshop/)
+/// Runs on blocking thread pool to avoid UI freezes
+#[tauri::command]
+pub async fn revert_to_commit(
+    project_path: String,
+    commit_hash: String,
+    original_prompt: String,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        revert_to_commit_sync(&project_path, &commit_hash, &original_prompt)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Ensure .vstworkshop/ is not tracked by git (for existing projects)

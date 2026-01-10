@@ -48,6 +48,8 @@ struct PlayerSharedState {
     seek_request_bits: AtomicU32,
     /// Version counter for MIDI file data (incremented on each track change)
     midi_data_version: AtomicU32,
+    /// Version counter for MIDI queue (incremented when queue changes, e.g., hot reload)
+    midi_queue_version: AtomicU32,
     /// Current pattern ID (protected by mutex for string access)
     current_pattern: Mutex<Option<String>>,
     /// Loaded MIDI file notes (protected by mutex)
@@ -85,6 +87,7 @@ impl MidiPlayer {
             duration_beats_bits: AtomicU32::new(0.0_f32.to_bits()),
             seek_request_bits: AtomicU32::new(f32::MAX.to_bits()), // No seek pending
             midi_data_version: AtomicU32::new(0),
+            midi_queue_version: AtomicU32::new(0),
             current_pattern: Mutex::new(None),
             midi_file_notes: Mutex::new(None),
             midi_queue: Mutex::new(None),
@@ -101,9 +104,12 @@ impl MidiPlayer {
         }
     }
 
-    /// Set the MIDI queue (called when plugin is loaded)
+    /// Set the MIDI queue (called when plugin is loaded/reloaded)
+    /// Increments version counter so player thread refreshes its cache
     pub fn set_midi_queue(&self, queue: Option<Arc<MidiEventQueue>>) {
         *self.shared.midi_queue.lock() = queue;
+        // Increment version to signal player thread to refresh its cached queue
+        self.shared.midi_queue_version.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Start playing a pattern
@@ -279,6 +285,7 @@ fn player_thread(shared: Arc<PlayerSharedState>) {
 
     // Cached state to avoid locking every tick
     let mut cached_queue: Option<Arc<MidiEventQueue>> = None;
+    let mut cached_queue_version: u32 = 0;
     let mut cached_pattern_id: Option<String> = None;
     let mut cached_pattern: Option<&'static super::patterns::Pattern> = None;
     let mut cached_source_type: u8 = PlaybackSource::Pattern as u8;
@@ -310,10 +317,12 @@ fn player_thread(shared: Arc<PlayerSharedState>) {
         // Sleep for active tick interval
         thread::sleep(active_tick);
 
-        // Update cached queue only if needed (check with try_lock to avoid blocking)
-        if cached_queue.is_none() {
+        // Check if queue version changed (e.g., hot reload) and refresh cache if so
+        let current_queue_version = shared.midi_queue_version.load(Ordering::SeqCst);
+        if cached_queue.is_none() || cached_queue_version != current_queue_version {
             if let Some(guard) = shared.midi_queue.try_lock() {
                 cached_queue = guard.clone();
+                cached_queue_version = current_queue_version;
             }
         }
 

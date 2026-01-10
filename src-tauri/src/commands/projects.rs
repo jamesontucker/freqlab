@@ -385,10 +385,11 @@ strip = "symbols"
         .map_err(|e| format!("Failed to write CLAUDE.md: {}", e))?;
 
     // Initialize git repository for version control
+    // These operations now run on a blocking thread pool to avoid UI freezes
     let project_path_str = project_path.to_string_lossy().to_string();
-    super::git::init_repo(&project_path_str)?;
+    super::git::init_repo(&project_path_str).await?;
     super::git::create_gitignore(&project_path_str)?;
-    super::git::commit_changes(&project_path_str, "Initial plugin template")?;
+    super::git::commit_changes(&project_path_str, "Initial plugin template").await?;
 
     Ok(metadata)
 }
