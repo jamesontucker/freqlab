@@ -237,6 +237,7 @@ export function PianoKeyboard({
       className="relative select-none piano-keyboard"
       onMouseUp={handleGlobalMouseUp}
       onMouseLeave={handleGlobalMouseUp}
+      title={disabled ? 'Launch your plugin to play notes' : undefined}
     >
       {/* Inline styles for key states - avoids CSS file dependency */}
       <style>{`

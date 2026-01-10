@@ -1,43 +1,14 @@
 import { memo, useCallback } from 'react';
 import { usePreviewStore, type DemoSample } from '../../stores/previewStore';
-import { useShallow } from 'zustand/react/shallow';
 import { open } from '@tauri-apps/plugin-dialog';
 import * as previewApi from '../../api/preview';
 
-interface SampleInputControlsProps {
-  onPlay: () => void;
-}
-
-export const SampleInputControls = memo(function SampleInputControls({
-  onPlay,
-}: SampleInputControlsProps) {
-  // Subscribe only to what we need
-  const { isPlaying, isLooping, engineInitialized } = usePreviewStore(
-    useShallow((s) => ({
-      isPlaying: s.isPlaying,
-      isLooping: s.isLooping,
-      engineInitialized: s.engineInitialized,
-    }))
-  );
-
+export const SampleInputControls = memo(function SampleInputControls() {
   const inputSource = usePreviewStore((s) => s.inputSource);
   const demoSamples = usePreviewStore((s) => s.demoSamples);
 
   // Get setters via getState to avoid re-renders
-  const setLooping = usePreviewStore.getState().setLooping;
   const setInputSource = usePreviewStore.getState().setInputSource;
-
-  // Handle looping change
-  const handleLoopingChange = useCallback(async (looping: boolean) => {
-    setLooping(looping);
-    if (usePreviewStore.getState().engineInitialized) {
-      try {
-        await previewApi.previewSetLooping(looping);
-      } catch (err) {
-        console.error('Failed to set looping:', err);
-      }
-    }
-  }, [setLooping]);
 
   // Select a demo sample
   const handleSampleSelect = useCallback(async (sampleId: string) => {
@@ -117,75 +88,34 @@ export const SampleInputControls = memo(function SampleInputControls({
         </div>
       )}
 
-      {/* Custom File Loader + Transport Controls */}
+      {/* Custom File Loader */}
       <div className={demoSamples.length > 0 ? "pt-2 border-t border-border" : ""}>
-        <div className="flex items-center gap-2">
-          {/* Play/Stop button */}
-          <button
-            onClick={onPlay}
-            disabled={!engineInitialized}
-            className={`p-2 rounded-lg transition-all duration-200 ${
-              !engineInitialized
-                ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                : isPlaying
-                  ? 'bg-error text-white hover:bg-error/90'
-                  : 'bg-accent text-white hover:bg-accent-hover'
-            }`}
-            title={isPlaying ? 'Stop' : 'Play'}
-          >
-            {isPlaying ? (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5.14v14l11-7-11-7z" />
-              </svg>
-            )}
-          </button>
-          {/* Loop toggle */}
-          <button
-            onClick={() => handleLoopingChange(!isLooping)}
-            className={`p-2 rounded-lg border transition-colors ${
-              isLooping
-                ? 'bg-accent/10 border-accent/30 text-accent'
-                : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
-            }`}
-            title={isLooping ? 'Looping enabled' : 'Looping disabled'}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-          {/* File loader / file display */}
-          {inputSource.customPath ? (
-            <>
-              <div className="flex-1 px-2.5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs truncate">
-                {inputSource.customPath.split('/').pop()}
-              </div>
-              <button
-                onClick={handleLoadCustomFile}
-                className="p-2 rounded-lg bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
-                title="Replace audio file"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-              </button>
-            </>
-          ) : (
+        {inputSource.customPath ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 px-2.5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs truncate">
+              {inputSource.customPath.split('/').pop()}
+            </div>
             <button
               onClick={handleLoadCustomFile}
-              className="flex-1 px-2.5 py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 bg-bg-tertiary border border-dashed border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+              className="p-2 rounded-lg bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+              title="Replace audio file"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
-              Load Audio File
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <button
+            onClick={handleLoadCustomFile}
+            className="w-full px-2.5 py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 bg-bg-tertiary border border-dashed border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Load Audio File
+          </button>
+        )}
       </div>
     </div>
   );

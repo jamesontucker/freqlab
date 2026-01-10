@@ -1,6 +1,5 @@
 import { memo, useCallback } from 'react';
 import { usePreviewStore, type SignalType, type GatePattern } from '../../stores/previewStore';
-import { useShallow } from 'zustand/react/shallow';
 import * as previewApi from '../../api/preview';
 import { FrequencySelector } from './FrequencySelector';
 
@@ -21,40 +20,12 @@ const GATE_OPTIONS: { value: GatePattern; label: string; rateLabel: string }[] =
   { value: 'sixteenth', label: '1/16 Notes', rateLabel: 'Tempo (BPM)' },
 ];
 
-interface SignalInputControlsProps {
-  onPlay: () => void;
-}
-
-export const SignalInputControls = memo(function SignalInputControls({
-  onPlay,
-}: SignalInputControlsProps) {
-  // Subscribe only to what we need
-  const { isPlaying, isLooping, engineInitialized } = usePreviewStore(
-    useShallow((s) => ({
-      isPlaying: s.isPlaying,
-      isLooping: s.isLooping,
-      engineInitialized: s.engineInitialized,
-    }))
-  );
-
+export const SignalInputControls = memo(function SignalInputControls() {
   const inputSource = usePreviewStore((s) => s.inputSource);
 
   // Get setters via getState to avoid re-renders
-  const setLooping = usePreviewStore.getState().setLooping;
   const setInputSource = usePreviewStore.getState().setInputSource;
   const setSignalFrequency = usePreviewStore.getState().setSignalFrequency;
-
-  // Handle looping change
-  const handleLoopingChange = useCallback(async (looping: boolean) => {
-    setLooping(looping);
-    if (usePreviewStore.getState().engineInitialized) {
-      try {
-        await previewApi.previewSetLooping(looping);
-      } catch (err) {
-        console.error('Failed to set looping:', err);
-      }
-    }
-  }, [setLooping]);
 
   // Update signal when frequency changes (while playing)
   const handleFrequencyChange = useCallback(async (freq: number) => {
@@ -220,50 +191,6 @@ export const SignalInputControls = memo(function SignalInputControls({
         )}
       </div>
 
-      {/* Transport Controls */}
-      <div className="pt-2 border-t border-border">
-        <div className="flex items-center gap-2">
-          {/* Play/Stop button */}
-          <button
-            onClick={onPlay}
-            disabled={!engineInitialized}
-            className={`p-2 rounded-lg transition-all duration-200 ${
-              !engineInitialized
-                ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                : isPlaying
-                  ? 'bg-error text-white hover:bg-error/90'
-                  : 'bg-accent text-white hover:bg-accent-hover'
-            }`}
-            title={isPlaying ? 'Stop' : 'Play'}
-          >
-            {isPlaying ? (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5.14v14l11-7-11-7z" />
-              </svg>
-            )}
-          </button>
-          {/* Loop toggle */}
-          <button
-            onClick={() => handleLoopingChange(!isLooping)}
-            className={`p-2 rounded-lg border transition-colors ${
-              isLooping
-                ? 'bg-accent/10 border-accent/30 text-accent'
-                : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
-            }`}
-            title={isLooping ? 'Looping enabled' : 'Looping disabled'}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          </button>
-          <span className="flex-1 text-xs text-text-muted">Test Signal</span>
-        </div>
-      </div>
     </div>
   );
 });

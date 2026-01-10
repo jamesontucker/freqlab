@@ -10,6 +10,7 @@ import { InstrumentControls } from './InstrumentControls';
 import { SampleInputControls } from './SampleInputControls';
 import { SignalInputControls } from './SignalInputControls';
 import { OutputSection } from './OutputSection';
+import { TransportBar } from './TransportBar';
 import { useShallow } from 'zustand/react/shallow';
 
 interface BuildStreamEvent {
@@ -80,6 +81,8 @@ export function PreviewPanel() {
     plugin: false,
     build: true,    // Collapsed by default
   });
+  // Track current MIDI source tab for instruments (for TransportBar indicator)
+  const [instrumentMidiSource, setInstrumentMidiSource] = useState<'piano' | 'patterns' | 'midi' | 'live'>('patterns');
   const levelListenerRef = useRef<(() => void) | null>(null);
   const pluginListenersRef = useRef<(() => void)[]>([]);
   // Refs to avoid stale closure issues in project-switching cleanup and build handlers
@@ -677,12 +680,12 @@ export function PreviewPanel() {
 
                     {/* Sample Selection */}
                     {inputSource.type === 'sample' && (
-                      <SampleInputControls onPlay={handleTogglePlaying} />
+                      <SampleInputControls />
                     )}
 
                     {/* Signal Selection */}
                     {inputSource.type === 'signal' && (
-                      <SignalInputControls onPlay={handleTogglePlaying} />
+                      <SignalInputControls />
                     )}
 
                     {/* Live Input Controls */}
@@ -698,11 +701,19 @@ export function PreviewPanel() {
                 {effectivePluginType === 'instrument' && (
                   <InstrumentControls
                     pluginLoaded={loadedPlugin.status === 'active'}
+                    onTabChange={setInstrumentMidiSource}
                   />
                 )}
                 </div>
                 )}
               </div>
+
+              {/* Transport Bar - always visible when a project is active */}
+              <TransportBar
+                pluginType={effectivePluginType}
+                onPlay={handleTogglePlaying}
+                midiSource={instrumentMidiSource}
+              />
 
               {/* Engine Error */}
               {engineError && (

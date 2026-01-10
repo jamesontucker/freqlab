@@ -8,6 +8,7 @@ import {
   midiDeviceGetLastNote,
   midiAllNotesOff,
 } from '../../api/preview';
+import { Tooltip } from '../Common/Tooltip';
 
 interface MidiLiveControlsProps {
   pluginLoaded: boolean;
@@ -259,21 +260,31 @@ export function MidiLiveControls({ pluginLoaded }: MidiLiveControlsProps) {
             </button>
           </>
         ) : (
-          <button
-            onClick={handleConnect}
-            disabled={selectedDeviceIndex === null || isConnecting || !pluginLoaded}
-            className={`
-              flex-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors
-              ${selectedDeviceIndex === null || !pluginLoaded
-                ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                : isConnecting
-                  ? 'bg-accent/50 text-white cursor-wait'
-                  : 'bg-accent text-white hover:bg-accent-hover'
-              }
-            `}
+          <Tooltip
+            content={
+              !pluginLoaded
+                ? 'Launch your plugin to connect MIDI devices'
+                : selectedDeviceIndex === null
+                  ? 'Select a MIDI device first'
+                  : 'Connect to selected device'
+            }
           >
-            {isConnecting ? 'Connecting...' : 'Connect'}
-          </button>
+            <button
+              onClick={handleConnect}
+              disabled={selectedDeviceIndex === null || isConnecting || !pluginLoaded}
+              className={`
+                flex-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors
+                ${selectedDeviceIndex === null || !pluginLoaded
+                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                  : isConnecting
+                    ? 'bg-accent/50 text-white cursor-wait'
+                    : 'bg-accent text-white hover:bg-accent-hover'
+                }
+              `}
+            >
+              {isConnecting ? 'Connecting...' : 'Connect'}
+            </button>
+          </Tooltip>
         )}
       </div>
 
@@ -302,12 +313,6 @@ export function MidiLiveControls({ pluginLoaded }: MidiLiveControlsProps) {
       )}
 
       {/* Help Text */}
-      {!pluginLoaded && (
-        <p className="text-xs text-text-muted text-center">
-          Enable Plugin Viewer to use live MIDI input
-        </p>
-      )}
-
       {pluginLoaded && !isConnected && devices.length > 0 && (
         <p className="text-xs text-text-muted text-center">
           Connect a MIDI keyboard or controller to play the instrument

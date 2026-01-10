@@ -8,6 +8,7 @@ import {
   patternSetBpm,
   patternSetOctaveShift,
 } from '../../api/preview';
+import { Tooltip } from '../Common/Tooltip';
 
 interface PatternControlsProps {
   pluginLoaded: boolean;
@@ -251,38 +252,42 @@ export function PatternControls({ pluginLoaded }: PatternControlsProps) {
       {/* Transport Controls */}
       <div className="pt-2 border-t border-border">
         <div className="flex items-center gap-2">
-          <button
-            onClick={isPlaying ? handleStop : handlePlay}
-            disabled={!pluginLoaded || (!isPlaying && !selectedPattern)}
-            className={`p-2 rounded-lg transition-all duration-200 ${
-              !pluginLoaded || (!isPlaying && !selectedPattern)
-                ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                : isPlaying
-                  ? 'bg-error text-white hover:bg-error/90'
-                  : 'bg-accent text-white hover:bg-accent-hover'
-            }`}
-            title={isPlaying ? 'Stop' : 'Play Pattern'}
+          <Tooltip
+            content={
+              !pluginLoaded
+                ? 'Launch your plugin to play patterns'
+                : !selectedPattern && !isPlaying
+                  ? 'Select a pattern first'
+                  : isPlaying ? 'Stop' : 'Play Pattern'
+            }
           >
-            {isPlaying ? (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <rect x="6" y="4" width="4" height="16" rx="1" />
-                <rect x="14" y="4" width="4" height="16" rx="1" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5.14v14l11-7-11-7z" />
-              </svg>
-            )}
-          </button>
+            <button
+              onClick={isPlaying ? handleStop : handlePlay}
+              disabled={!pluginLoaded || (!isPlaying && !selectedPattern)}
+              className={`p-2 rounded-lg transition-all duration-200 ${
+                !pluginLoaded || (!isPlaying && !selectedPattern)
+                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                  : isPlaying
+                    ? 'bg-error text-white hover:bg-error/90'
+                    : 'bg-accent text-white hover:bg-accent-hover'
+              }`}
+            >
+              {isPlaying ? (
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5.14v14l11-7-11-7z" />
+                </svg>
+              )}
+            </button>
+          </Tooltip>
           <span className="flex-1 text-xs text-text-muted">Pattern Playback</span>
         </div>
       </div>
 
-      {!pluginLoaded && (
-        <p className="text-xs text-text-muted text-center">
-          Enable Plugin Viewer to play patterns
-        </p>
-      )}
     </div>
   );
 }

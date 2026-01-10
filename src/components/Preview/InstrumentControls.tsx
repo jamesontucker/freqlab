@@ -4,12 +4,15 @@ import { PatternControls } from './PatternControls';
 import { MidiFileControls } from './MidiFileControls';
 import { MidiLiveControls } from './MidiLiveControls';
 import { midiAllNotesOff } from '../../api/preview';
+import { Tooltip } from '../Common/Tooltip';
 
 interface InstrumentControlsProps {
   /** Whether a plugin is loaded */
   pluginLoaded: boolean;
   /** Set of currently active notes (from pattern playback, MIDI input, etc.) */
   activeNotes?: Set<number>;
+  /** Callback when the active MIDI source tab changes */
+  onTabChange?: (tab: 'piano' | 'patterns' | 'midi' | 'live') => void;
 }
 
 // Tab definitions - Piano 3rd to reduce exposure to warm-up lag
@@ -34,8 +37,15 @@ const OCTAVE_OPTIONS = [
 export const InstrumentControls = memo(function InstrumentControls({
   pluginLoaded,
   activeNotes = new Set(),
+  onTabChange,
 }: InstrumentControlsProps) {
   const [activeTab, setActiveTab] = useState<TabId>('patterns');
+
+  // Notify parent when tab changes
+  const handleTabChange = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+    onTabChange?.(tab);
+  }, [onTabChange]);
   const [octaveShift, setOctaveShift] = useState(0);
   const [keyboardKey, setKeyboardKey] = useState(0);
 
@@ -68,7 +78,7 @@ export const InstrumentControls = memo(function InstrumentControls({
         {TABS.map(tab => (
           <button
             key={tab.id}
-            onClick={() => tab.enabled && setActiveTab(tab.id)}
+            onClick={() => tab.enabled && handleTabChange(tab.id)}
             disabled={!tab.enabled}
             className={`
               flex-1 py-1.5 px-2 rounded-md text-xs font-medium transition-colors
@@ -109,19 +119,21 @@ export const InstrumentControls = memo(function InstrumentControls({
                 ))}
               </div>
             </div>
-            <button
-              onClick={handlePanic}
-              disabled={!pluginLoaded}
-              className={`
-                px-3 py-1.5 text-xs font-medium rounded transition-colors
-                ${pluginLoaded
-                  ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                  : 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                }
-              `}
-            >
-              Panic
-            </button>
+            <Tooltip content={!pluginLoaded ? 'Launch your plugin first' : 'Stop all notes (All Notes Off)'}>
+              <button
+                onClick={handlePanic}
+                disabled={!pluginLoaded}
+                className={`
+                  px-3 py-1.5 text-xs font-medium rounded transition-colors
+                  ${pluginLoaded
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                  }
+                `}
+              >
+                Panic
+              </button>
+            </Tooltip>
           </div>
           <div className="bg-bg-secondary rounded-lg p-3">
             <PianoKeyboard
@@ -132,11 +144,6 @@ export const InstrumentControls = memo(function InstrumentControls({
               disabled={!pluginLoaded}
             />
           </div>
-          {!pluginLoaded && (
-            <p className="text-xs text-text-muted text-center">
-              Enable Plugin Viewer to play notes
-            </p>
-          )}
           {pluginLoaded && (
             <p className="text-xs text-text-muted text-center italic">
               Note: Piano may be briefly laggy on first use while the system warms up
