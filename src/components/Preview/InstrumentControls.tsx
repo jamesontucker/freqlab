@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import { PianoKeyboard } from './PianoKeyboard';
 import { PatternControls } from './PatternControls';
 import { MidiFileControls } from './MidiFileControls';
@@ -31,7 +31,7 @@ const OCTAVE_OPTIONS = [
   { value: 2, label: '+2' },
 ];
 
-export function InstrumentControls({
+export const InstrumentControls = memo(function InstrumentControls({
   pluginLoaded,
   activeNotes = new Set(),
 }: InstrumentControlsProps) {
@@ -161,4 +161,4 @@ export function InstrumentControls({
       )}
     </div>
   );
-}
+});

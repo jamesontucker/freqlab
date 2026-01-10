@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
 // Common frequency notches for the slider (logarithmic scale)
 const FREQ_NOTCHES = [
@@ -56,7 +56,7 @@ interface FrequencySelectorProps {
   onChange: (freq: number) => void;
 }
 
-export function FrequencySelector({ frequency, onChange }: FrequencySelectorProps) {
+export const FrequencySelector = memo(function FrequencySelector({ frequency, onChange }: FrequencySelectorProps) {
   const [mode, setMode] = useState<'slider' | 'note'>('slider');
   const [selectedOctave, setSelectedOctave] = useState(4);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
@@ -190,4 +190,4 @@ export function FrequencySelector({ frequency, onChange }: FrequencySelectorProp
       )}
     </div>
   );
-}
+});

@@ -16,7 +16,6 @@ import { useToastStore } from '../../stores/toastStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
-import type { ProjectMeta } from '../../types';
 
 interface AvailableFormats {
   vst3: boolean;

@@ -85,10 +85,10 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
             collapsed={collapsed}
             disabled={anyBuildInProgress && !isCurrentProject}
             onClick={() => selectProject(project)}
-            onDelete={() => {
+            onDelete={async () => {
               // Extract folder name from path for filesystem operations
               const folderName = project.path.split('/').pop() || '';
-              deleteProject(folderName, project.path);
+              await deleteProject(folderName, project.path);
             }}
           />
         );

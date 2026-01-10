@@ -1,32 +1,36 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 
 interface LevelMetersProps {
   animatedLevels: { left: number; right: number };
-  metering: {
-    leftDb: number;
-    rightDb: number;
-  };
   displayDb: { left: number; right: number };
   clipHold: { left: boolean; right: boolean };
 }
 
+// Check from hottest to coolest (order matters!)
+const getMeterColor = (db: number) => {
+  if (db > -1) return 'bg-gradient-to-r from-orange-500 to-red-500';    // Near clipping
+  if (db > -3) return 'bg-gradient-to-r from-yellow-500 to-orange-500'; // Hot
+  if (db > -6) return 'bg-gradient-to-r from-accent to-yellow-500';     // Warm
+  return 'bg-gradient-to-r from-accent to-accent-hover';                 // Normal
+};
+
 export const LevelMeters = memo(function LevelMeters({
   animatedLevels,
-  metering,
   displayDb,
   clipHold,
 }: LevelMetersProps) {
   // Convert animated linear levels to dB for smooth bar rendering
-  const animLeftDb = animatedLevels.left > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.left)) : -60;
-  const animRightDb = animatedLevels.right > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.right)) : -60;
-
-  // Check from hottest to coolest (order matters!)
-  const getMeterColor = (db: number) => {
-    if (db > -1) return 'bg-gradient-to-r from-orange-500 to-red-500';    // Near clipping
-    if (db > -3) return 'bg-gradient-to-r from-yellow-500 to-orange-500'; // Hot
-    if (db > -6) return 'bg-gradient-to-r from-accent to-yellow-500';     // Warm
-    return 'bg-gradient-to-r from-accent to-accent-hover';                 // Normal
-  };
+  // Use useMemo to avoid recalculating on every render when values haven't changed
+  const { leftWidth, rightWidth, leftColor, rightColor } = useMemo(() => {
+    const leftDb = animatedLevels.left > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.left)) : -60;
+    const rightDb = animatedLevels.right > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.right)) : -60;
+    return {
+      leftWidth: Math.max(0, (leftDb + 60) / 60 * 100),
+      rightWidth: Math.max(0, (rightDb + 60) / 60 * 100),
+      leftColor: getMeterColor(leftDb),
+      rightColor: getMeterColor(rightDb),
+    };
+  }, [animatedLevels.left, animatedLevels.right]);
 
   return (
     <div className="space-y-2">
@@ -35,8 +39,8 @@ export const LevelMeters = memo(function LevelMeters({
         <span className="text-xs text-text-muted w-3 font-mono">L</span>
         <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
           <div
-            className={`h-full ${getMeterColor(metering.leftDb)}`}
-            style={{ width: `${Math.max(0, (animLeftDb + 60) / 60 * 100)}%` }}
+            className={`h-full ${leftColor}`}
+            style={{ width: `${leftWidth}%` }}
           />
           {/* dB notches */}
           <div className="absolute inset-0 pointer-events-none">
@@ -63,8 +67,8 @@ export const LevelMeters = memo(function LevelMeters({
         <span className="text-xs text-text-muted w-3 font-mono">R</span>
         <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
           <div
-            className={`h-full ${getMeterColor(metering.rightDb)}`}
-            style={{ width: `${Math.max(0, (animRightDb + 60) / 60 * 100)}%` }}
+            className={`h-full ${rightColor}`}
+            style={{ width: `${rightWidth}%` }}
           />
           {/* dB notches */}
           <div className="absolute inset-0 pointer-events-none">

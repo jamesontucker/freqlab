@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { usePreviewStore, type AudioDevice } from '../../stores/previewStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useToastStore } from '../../stores/toastStore';
 import * as previewApi from '../../api/preview';
 
@@ -12,39 +13,103 @@ const LATENCY_OPTIONS = [
 ];
 
 interface LiveInputControlsProps {
-  engineInitialized: boolean;
-  isPlaying: boolean;
   onPlay: () => void;
-  // Animated levels for 60fps smooth rendering
-  animatedInputLevels: { left: number; right: number };
-  // Display dB values (debounced)
-  displayInputDb: { left: number; right: number };
+  isOpen: boolean;
 }
 
-export function LiveInputControls({
-  engineInitialized,
-  isPlaying,
+export const LiveInputControls = memo(function LiveInputControls({
   onPlay,
-  animatedInputLevels,
-  displayInputDb,
+  isOpen,
 }: LiveInputControlsProps) {
+  // Use selectors to prevent unnecessary re-renders
+  const { isPlaying, isLivePaused } = usePreviewStore(
+    useShallow((s) => ({
+      isPlaying: s.isPlaying,
+      isLivePaused: s.isLivePaused,
+    }))
+  );
+
+  const inputSource = usePreviewStore((s) => s.inputSource);
+  const availableInputDevices = usePreviewStore((s) => s.availableInputDevices);
+
+  // Get setters via getState to avoid re-renders
+  // Zustand setters are stable references
   const {
-    inputSource,
     setInputSource,
-    isLivePaused,
     setLivePaused,
-    availableInputDevices,
     setAvailableInputDevices,
-    metering,
-  } = usePreviewStore();
+  } = usePreviewStore.getState();
+
   const { addToast } = useToastStore();
+
+  // Animation state for input levels
+  const [animatedLevels, setAnimatedLevels] = useState({ left: 0, right: 0 });
+  const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
+  const animatedLevelsRef = useRef({ left: 0, right: 0 });
+  const dbUpdateRef = useRef({ left: -60, right: -60 });
+  const rafIdRef = useRef<number | null>(null);
+
+  // Debounce dB display updates
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const interval = setInterval(() => {
+      const metering = usePreviewStore.getState().metering;
+      const newLeft = metering.inputLeftDb;
+      const newRight = metering.inputRightDb;
+      const currentLeft = dbUpdateRef.current.left;
+      const currentRight = dbUpdateRef.current.right;
+
+      const leftDiff = Math.abs(newLeft - currentLeft);
+      const rightDiff = Math.abs(newRight - currentRight);
+
+      if (leftDiff > 1 || rightDiff > 1 || newLeft < currentLeft - 3 || newRight < currentRight - 3) {
+        dbUpdateRef.current = { left: newLeft, right: newRight };
+        setDisplayDb({ left: newLeft, right: newRight });
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isOpen]);
+
+  // Smooth animation loop for input levels at 60fps
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const smoothingFactor = 0.25;
+
+    const animate = () => {
+      const metering = usePreviewStore.getState().metering;
+      const targetLeft = metering.inputLeft;
+      const targetRight = metering.inputRight;
+      const currentLevels = animatedLevelsRef.current;
+
+      const leftDiff = (targetLeft || 0) - currentLevels.left;
+      const rightDiff = (targetRight || 0) - currentLevels.right;
+
+      if (Math.abs(leftDiff) > 0.0001 || Math.abs(rightDiff) > 0.0001) {
+        currentLevels.left += leftDiff * smoothingFactor;
+        currentLevels.right += rightDiff * smoothingFactor;
+        setAnimatedLevels({ ...currentLevels });
+      }
+
+      rafIdRef.current = requestAnimationFrame(animate);
+    };
+
+    rafIdRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [isOpen]);
 
   // Load available input devices when component mounts
   useEffect(() => {
     async function loadDevices() {
       try {
         const devices = await previewApi.getInputDevices();
-        // Map to our AudioDevice interface
         const mapped: AudioDevice[] = devices.map(d => ({
           name: d.name,
           is_default: d.is_default,
@@ -69,14 +134,15 @@ export function LiveInputControls({
   }, [setAvailableInputDevices, addToast]);
 
   // Handle device selection
-  const handleDeviceChange = async (deviceName: string | undefined) => {
+  const handleDeviceChange = useCallback(async (deviceName: string | undefined) => {
+    const currentInputSource = usePreviewStore.getState().inputSource;
     setInputSource({
-      ...inputSource,
+      ...currentInputSource,
       liveDeviceId: deviceName,
     });
 
-    // If already playing, update the live input source
-    if (engineInitialized && isPlaying) {
+    const state = usePreviewStore.getState();
+    if (state.engineInitialized && state.isPlaying) {
       try {
         await previewApi.previewSetLiveInput(deviceName || null);
       } catch (err) {
@@ -87,86 +153,74 @@ export function LiveInputControls({
         });
       }
     }
-  };
+  }, [setInputSource, addToast]);
 
-  // Handle monitoring toggle (start/pause)
-  // Button shows "Start Monitoring" when paused OR not playing
-  // Button shows "Pause" when actively monitoring (playing + not paused)
-  const handleMonitoringToggle = async () => {
-    const isShowingStart = isLivePaused || !isPlaying;
+  // Handle monitoring toggle
+  const handleMonitoringToggle = useCallback(async () => {
+    const state = usePreviewStore.getState();
+    const isShowingStart = state.isLivePaused || !state.isPlaying;
 
     if (isShowingStart) {
-      // User wants to START monitoring
       setLivePaused(false);
 
-      if (engineInitialized) {
+      if (state.engineInitialized) {
         try {
           await previewApi.previewSetLivePaused(false);
         } catch (err) {
           console.error('Failed to start monitoring:', err);
-          addToast({
-            type: 'error',
-            message: 'Failed to start monitoring',
-          });
+          addToast({ type: 'error', message: 'Failed to start monitoring' });
           return;
         }
       }
 
-      // Start playback if not already playing
-      if (!isPlaying) {
+      if (!state.isPlaying) {
         onPlay();
       }
     } else {
-      // User wants to PAUSE monitoring
       setLivePaused(true);
 
-      if (engineInitialized) {
+      if (state.engineInitialized) {
         try {
           await previewApi.previewSetLivePaused(true);
         } catch (err) {
           console.error('Failed to pause monitoring:', err);
-          setLivePaused(false); // Revert on error
-          addToast({
-            type: 'error',
-            message: 'Failed to pause monitoring',
-          });
+          setLivePaused(false);
+          addToast({ type: 'error', message: 'Failed to pause monitoring' });
         }
       }
     }
-  };
+  }, [setLivePaused, onPlay, addToast]);
 
-  // Handle chunk size (latency) change
-  const handleChunkSizeChange = async (chunkSize: number) => {
+  // Handle chunk size change
+  const handleChunkSizeChange = useCallback(async (chunkSize: number) => {
+    const currentInputSource = usePreviewStore.getState().inputSource;
     setInputSource({
-      ...inputSource,
+      ...currentInputSource,
       liveChunkSize: chunkSize,
     });
 
-    // If already playing, restart live input with new chunk size
-    if (engineInitialized && isPlaying && !isLivePaused) {
+    const state = usePreviewStore.getState();
+    if (state.engineInitialized && state.isPlaying && !state.isLivePaused) {
       try {
-        await previewApi.previewSetLiveInput(inputSource.liveDeviceId || null, chunkSize);
+        await previewApi.previewSetLiveInput(currentInputSource.liveDeviceId || null, chunkSize);
       } catch (err) {
         console.error('Failed to update chunk size:', err);
-        addToast({
-          type: 'error',
-          message: 'Failed to update latency setting',
-        });
+        addToast({ type: 'error', message: 'Failed to update latency setting' });
       }
     }
-  };
+  }, [setInputSource, addToast]);
 
-  // Convert animated linear levels to dB for smooth bar rendering
-  const animLeftDb = animatedInputLevels.left > 0 ? Math.max(-60, 20 * Math.log10(animatedInputLevels.left)) : -60;
-  const animRightDb = animatedInputLevels.right > 0 ? Math.max(-60, 20 * Math.log10(animatedInputLevels.right)) : -60;
-
-  // Check from hottest to coolest (order matters!)
-  const getMeterColor = (db: number) => {
-    if (db > -1) return 'bg-gradient-to-r from-orange-500 to-red-500';    // Near clipping
-    if (db > -3) return 'bg-gradient-to-r from-yellow-500 to-orange-500'; // Hot
-    if (db > -6) return 'bg-gradient-to-r from-accent to-yellow-500';     // Warm
-    return 'bg-gradient-to-r from-blue-500 to-blue-400';                  // Normal (blue for input)
-  };
+  // Compute meter values with useMemo
+  const meterValues = useMemo(() => {
+    const animLeftDb = animatedLevels.left > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.left)) : -60;
+    const animRightDb = animatedLevels.right > 0 ? Math.max(-60, 20 * Math.log10(animatedLevels.right)) : -60;
+    return {
+      leftWidth: Math.max(0, (animLeftDb + 60) / 60 * 100),
+      rightWidth: Math.max(0, (animRightDb + 60) / 60 * 100),
+      leftColor: getMeterColor(animLeftDb),
+      rightColor: getMeterColor(animRightDb),
+    };
+  }, [animatedLevels.left, animatedLevels.right]);
 
   const selectedDevice = inputSource.liveDeviceId;
   const defaultDevice = availableInputDevices.find(d => d.is_default);
@@ -209,7 +263,7 @@ export function LiveInputControls({
         )}
       </div>
 
-      {/* Input Level Meters - matching output meter styling */}
+      {/* Input Level Meters */}
       <div className="space-y-2">
         <div className="flex items-center gap-1.5">
           <svg className="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -223,10 +277,9 @@ export function LiveInputControls({
           <span className="text-xs text-text-muted w-3 font-mono">L</span>
           <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
             <div
-              className={`h-full ${getMeterColor(metering.inputLeftDb)}`}
-              style={{ width: `${Math.max(0, (animLeftDb + 60) / 60 * 100)}%` }}
+              className={`h-full ${meterValues.leftColor}`}
+              style={{ width: `${meterValues.leftWidth}%` }}
             />
-            {/* dB notches */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute left-[50%] w-px h-full bg-white/20" title="-30dB" />
               <div className="absolute left-[70%] w-px h-full bg-white/20" title="-18dB" />
@@ -236,7 +289,7 @@ export function LiveInputControls({
             </div>
           </div>
           <span className="text-[10px] text-text-muted w-14 text-right font-mono tabular-nums">
-            {displayInputDb.left > -60 ? `${displayInputDb.left.toFixed(1)}` : '-∞'} dB
+            {displayDb.left > -60 ? `${displayDb.left.toFixed(1)}` : '-∞'} dB
           </span>
         </div>
 
@@ -245,10 +298,9 @@ export function LiveInputControls({
           <span className="text-xs text-text-muted w-3 font-mono">R</span>
           <div className="flex-1 h-2.5 bg-bg-tertiary rounded-full overflow-hidden relative">
             <div
-              className={`h-full ${getMeterColor(metering.inputRightDb)}`}
-              style={{ width: `${Math.max(0, (animRightDb + 60) / 60 * 100)}%` }}
+              className={`h-full ${meterValues.rightColor}`}
+              style={{ width: `${meterValues.rightWidth}%` }}
             />
-            {/* dB notches */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute left-[50%] w-px h-full bg-white/20" title="-30dB" />
               <div className="absolute left-[70%] w-px h-full bg-white/20" title="-18dB" />
@@ -258,7 +310,7 @@ export function LiveInputControls({
             </div>
           </div>
           <span className="text-[10px] text-text-muted w-14 text-right font-mono tabular-nums">
-            {displayInputDb.right > -60 ? `${displayInputDb.right.toFixed(1)}` : '-∞'} dB
+            {displayDb.right > -60 ? `${displayDb.right.toFixed(1)}` : '-∞'} dB
           </span>
         </div>
 
@@ -345,4 +397,12 @@ export function LiveInputControls({
       </div>
     </div>
   );
+});
+
+// Helper function outside component to avoid recreation
+function getMeterColor(db: number): string {
+  if (db > -1) return 'bg-gradient-to-r from-orange-500 to-red-500';
+  if (db > -3) return 'bg-gradient-to-r from-yellow-500 to-orange-500';
+  if (db > -6) return 'bg-gradient-to-r from-accent to-yellow-500';
+  return 'bg-gradient-to-r from-blue-500 to-blue-400';
 }

@@ -1,17 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { usePreviewStore, type SignalType, type GatePattern } from '../../stores/previewStore';
+import { usePreviewStore } from '../../stores/previewStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import * as previewApi from '../../api/preview';
-import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { FrequencySelector } from './FrequencySelector';
-import { LevelMeters } from './LevelMeters';
-import { SpectrumAnalyzer } from './SpectrumAnalyzer';
-import { WaveformDisplay } from './WaveformDisplay';
 import { LiveInputControls } from './LiveInputControls';
 import { InstrumentControls } from './InstrumentControls';
+import { SampleInputControls } from './SampleInputControls';
+import { SignalInputControls } from './SignalInputControls';
+import { OutputSection } from './OutputSection';
+import { useShallow } from 'zustand/react/shallow';
 
 interface BuildStreamEvent {
   type: 'start' | 'output' | 'error' | 'done';
@@ -21,25 +20,6 @@ interface BuildStreamEvent {
   output_path?: string;
 }
 
-const SIGNAL_OPTIONS: { value: SignalType; label: string }[] = [
-  { value: 'sine', label: 'Sine Wave' },
-  { value: 'white_noise', label: 'White Noise' },
-  { value: 'pink_noise', label: 'Pink Noise' },
-  { value: 'impulse', label: 'Impulse' },
-  { value: 'sweep', label: 'Frequency Sweep' },
-  { value: 'square', label: 'Square Wave' },
-];
-
-const GATE_OPTIONS: { value: GatePattern; label: string; rateLabel: string }[] = [
-  { value: 'continuous', label: 'Continuous', rateLabel: '' },
-  { value: 'pulse', label: 'Pulse', rateLabel: 'Rate (Hz)' },
-  { value: 'quarter', label: '1/4 Notes', rateLabel: 'Tempo (BPM)' },
-  { value: 'eighth', label: '1/8 Notes', rateLabel: 'Tempo (BPM)' },
-  { value: 'sixteenth', label: '1/16 Notes', rateLabel: 'Tempo (BPM)' },
-];
-
-// No hardcoded samples - we use only what the backend provides or custom files
-
 // Helper to extract folder name from project path
 // e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
 function getFolderName(projectPath: string): string {
@@ -47,73 +27,51 @@ function getFolderName(projectPath: string): string {
 }
 
 export function PreviewPanel() {
+  // Use selectors to prevent unnecessary re-renders
+  // Group 1: Panel visibility (rarely changes)
+  const isOpen = usePreviewStore((s) => s.isOpen);
+
+  // Group 2: Playback state (changes on user action)
+  const isPlaying = usePreviewStore((s) => s.isPlaying);
+
+  // Group 3: Input source (changes on user interaction)
+  const inputSource = usePreviewStore((s) => s.inputSource);
+
+  // Group 4: Build status (changes on build)
+  const buildStatus = usePreviewStore((s) => s.buildStatus);
+
+  // Group 5: Plugin state (changes on plugin load/unload)
+  const { loadedPlugin, webviewNeedsFreshBuild, engineInitialized } = usePreviewStore(
+    useShallow((s) => ({
+      loadedPlugin: s.loadedPlugin,
+      webviewNeedsFreshBuild: s.webviewNeedsFreshBuild,
+      engineInitialized: s.engineInitialized,
+    }))
+  );
+
+  // Group 6: Demo samples (changes once on load)
+  const demoSamples = usePreviewStore((s) => s.demoSamples);
+
+  // Get setters via getState() to avoid subscribing to changes
+  // Zustand setters are stable references that don't change between renders
   const {
-    isOpen,
     setOpen,
-    isPlaying,
     setPlaying,
-    isLooping,
-    setLooping,
-    inputSource,
     setInputSource,
-    setSignalFrequency,
-    buildStatus,
     setBuildStatus,
-    metering,
     setMetering,
-    demoSamples,
     setDemoSamples,
-    loadedPlugin,
     setLoadedPlugin,
-    masterVolume,
-    setMasterVolume,
-    // Shared plugin viewer state (used by PluginViewerToggle in Header)
-    pluginAvailable,
     setPluginAvailable,
-    currentPluginVersion,
     setCurrentPluginVersion,
-    webviewNeedsFreshBuild,
     setWebviewNeedsFreshBuild,
-    pluginLoading,
     setPluginLoading,
-    engineInitialized,
     setEngineInitialized,
-  } = usePreviewStore();
+  } = usePreviewStore.getState();
 
   const { activeProject } = useProjectStore();
   const { audioSettings, markAudioSettingsApplied } = useSettingsStore();
   const [engineError, setEngineError] = useState<string | null>(null);
-  // Spectrum analyzer toggle
-  const [showSpectrum, setShowSpectrum] = useState(false);
-  // Waveform display toggle
-  const [showWaveform, setShowWaveform] = useState(false);
-  // Debounced dB values for smoother display (text only)
-  const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
-  const [displayInputDb, setDisplayInputDb] = useState({ left: -60, right: -60 });
-  const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
-  const inputDbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
-  // Animated spectrum, waveform, and levels for buttery smooth 60fps rendering
-  // Using refs for interpolation + single consolidated state to minimize re-renders
-  const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
-  const animatedWaveformRef = useRef<number[]>(new Array(256).fill(0));
-  const animatedLevelsRef = useRef({ left: 0, right: 0 });
-  const animatedInputLevelsRef = useRef({ left: 0, right: 0 });
-  // Single state object for all animations - triggers one re-render per frame instead of 4
-  const [animationState, setAnimationState] = useState({
-    spectrum: new Array(32).fill(0) as number[],
-    waveform: new Array(256).fill(0) as number[],
-    levels: { left: 0, right: 0 },
-    inputLevels: { left: 0, right: 0 },
-  });
-  // Destructure for component usage (maintains backward compatibility)
-  const animatedSpectrum = animationState.spectrum;
-  const animatedWaveform = animationState.waveform;
-  const animatedLevels = animationState.levels;
-  const animatedInputLevels = animationState.inputLevels;
-  const rafIdRef = useRef<number | null>(null);
-  // Clipping indicator with hold (stays lit for 1 second after clip)
-  const [clipHold, setClipHold] = useState({ left: false, right: false });
-  const clipTimeoutRef = useRef<{ left: NodeJS.Timeout | null; right: NodeJS.Timeout | null }>({ left: null, right: null });
   // Collapsible section state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     input: false,
@@ -136,173 +94,6 @@ export function PreviewPanel() {
   loadedPluginRef.current = loadedPlugin;
   webviewNeedsFreshBuildRef.current = webviewNeedsFreshBuild;
 
-  // Keep metering ref in sync for debounce access
-  const meteringRef = useRef(metering);
-  meteringRef.current = metering;
-
-  // Debounce dB display updates - only update when change is significant or periodically
-  // Only runs when panel is open to save CPU
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const interval = setInterval(() => {
-      // Output levels
-      const newLeft = meteringRef.current.leftDb;
-      const newRight = meteringRef.current.rightDb;
-      const currentLeft = dbUpdateRef.current.left;
-      const currentRight = dbUpdateRef.current.right;
-
-      // Only update if change is > 1dB or if dropping significantly
-      const leftDiff = Math.abs(newLeft - currentLeft);
-      const rightDiff = Math.abs(newRight - currentRight);
-
-      if (leftDiff > 1 || rightDiff > 1 || newLeft < currentLeft - 3 || newRight < currentRight - 3) {
-        dbUpdateRef.current = { left: newLeft, right: newRight };
-        setDisplayDb({ left: newLeft, right: newRight });
-      }
-
-      // Input levels (same logic)
-      const newInputLeft = meteringRef.current.inputLeftDb;
-      const newInputRight = meteringRef.current.inputRightDb;
-      const currentInputLeft = inputDbUpdateRef.current.left;
-      const currentInputRight = inputDbUpdateRef.current.right;
-
-      const inputLeftDiff = Math.abs(newInputLeft - currentInputLeft);
-      const inputRightDiff = Math.abs(newInputRight - currentInputRight);
-
-      if (inputLeftDiff > 1 || inputRightDiff > 1 || newInputLeft < currentInputLeft - 3 || newInputRight < currentInputRight - 3) {
-        inputDbUpdateRef.current = { left: newInputLeft, right: newInputRight };
-        setDisplayInputDb({ left: newInputLeft, right: newInputRight });
-      }
-    }, 100); // Update at most 10 times per second
-
-    return () => clearInterval(interval);
-  }, [isOpen]); // Only run when panel is open
-
-  // Smooth animation loop for spectrum, waveform, and levels at 60fps
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const smoothingFactor = 0.25; // Lower = smoother but more laggy, higher = snappier
-    const waveformSmoothing = 0.5; // Faster response for time-domain
-
-    const animate = () => {
-      const targetSpectrum = meteringRef.current.spectrum;
-      const targetLeft = meteringRef.current.left;
-      const targetRight = meteringRef.current.right;
-
-      // Interpolate spectrum bands (handle array length mismatch)
-      const currentSpectrum = animatedSpectrumRef.current;
-      const numBands = Math.min(currentSpectrum.length, targetSpectrum?.length || 0);
-      let spectrumChanged = false;
-      for (let i = 0; i < numBands; i++) {
-        const target = targetSpectrum[i] || 0;
-        const current = currentSpectrum[i];
-        const diff = target - current;
-        if (Math.abs(diff) > 0.0001) {
-          currentSpectrum[i] = current + diff * smoothingFactor;
-          spectrumChanged = true;
-        }
-      }
-
-      // Interpolate waveform
-      const targetWaveform = meteringRef.current.waveform;
-      const currentWaveform = animatedWaveformRef.current;
-      const numSamples = Math.min(currentWaveform.length, targetWaveform?.length || 0);
-      let waveformChanged = false;
-      for (let i = 0; i < numSamples; i++) {
-        const target = targetWaveform[i] || 0;
-        const current = currentWaveform[i];
-        const diff = target - current;
-        if (Math.abs(diff) > 0.0001) {
-          currentWaveform[i] = current + diff * waveformSmoothing;
-          waveformChanged = true;
-        }
-      }
-
-      // Interpolate output levels
-      const currentLevels = animatedLevelsRef.current;
-      const leftDiff = (targetLeft || 0) - currentLevels.left;
-      const rightDiff = (targetRight || 0) - currentLevels.right;
-      let levelsChanged = false;
-      if (Math.abs(leftDiff) > 0.0001 || Math.abs(rightDiff) > 0.0001) {
-        currentLevels.left += leftDiff * smoothingFactor;
-        currentLevels.right += rightDiff * smoothingFactor;
-        levelsChanged = true;
-      }
-
-      // Interpolate input levels
-      const targetInputLeft = meteringRef.current.inputLeft;
-      const targetInputRight = meteringRef.current.inputRight;
-      const currentInputLevels = animatedInputLevelsRef.current;
-      const inputLeftDiff = (targetInputLeft || 0) - currentInputLevels.left;
-      const inputRightDiff = (targetInputRight || 0) - currentInputLevels.right;
-      let inputLevelsChanged = false;
-      if (Math.abs(inputLeftDiff) > 0.0001 || Math.abs(inputRightDiff) > 0.0001) {
-        currentInputLevels.left += inputLeftDiff * smoothingFactor;
-        currentInputLevels.right += inputRightDiff * smoothingFactor;
-        inputLevelsChanged = true;
-      }
-
-      // Update React state at 60fps - single setState call for all animations
-      // Only update if something changed to avoid unnecessary re-renders
-      if (spectrumChanged || waveformChanged || levelsChanged || inputLevelsChanged) {
-        setAnimationState({
-          spectrum: spectrumChanged ? [...currentSpectrum] : animatedSpectrumRef.current,
-          waveform: waveformChanged ? [...currentWaveform] : animatedWaveformRef.current,
-          levels: levelsChanged ? { ...currentLevels } : animatedLevelsRef.current,
-          inputLevels: inputLevelsChanged ? { ...currentInputLevels } : animatedInputLevelsRef.current,
-        });
-      }
-
-      rafIdRef.current = requestAnimationFrame(animate);
-    };
-
-    rafIdRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-      }
-    };
-  }, [isOpen]);
-
-  // Handle clipping indicator with hold time (stays lit for 1 second after clip)
-  // Separate effects for left/right to avoid clearing the other channel's timeout
-  useEffect(() => {
-    if (metering.clippingLeft) {
-      setClipHold(prev => ({ ...prev, left: true }));
-      if (clipTimeoutRef.current.left) clearTimeout(clipTimeoutRef.current.left);
-      clipTimeoutRef.current.left = setTimeout(() => {
-        setClipHold(prev => ({ ...prev, left: false }));
-        clipTimeoutRef.current.left = null;
-      }, 1000);
-    }
-    return () => {
-      if (clipTimeoutRef.current.left) {
-        clearTimeout(clipTimeoutRef.current.left);
-        clipTimeoutRef.current.left = null;
-      }
-    };
-  }, [metering.clippingLeft]);
-
-  useEffect(() => {
-    if (metering.clippingRight) {
-      setClipHold(prev => ({ ...prev, right: true }));
-      if (clipTimeoutRef.current.right) clearTimeout(clipTimeoutRef.current.right);
-      clipTimeoutRef.current.right = setTimeout(() => {
-        setClipHold(prev => ({ ...prev, right: false }));
-        clipTimeoutRef.current.right = null;
-      }, 1000);
-    }
-    return () => {
-      if (clipTimeoutRef.current.right) {
-        clearTimeout(clipTimeoutRef.current.right);
-        clipTimeoutRef.current.right = null;
-      }
-    };
-  }, [metering.clippingRight]);
-
   // Initialize audio engine when panel opens
   useEffect(() => {
     if (!isOpen) return;
@@ -313,105 +104,80 @@ export function PreviewPanel() {
 
     const initEngine = async () => {
       try {
-        // Initialize with saved audio settings
+        // Initialize audio engine first (required for other operations)
         await previewApi.initAudioEngine(
           audioSettings.outputDevice,
           audioSettings.sampleRate,
           audioSettings.bufferSize
         );
 
-        // Check cancellation after each async operation
         if (isCancelled) return;
 
         setEngineInitialized(true);
         setEngineError(null);
-        // Mark current audio settings as "applied" (engine is using them)
         markAudioSettingsApplied();
 
-        // Start level meter updates (includes spectrum data)
-        await previewApi.startLevelMeter();
-        if (isCancelled) return;
+        // Run independent operations in parallel for faster startup
+        const [meteringUnlisten, samples, pluginState, pluginListeners] = await Promise.all([
+          // Start level meter and set up listener
+          previewApi.startLevelMeter().then(async () => {
+            if (isCancelled) return null;
+            return previewApi.onMeteringUpdate((data) => {
+              setMetering({
+                left: data.left,
+                right: data.right,
+                leftDb: data.left_db,
+                rightDb: data.right_db,
+                inputLeft: data.input_left,
+                inputRight: data.input_right,
+                inputLeftDb: data.input_left_db,
+                inputRightDb: data.input_right_db,
+                spectrum: data.spectrum,
+                waveform: data.waveform,
+                clippingLeft: data.clipping_left,
+                clippingRight: data.clipping_right,
+              });
+            });
+          }),
 
-        // Listen for combined metering data (levels + dB + spectrum + waveform + clipping + input)
-        const unlisten = await previewApi.onMeteringUpdate((data) => {
-          setMetering({
-            left: data.left,
-            right: data.right,
-            leftDb: data.left_db,
-            rightDb: data.right_db,
-            inputLeft: data.input_left,
-            inputRight: data.input_right,
-            inputLeftDb: data.input_left_db,
-            inputRightDb: data.input_right_db,
-            spectrum: data.spectrum,
-            waveform: data.waveform,
-            clippingLeft: data.clipping_left,
-            clippingRight: data.clipping_right,
-          });
-        });
+          // Load demo samples (independent of metering)
+          previewApi.getDemoSamples(),
+
+          // Get initial plugin state
+          previewApi.pluginGetState(),
+
+          // Set up all plugin event listeners in parallel
+          Promise.all([
+            previewApi.onPluginLoading(() => setPluginLoading(true)),
+            previewApi.onPluginLoaded((state) => {
+              setLoadedPlugin(state);
+              setPluginLoading(false);
+            }),
+            previewApi.onPluginError((error) => {
+              setLoadedPlugin({ status: 'error', message: error });
+              setPluginLoading(false);
+            }),
+            previewApi.onPluginUnloaded(() => {
+              setLoadedPlugin({ status: 'unloaded' });
+              setPluginLoading(false);
+            }),
+          ]),
+        ]);
+
         if (isCancelled) {
-          // Clean up immediately if cancelled
-          unlisten();
+          // Clean up all listeners if cancelled
+          meteringUnlisten?.();
+          pluginListeners.forEach(l => l());
           return;
         }
-        levelListenerRef.current = unlisten;
 
-        // Load demo samples
-        const samples = await previewApi.getDemoSamples();
-        if (isCancelled) return;
+        // Store listener cleanup functions
+        if (meteringUnlisten) {
+          levelListenerRef.current = meteringUnlisten;
+        }
         setDemoSamples(samples);
-
-        // Get initial plugin state
-        const pluginState = await previewApi.pluginGetState();
-        if (isCancelled) return;
         setLoadedPlugin(pluginState);
-
-        // Set up plugin event listeners
-        const listeners: (() => void)[] = [];
-
-        const loadingListener = await previewApi.onPluginLoading(() => {
-          setPluginLoading(true);
-        });
-        if (isCancelled) {
-          loadingListener();
-          return;
-        }
-        listeners.push(loadingListener);
-
-        const loadedListener = await previewApi.onPluginLoaded((state) => {
-          setLoadedPlugin(state);
-          setPluginLoading(false);
-        });
-        if (isCancelled) {
-          listeners.forEach(l => l());
-          loadedListener();
-          return;
-        }
-        listeners.push(loadedListener);
-
-        const errorListener = await previewApi.onPluginError((error) => {
-          setLoadedPlugin({ status: 'error', message: error });
-          setPluginLoading(false);
-        });
-        if (isCancelled) {
-          listeners.forEach(l => l());
-          errorListener();
-          return;
-        }
-        listeners.push(errorListener);
-
-        const unloadedListener = await previewApi.onPluginUnloaded(() => {
-          setLoadedPlugin({ status: 'unloaded' });
-          setPluginLoading(false);
-        });
-        if (isCancelled) {
-          listeners.forEach(l => l());
-          unloadedListener();
-          return;
-        }
-        listeners.push(unloadedListener);
-
-        pluginListenersRef.current = listeners;
+        pluginListenersRef.current = pluginListeners;
       } catch (err) {
         if (isCancelled) return;
         console.error('Failed to initialize audio engine:', err);
@@ -718,42 +484,6 @@ export function PreviewPanel() {
     }
   }, [engineInitialized, isPlaying, setPlaying, inputSource, demoSamples]);
 
-  // Handle looping change
-  const handleLoopingChange = useCallback(async (looping: boolean) => {
-    setLooping(looping);
-    if (engineInitialized) {
-      try {
-        await previewApi.previewSetLooping(looping);
-      } catch (err) {
-        console.error('Failed to set looping:', err);
-      }
-    }
-  }, [setLooping, engineInitialized]);
-
-  // Update signal when frequency changes (while playing)
-  const handleFrequencyChange = useCallback(async (freq: number) => {
-    setSignalFrequency(freq);
-    if (engineInitialized && isPlaying && inputSource.type === 'signal') {
-      try {
-        await previewApi.previewSetFrequency(freq);
-      } catch (err) {
-        console.error('Failed to set frequency:', err);
-      }
-    }
-  }, [setSignalFrequency, engineInitialized, isPlaying, inputSource.type]);
-
-  // Update master volume
-  const handleMasterVolumeChange = useCallback(async (volume: number) => {
-    setMasterVolume(volume);
-    if (engineInitialized) {
-      try {
-        await previewApi.previewSetMasterVolume(volume);
-      } catch (err) {
-        console.error('Failed to set master volume:', err);
-      }
-    }
-  }, [setMasterVolume, engineInitialized]);
-
   // Switch input source type (samples <-> signals <-> live) - stops playback and clears demo sample selection
   // Custom sample path is preserved across switches
   const handleInputTypeChange = useCallback(async (type: 'sample' | 'signal' | 'live') => {
@@ -778,113 +508,6 @@ export function PreviewPanel() {
     // Custom path persists so user can switch back to their loaded file
     setInputSource({ ...inputSource, type, sampleId: undefined });
   }, [isPlaying, engineInitialized, setPlaying, inputSource, setInputSource]);
-
-  // Change signal type - updates immediately if playing
-  const handleSignalTypeChange = useCallback(async (signalType: SignalType) => {
-    setInputSource({ ...inputSource, signalType });
-
-    // If playing, update the signal immediately
-    if (isPlaying && engineInitialized) {
-      try {
-        await previewApi.previewSetSignal(
-          signalType,
-          inputSource.signalFrequency || 440,
-          0.5,
-          inputSource.gatePattern || 'continuous',
-          inputSource.gateRate || 2.0,
-          inputSource.gateDuty || 0.5
-        );
-      } catch (err) {
-        console.error('Failed to change signal type:', err);
-      }
-    }
-  }, [inputSource, setInputSource, isPlaying, engineInitialized]);
-
-  // Change gate pattern - updates immediately if playing
-  const handleGateChange = useCallback(async (
-    pattern: GatePattern,
-    rate?: number,
-    duty?: number
-  ) => {
-    // Use appropriate default rate based on pattern type
-    const defaultRate = pattern === 'pulse' ? 2.0 : 120; // Hz for pulse, BPM for musical
-    const newRate = rate ?? (pattern !== inputSource.gatePattern ? defaultRate : inputSource.gateRate);
-
-    setInputSource({
-      ...inputSource,
-      gatePattern: pattern,
-      gateRate: newRate,
-      gateDuty: duty ?? inputSource.gateDuty,
-    });
-
-    // If playing, update the gate immediately
-    if (isPlaying && engineInitialized && inputSource.type === 'signal') {
-      try {
-        await previewApi.previewSetGate(pattern, newRate, duty ?? inputSource.gateDuty);
-      } catch (err) {
-        console.error('Failed to change gate pattern:', err);
-      }
-    }
-  }, [inputSource, setInputSource, isPlaying, engineInitialized]);
-
-  // Select a demo sample
-  const handleSampleSelect = useCallback(async (sampleId: string) => {
-    // Update selection
-    setInputSource({ ...inputSource, sampleId, customPath: undefined });
-
-    // If playing, load and start playing the new sample
-    if (isPlaying && engineInitialized) {
-      const sample = demoSamples.find(s => s.id === sampleId);
-      if (sample) {
-        try {
-          await previewApi.previewLoadSample(sample.path);
-        } catch (err) {
-          console.error('Failed to load sample:', err);
-        }
-      }
-    }
-  }, [inputSource, setInputSource, isPlaying, engineInitialized, demoSamples]);
-
-  // Load a custom audio file
-  const handleLoadCustomFile = useCallback(async () => {
-    try {
-      const selected = await open({
-        multiple: false,
-        filters: [{
-          name: 'Audio Files',
-          extensions: ['wav', 'mp3', 'flac', 'ogg', 'aac', 'm4a']
-        }]
-      });
-
-      if (selected && typeof selected === 'string') {
-        // Set the custom path (clear demo sample selection)
-        setInputSource({ ...inputSource, customPath: selected, sampleId: undefined });
-
-        // Load the sample into the engine
-        if (engineInitialized) {
-          try {
-            await previewApi.previewLoadSample(selected);
-            console.log('Loaded custom sample:', selected);
-          } catch (err) {
-            console.error('Failed to load sample into engine:', err);
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Failed to open file dialog:', err);
-    }
-  }, [engineInitialized, inputSource, setInputSource]);
-
-  // Open the plugin's editor window
-  const handleOpenEditor = useCallback(async () => {
-    if (!engineInitialized) return;
-
-    try {
-      await previewApi.pluginOpenEditor();
-    } catch (err) {
-      console.error('Failed to open plugin editor:', err);
-    }
-  }, [engineInitialized]);
 
   // Determine plugin type from active project
   const effectivePluginType = activeProject?.template === 'instrument' ? 'instrument' : 'effect';
@@ -1021,261 +644,19 @@ export function PreviewPanel() {
 
                     {/* Sample Selection */}
                     {inputSource.type === 'sample' && (
-                      <div className="space-y-3">
-                        {/* Demo Samples */}
-                        {demoSamples.length > 0 && (
-                          <div className="grid grid-cols-2 gap-2">
-                            {demoSamples.map((sample) => (
-                              <button
-                                key={sample.id}
-                                onClick={() => handleSampleSelect(sample.id)}
-                                className={`p-2 rounded-lg text-sm text-left transition-colors ${
-                                  inputSource.sampleId === sample.id && !inputSource.customPath
-                                    ? 'bg-accent/10 border border-accent/30 text-accent'
-                                    : 'bg-bg-tertiary border border-transparent text-text-secondary hover:text-text-primary hover:border-border'
-                                }`}
-                              >
-                                {sample.name}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {demoSamples.length === 0 && !inputSource.customPath && (
-                          <div className="p-3 rounded-lg bg-bg-tertiary border border-border text-center">
-                            <p className="text-sm text-text-secondary">No demo samples found</p>
-                            <p className="text-xs text-text-muted mt-1">Load a custom audio file below</p>
-                          </div>
-                        )}
-
-                        {/* Custom File Loader + Transport Controls */}
-                        <div className={demoSamples.length > 0 ? "pt-2 border-t border-border" : ""}>
-                          <div className="flex items-center gap-2">
-                            {/* Play/Stop button */}
-                            <button
-                              onClick={handleTogglePlaying}
-                              disabled={!engineInitialized}
-                              className={`p-2 rounded-lg transition-all duration-200 ${
-                                !engineInitialized
-                                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                                  : isPlaying
-                                    ? 'bg-error text-white hover:bg-error/90'
-                                    : 'bg-accent text-white hover:bg-accent-hover'
-                              }`}
-                              title={isPlaying ? 'Stop' : 'Play'}
-                            >
-                              {isPlaying ? (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                  <rect x="6" y="4" width="4" height="16" rx="1" />
-                                  <rect x="14" y="4" width="4" height="16" rx="1" />
-                                </svg>
-                              ) : (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M8 5.14v14l11-7-11-7z" />
-                                </svg>
-                              )}
-                            </button>
-                            {/* Loop toggle */}
-                            <button
-                              onClick={() => handleLoopingChange(!isLooping)}
-                              className={`p-2 rounded-lg border transition-colors ${
-                                isLooping
-                                  ? 'bg-accent/10 border-accent/30 text-accent'
-                                  : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
-                              }`}
-                              title={isLooping ? 'Looping enabled' : 'Looping disabled'}
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
-                            </button>
-                            {/* File loader / file display */}
-                            {inputSource.customPath ? (
-                              <>
-                                <div className="flex-1 px-2.5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs truncate">
-                                  {inputSource.customPath.split('/').pop()}
-                                </div>
-                                <button
-                                  onClick={handleLoadCustomFile}
-                                  className="p-2 rounded-lg bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
-                                  title="Replace audio file"
-                                >
-                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                                  </svg>
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={handleLoadCustomFile}
-                                className="flex-1 px-2.5 py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 bg-bg-tertiary border border-dashed border-border text-text-secondary hover:text-text-primary hover:border-border-hover transition-colors"
-                              >
-                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                                </svg>
-                                Load Audio File
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                      <SampleInputControls onPlay={handleTogglePlaying} />
                     )}
 
                     {/* Signal Selection */}
                     {inputSource.type === 'signal' && (
-                      <div className="space-y-4">
-                        <select
-                          value={inputSource.signalType || 'sine'}
-                          onChange={(e) => handleSignalTypeChange(e.target.value as SignalType)}
-                          className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent"
-                        >
-                          {SIGNAL_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                        {(inputSource.signalType === 'sine' || inputSource.signalType === 'square' || inputSource.signalType === 'impulse') && (
-                          <FrequencySelector
-                            frequency={inputSource.signalFrequency || 440}
-                            onChange={handleFrequencyChange}
-                          />
-                        )}
-
-                        {/* Gate/Pulse Pattern Controls */}
-                        <div className="space-y-3 pt-2 border-t border-border">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-medium text-text-secondary">Gate Pattern</span>
-                          </div>
-
-                          {/* Gate Pattern Selector */}
-                          <div className="flex flex-wrap gap-1">
-                            {GATE_OPTIONS.map((opt) => (
-                              <button
-                                key={opt.value}
-                                onClick={() => handleGateChange(opt.value)}
-                                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                                  (inputSource.gatePattern || 'continuous') === opt.value
-                                    ? 'bg-accent text-white'
-                                    : 'bg-bg-primary text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
-                                }`}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-
-                          {/* Rate and Duty Controls (only for non-continuous patterns) */}
-                          {inputSource.gatePattern && inputSource.gatePattern !== 'continuous' && (
-                            <div className="space-y-3">
-                              {/* Rate Control */}
-                              <div className="space-y-1.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs text-text-muted">
-                                    {GATE_OPTIONS.find(o => o.value === inputSource.gatePattern)?.rateLabel || 'Rate'}
-                                  </span>
-                                  <span className="text-xs font-medium text-accent">
-                                    {inputSource.gatePattern === 'pulse'
-                                      ? `${(inputSource.gateRate || 2).toFixed(1)} Hz`
-                                      : `${Math.round(inputSource.gateRate || 120)} BPM`}
-                                  </span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min={inputSource.gatePattern === 'pulse' ? 0.1 : 40}
-                                  max={inputSource.gatePattern === 'pulse' ? 20 : 240}
-                                  step={inputSource.gatePattern === 'pulse' ? 0.1 : 1}
-                                  value={inputSource.gateRate || (inputSource.gatePattern === 'pulse' ? 2 : 120)}
-                                  onChange={(e) => handleGateChange(
-                                    inputSource.gatePattern!,
-                                    Number(e.target.value),
-                                    inputSource.gateDuty
-                                  )}
-                                  className="w-full h-2 bg-bg-tertiary rounded-lg appearance-none cursor-pointer accent-accent"
-                                />
-                              </div>
-
-                              {/* Duty Cycle Control */}
-                              <div className="space-y-1.5">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs text-text-muted">Duty Cycle</span>
-                                  <span className="text-xs font-medium text-accent">
-                                    {Math.round((inputSource.gateDuty || 0.5) * 100)}%
-                                  </span>
-                                </div>
-                                <input
-                                  type="range"
-                                  min={0.05}
-                                  max={0.95}
-                                  step={0.05}
-                                  value={inputSource.gateDuty || 0.5}
-                                  onChange={(e) => handleGateChange(
-                                    inputSource.gatePattern!,
-                                    inputSource.gateRate,
-                                    Number(e.target.value)
-                                  )}
-                                  className="w-full h-2 bg-bg-tertiary rounded-lg appearance-none cursor-pointer accent-accent"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Transport Controls */}
-                        <div className="pt-2 border-t border-border">
-                          <div className="flex items-center gap-2">
-                            {/* Play/Stop button */}
-                            <button
-                              onClick={handleTogglePlaying}
-                              disabled={!engineInitialized}
-                              className={`p-2 rounded-lg transition-all duration-200 ${
-                                !engineInitialized
-                                  ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
-                                  : isPlaying
-                                    ? 'bg-error text-white hover:bg-error/90'
-                                    : 'bg-accent text-white hover:bg-accent-hover'
-                              }`}
-                              title={isPlaying ? 'Stop' : 'Play'}
-                            >
-                              {isPlaying ? (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                  <rect x="6" y="4" width="4" height="16" rx="1" />
-                                  <rect x="14" y="4" width="4" height="16" rx="1" />
-                                </svg>
-                              ) : (
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M8 5.14v14l11-7-11-7z" />
-                                </svg>
-                              )}
-                            </button>
-                            {/* Loop toggle */}
-                            <button
-                              onClick={() => handleLoopingChange(!isLooping)}
-                              className={`p-2 rounded-lg border transition-colors ${
-                                isLooping
-                                  ? 'bg-accent/10 border-accent/30 text-accent'
-                                  : 'bg-bg-tertiary border-border text-text-muted hover:text-text-primary hover:border-border-hover'
-                              }`}
-                              title={isLooping ? 'Looping enabled' : 'Looping disabled'}
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
-                            </button>
-                            <span className="flex-1 text-xs text-text-muted">Test Signal</span>
-                          </div>
-                        </div>
-                      </div>
+                      <SignalInputControls onPlay={handleTogglePlaying} />
                     )}
 
                     {/* Live Input Controls */}
                     {inputSource.type === 'live' && (
                       <LiveInputControls
-                        engineInitialized={engineInitialized}
-                        isPlaying={isPlaying}
                         onPlay={handleTogglePlaying}
-                        animatedInputLevels={animatedInputLevels}
-                        displayInputDb={displayInputDb}
+                        isOpen={isOpen}
                       />
                     )}
                   </>
@@ -1310,48 +691,7 @@ export function PreviewPanel() {
                   </svg>
                 )}
                 {!collapsedSections.output && (
-                <div className="space-y-3 pt-1.5">
-                  {/* Master Volume */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                        </svg>
-                        <span className="text-xs text-text-muted font-medium">Master Volume</span>
-                      </div>
-                      <span className="text-xs text-accent font-medium tabular-nums">
-                        {Math.round(masterVolume * 100)}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={masterVolume}
-                      onChange={(e) => handleMasterVolumeChange(Number(e.target.value))}
-                      className="w-full h-2 bg-bg-tertiary rounded-lg appearance-none cursor-pointer accent-accent"
-                    />
-                  </div>
-
-                  <LevelMeters
-                    animatedLevels={animatedLevels}
-                    metering={{ leftDb: metering.leftDb, rightDb: metering.rightDb }}
-                    displayDb={displayDb}
-                    clipHold={clipHold}
-                  />
-                  <SpectrumAnalyzer
-                    animatedSpectrum={animatedSpectrum}
-                    showSpectrum={showSpectrum}
-                    onToggle={() => setShowSpectrum(!showSpectrum)}
-                  />
-                  <WaveformDisplay
-                    animatedWaveform={animatedWaveform}
-                    showWaveform={showWaveform}
-                    onToggle={() => setShowWaveform(!showWaveform)}
-                  />
-                </div>
+                  <OutputSection isOpen={isOpen} isVisible={!collapsedSections.output} />
                 )}
               </div>
 
