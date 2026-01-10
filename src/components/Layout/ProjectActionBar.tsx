@@ -52,6 +52,12 @@ export function ProjectActionBar({
   // === LOCAL STATE (isolated from parent) ===
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [lastBuildError, setLastBuildError] = useState<string | null>(null);
+  // Track failed builds per-project to prevent infinite auto-build loops
+  // Scoped by projectPath so switching projects preserves the failed version info
+  const [lastFailedBuild, setLastFailedBuild] = useState<{
+    projectPath: string;
+    version: number;
+  } | null>(null);
   const quickActionsRef = useRef<HTMLDivElement>(null);
 
   // === REACTIVE STATE (with selectors) ===
@@ -88,7 +94,8 @@ export function ProjectActionBar({
     pendingBuildVersion.version !== currentPluginVersion;
   const buildHighlighted = !pluginAvailable || needsWebviewRebuild || hasNewVersionFromClaude;
 
-  // Clear error when project changes
+  // Reset error message when project changes (it's project-specific text)
+  // Note: lastFailedBuild and pendingBuildVersion are NOT reset - they're scoped by projectPath
   useEffect(() => {
     setLastBuildError(null);
   }, [project.path]);
@@ -125,17 +132,19 @@ export function ProjectActionBar({
     clear();
     setActive(true);
 
-    // Get current version for this project
-    let version = 1;
+    // Get current version for this project (0 = no Claude commits yet)
+    let version = 0;
     try {
       version = await invoke<number>('get_current_version', {
         projectPath: project.path,
       });
     } catch {
-      // Default to v1 if we can't get version
+      // Default to v0 if we can't get version (pre-Claude state)
     }
 
-    addLine(`> Building ${project.name} (v${version})...`);
+    // Use v1 minimum for display/output folder (v0 is internal "pre-Claude" state)
+    const buildVersion = Math.max(version, 1);
+    addLine(`> Building ${project.name} (v${buildVersion})...`);
     addLine('');
 
     // Listen for build stream events
@@ -152,13 +161,17 @@ export function ProjectActionBar({
       const folderName = getFolderName(project.path);
       const result = await invoke<BuildResult>('build_project', {
         projectName: folderName,
-        version,
+        version: buildVersion,
       });
 
       if (result.success) {
         addLine('');
         addLine('Build successful!');
         setLastBuildError(null);
+        // Clear failed build for this project on success
+        if (lastFailedBuild?.projectPath === project.path) {
+          setLastFailedBuild(null);
+        }
         // Clear pending build version since we just built
         setPendingBuildVersion(null);
         onBuildComplete();
@@ -171,6 +184,8 @@ export function ProjectActionBar({
         addLine('');
         addLine(`Build failed: ${errorMsg}`);
         setLastBuildError(errorMsg);
+        // Track this version as failed to prevent auto-build loops (scoped by project)
+        setLastFailedBuild({ projectPath: project.path, version });
         addToast({
           type: 'error',
           message: 'Build failed. Check output for details.',
@@ -198,7 +213,7 @@ export function ProjectActionBar({
       addLine('');
       addLine('[Done]');
     }
-  }, [project, buildDisabled, addLine, clear, setActive, setBuildingPath, clearBuildingIfMatch, addToast, queueMessage, onBuildComplete]);
+  }, [project, buildDisabled, addLine, clear, setActive, setBuildingPath, clearBuildingIfMatch, addToast, queueMessage, onBuildComplete, lastFailedBuild]);
 
   const handleFixError = useCallback(() => {
     if (!lastBuildError) return;
@@ -221,10 +236,36 @@ export function ProjectActionBar({
   const handleBuildRef = useRef(handleBuild);
   handleBuildRef.current = handleBuild;
 
+  // Clear failed build when a new pending version comes in for THIS project (Claude made new changes)
+  useEffect(() => {
+    if (
+      pendingBuildVersion &&
+      pendingBuildVersion.projectPath === project.path &&
+      lastFailedBuild?.projectPath === project.path &&
+      pendingBuildVersion.version !== lastFailedBuild.version
+    ) {
+      setLastFailedBuild(null);
+    }
+  }, [pendingBuildVersion, lastFailedBuild, project.path]);
+
+  // Check if this project's version already failed
+  // Check against BOTH currentPluginVersion and pendingBuildVersion to handle:
+  // - Fresh projects with no pendingBuildVersion (manual build fails)
+  // - Race condition when currentPluginVersion is temporarily reset to 0 on project switch
+  const thisProjectVersionFailed =
+    lastFailedBuild?.projectPath === project.path &&
+    (
+      lastFailedBuild.version === currentPluginVersion ||
+      (pendingBuildVersion?.projectPath === project.path &&
+       lastFailedBuild.version === pendingBuildVersion.version)
+    );
+
   useEffect(() => {
     if (!autoBuildEnabled) return;
     if (buildDisabled) return;
     if (!buildHighlighted) return; // Only build when build is needed
+    // Don't auto-build if this version already failed (prevents infinite loops)
+    if (thisProjectVersionFailed) return;
 
     // Small delay to avoid triggering immediately on mount
     const timeoutId = setTimeout(() => {
@@ -232,7 +273,7 @@ export function ProjectActionBar({
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [autoBuildEnabled, buildDisabled, buildHighlighted]);
+  }, [autoBuildEnabled, buildDisabled, buildHighlighted, thisProjectVersionFailed]);
 
   return (
     <div className="flex items-center gap-2">

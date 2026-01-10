@@ -94,7 +94,11 @@ pub async fn publish_to_daw(
     let mut copied = Vec::new();
     let mut errors = Vec::new();
 
-    log_message("INFO", "publish", &format!("Starting publish for {} v{}", project_name, version));
+    // Map version 0 (no Claude commits) to v1 for filesystem lookups
+    // Fresh projects build to v1, but get_current_version returns 0
+    let folder_version = version.max(1);
+
+    log_message("INFO", "publish", &format!("Starting publish for {} v{} (folder: v{})", project_name, version, folder_version));
     log_message("DEBUG", "publish", &format!("Base output path: {:?}", base_output_path));
 
     // Convert project name to snake_case for matching
@@ -104,7 +108,7 @@ pub async fn publish_to_daw(
     // Use versioned output folder: output/{project_name}/v{version}/
     let output_path = base_output_path
         .join(&project_name)
-        .join(format!("v{}", version));
+        .join(format!("v{}", folder_version));
 
     log_message("DEBUG", "publish", &format!("Looking in output path: {:?}", output_path));
 
@@ -253,10 +257,13 @@ pub async fn check_available_formats(
     let base_output_path = get_output_path();
     let snake_name = project_name.replace('-', "_");
 
+    // Map version 0 (no Claude commits) to v1 for filesystem lookups
+    let folder_version = version.max(1);
+
     // Use versioned output folder: output/{project_name}/v{version}/
     let output_path = base_output_path
         .join(&project_name)
-        .join(format!("v{}", version));
+        .join(format!("v{}", folder_version));
 
     let vst3_bundle = output_path.join(format!("{}.vst3", snake_name));
     let clap_bundle = output_path.join(format!("{}.clap", snake_name));
@@ -290,10 +297,13 @@ pub async fn package_plugins(
     let base_output_path = get_output_path();
     let snake_name = project_name.replace('-', "_");
 
+    // Map version 0 (no Claude commits) to v1 for filesystem lookups
+    let folder_version = version.max(1);
+
     // Use versioned output folder: output/{project_name}/v{version}/
     let output_path = base_output_path
         .join(&project_name)
-        .join(format!("v{}", version));
+        .join(format!("v{}", folder_version));
 
     let vst3_bundle = output_path.join(format!("{}.vst3", snake_name));
     let clap_bundle = output_path.join(format!("{}.clap", snake_name));
@@ -305,8 +315,8 @@ pub async fn package_plugins(
         return Err("No built plugins found. Build the project first.".to_string());
     }
 
-    // Create zip file path
-    let zip_filename = format!("{}_v{}.zip", project_name, version);
+    // Create zip file path (use folder_version for accurate naming)
+    let zip_filename = format!("{}_v{}.zip", project_name, folder_version);
     let zip_path = if destination.ends_with(".zip") {
         destination.clone()
     } else {

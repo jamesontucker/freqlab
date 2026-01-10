@@ -76,9 +76,11 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
       setFormats(null);
 
       // First get the current version, then check available formats
+      // Map version 0 (fresh project) to 1 for display and filesystem operations
       invoke<number>('get_current_version', { projectPath: project.path })
         .then((version) => {
-          setCurrentVersion(version);
+          const displayVersion = Math.max(version, 1);
+          setCurrentVersion(displayVersion);
           // Use folder name from path, not display name, for filesystem operations
           const folderName = getFolderName(project.path);
           return invoke<AvailableFormats>('check_available_formats', {

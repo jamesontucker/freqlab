@@ -225,6 +225,7 @@ export function PreviewPanel() {
       setLoadedPlugin({ status: 'unloaded' });
       usePreviewStore.getState().setEditorOpen(false);
       setPluginAvailable(false);
+      setCurrentPluginVersion(0);
     }
   }, [activeProject, setLoadedPlugin, setPluginAvailable]);
 
@@ -234,6 +235,10 @@ export function PreviewPanel() {
     if (!activeProject) {
       return;
     }
+
+    // Reset version immediately to prevent stale values during async fetch
+    setCurrentPluginVersion(0);
+    setPluginAvailable(false);
 
     const checkPluginAvailability = async () => {
       try {
@@ -284,9 +289,9 @@ export function PreviewPanel() {
   }, [isOpen, engineInitialized, loadedPlugin.status, setEditorOpen]);
 
   // Listen for build completion: update plugin availability AND trigger hot reload if active
-  // Combined into single listener to avoid duplicate event handlers
+  // Runs regardless of panel open state so hot reload works when plugin is launched from header
   useEffect(() => {
-    if (!isOpen || !activeProject) return;
+    if (!activeProject) return;
 
     const handleBuildComplete = async (event: { payload: BuildStreamEvent }) => {
       const data = event.payload;
@@ -342,18 +347,19 @@ export function PreviewPanel() {
           const reloadFolderName = getFolderName(activeProject.path);
           await previewApi.pluginReload(reloadFolderName, version);
 
+          // Update state after reload (event listeners may not be active when panel is closed)
+          const newState = await previewApi.pluginGetState();
+          setLoadedPlugin(newState);
+
           // Re-open editor if it was open before
           // Position is stored at engine level, so it will restore to same position
-          if (editorWasOpen) {
+          if (editorWasOpen && newState.status === 'active') {
             setTimeout(async () => {
               try {
-                const state = await previewApi.pluginGetState();
-                if (state.status === 'active') {
-                  const hasEditor = await previewApi.pluginHasEditor();
-                  if (hasEditor) {
-                    await previewApi.pluginOpenEditor();
-                    setEditorOpen(true);
-                  }
+                const hasEditor = await previewApi.pluginHasEditor();
+                if (hasEditor) {
+                  await previewApi.pluginOpenEditor();
+                  setEditorOpen(true);
                 }
               } catch (err) {
                 console.error('Failed to re-open editor after hot reload:', err);
@@ -379,7 +385,7 @@ export function PreviewPanel() {
     return () => {
       cleanup?.();
     };
-  }, [isOpen, activeProject, setLoadedPlugin]);
+  }, [activeProject, setLoadedPlugin]);
 
   // Handle project switching - stop playback and set webview flag
   // Plugin unloading is handled by PluginViewerToggle component
@@ -426,57 +432,6 @@ export function PreviewPanel() {
       setWebviewNeedsFreshBuild(false);
     }
   }, [activeProject?.name, activeProject?.uiFramework, setPlaying, setLoadedPlugin, setWebviewNeedsFreshBuild, setEditorOpen]);
-
-  // Listen for build completion even when panel is closed to update plugin availability
-  // This ensures the Plugin Viewer toggle in the header updates when builds complete
-  useEffect(() => {
-    // Only need this listener when panel is closed - the main listener handles open state
-    if (isOpen) return;
-    if (!activeProject) return;
-
-    const handleBuildComplete = async (event: { payload: BuildStreamEvent }) => {
-      const data = event.payload;
-      if (data.type !== 'done' || !data.success) return;
-
-      try {
-        // Get the current version
-        const version = await invoke<number>('get_current_version', {
-          projectPath: activeProject.path,
-        });
-
-        // Check if plugin file exists
-        const folderName = getFolderName(activeProject.path);
-        const pluginPath = await previewApi.getProjectPluginPath(folderName, version);
-
-        if (pluginPath) {
-          // Update plugin availability in store
-          setPluginAvailable(true);
-          setCurrentPluginVersion(version);
-        }
-
-        // Clear webview fresh build flag for webview projects
-        if (activeProject.uiFramework === 'webview') {
-          setWebviewNeedsFreshBuild(false);
-        }
-      } catch (err) {
-        console.error('Build completion handler (panel closed) failed:', err);
-      }
-    };
-
-    const setupListener = async () => {
-      const unlisten = await listen<BuildStreamEvent>('build-stream', handleBuildComplete);
-      return unlisten;
-    };
-
-    let cleanup: (() => void) | undefined;
-    setupListener().then(unlisten => {
-      cleanup = unlisten;
-    });
-
-    return () => {
-      cleanup?.();
-    };
-  }, [isOpen, activeProject, setPluginAvailable, setCurrentPluginVersion, setWebviewNeedsFreshBuild]);
 
   // Handle play/stop
   const handleTogglePlaying = useCallback(async () => {

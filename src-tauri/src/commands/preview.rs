@@ -579,14 +579,18 @@ pub struct PluginInfo {
 }
 
 /// Get the .clap plugin path for a project (based on current version)
+/// Version 0 (no Claude commits) maps to v1 folder for pre-Claude manual builds
 #[tauri::command]
 pub fn get_project_plugin_path(project_name: String, version: u32) -> Result<Option<String>, String> {
+    // Map version 0 (no Claude commits) to v1 for filesystem lookups
+    let folder_version = version.max(1);
+
     let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
     let output_path = std::path::PathBuf::from(home)
         .join("VSTWorkshop")
         .join("output")
         .join(&project_name)
-        .join(format!("v{}", version));
+        .join(format!("v{}", folder_version));
 
     // Look for .clap bundle in the version folder
     if let Ok(entries) = std::fs::read_dir(&output_path) {
