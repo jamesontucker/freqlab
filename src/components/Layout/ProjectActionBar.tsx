@@ -6,6 +6,7 @@ import { useToastStore } from '../../stores/toastStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
+import { useProjectStore } from '../../stores/projectStore';
 import type { ProjectMeta } from '../../types';
 
 interface BuildStreamEvent {
@@ -60,6 +61,8 @@ export function ProjectActionBar({
   );
   const pluginAvailable = usePreviewStore((s) => s.pluginAvailable);
   const webviewNeedsFreshBuild = usePreviewStore((s) => s.webviewNeedsFreshBuild);
+  const autoBuildEnabled = useProjectStore((s) => s.autoBuildPaths.includes(project.path));
+  const setAutoBuild = useProjectStore.getState().setAutoBuild;
 
   // === STABLE ACTION REFERENCES ===
   const addToast = useToastStore.getState().addToast;
@@ -201,6 +204,27 @@ export function ProjectActionBar({
     action();
   }, []);
 
+  const handleToggleAutoBuild = useCallback(() => {
+    setAutoBuild(project.path, !autoBuildEnabled);
+  }, [project.path, autoBuildEnabled, setAutoBuild]);
+
+  // Auto-build effect: trigger build when needed and auto-build is enabled
+  const handleBuildRef = useRef(handleBuild);
+  handleBuildRef.current = handleBuild;
+
+  useEffect(() => {
+    if (!autoBuildEnabled) return;
+    if (buildDisabled) return;
+    if (!buildHighlighted) return; // Only build when build is needed
+
+    // Small delay to avoid triggering immediately on mount
+    const timeoutId = setTimeout(() => {
+      handleBuildRef.current();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [autoBuildEnabled, buildDisabled, buildHighlighted]);
+
   return (
     <div className="flex items-center gap-2">
       {/* Persistent Fix Error button */}
@@ -247,6 +271,28 @@ export function ProjectActionBar({
           </>
         )}
       </button>
+
+      {/* Auto Build toggle */}
+      <button
+        onClick={handleToggleAutoBuild}
+        disabled={anyBuildInProgress}
+        className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg border transition-all duration-200 ${
+          anyBuildInProgress
+            ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
+            : autoBuildEnabled
+              ? 'bg-accent text-white border-accent'
+              : 'bg-bg-tertiary text-text-primary hover:bg-accent/20 hover:text-accent border-border hover:border-accent/30'
+        }`}
+        title={autoBuildEnabled ? 'Auto-build enabled: builds automatically when changes are detected' : 'Enable auto-build to automatically build when changes are detected'}
+      >
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          autoBuildEnabled ? 'bg-white' : 'bg-zinc-500'
+        }`} />
+        Auto Build
+      </button>
+
+      {/* Divider */}
+      <div className="w-px h-6 bg-border" />
 
       {/* Publish button */}
       <button

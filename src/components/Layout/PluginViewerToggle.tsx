@@ -103,9 +103,12 @@ export function PluginViewerToggle() {
     }
   };
 
+  // Derive has_editor safely for dependency tracking
+  const pluginHasEditor = loadedPlugin.status === 'active' && loadedPlugin.has_editor;
+
   // Poll editor status when plugin is active to detect manual window close
   useEffect(() => {
-    if (loadedPlugin.status !== 'active' || !loadedPlugin.has_editor) return;
+    if (loadedPlugin.status !== 'active' || !pluginHasEditor) return;
 
     console.log('[PluginViewerToggle] Starting editor status polling');
     const intervalId = setInterval(async () => {
@@ -125,7 +128,7 @@ export function PluginViewerToggle() {
       console.log('[PluginViewerToggle] Stopping editor status polling');
       clearInterval(intervalId);
     };
-  }, [loadedPlugin.status, loadedPlugin.has_editor, setEditorOpen]);
+  }, [loadedPlugin.status, pluginHasEditor, setEditorOpen]);
 
   // Don't render if no active project
   if (!activeProject) {
@@ -252,7 +255,7 @@ export function PluginViewerToggle() {
       </button>
 
       {/* Reopen button (when active and has editor, but editor is closed) */}
-      {isActive && loadedPlugin.has_editor && !needsFreshBuild && !editorOpen && (
+      {isActive && pluginHasEditor && !needsFreshBuild && !editorOpen && (
         <button
           onClick={handleOpenEditor}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-bg-tertiary text-text-primary hover:bg-accent/20 hover:text-accent border border-border hover:border-accent/30 transition-all duration-200"
