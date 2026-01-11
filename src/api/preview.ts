@@ -195,24 +195,38 @@ export interface MeteringData {
   input_left_db: number;
   /** Right channel input level in dB (-60 to 0) */
   input_right_db: number;
-  /** Spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands */
+  /** Spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands - post-FX output */
   spectrum: number[];
-  /** Left channel waveform display buffer (time-domain samples, -1.0 to 1.0), 512 samples */
+  /** Input spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands - pre-FX input */
+  spectrum_input: number[];
+  /** Left channel waveform display buffer (time-domain samples, -1.0 to 1.0) - post-FX output */
   waveform_left: number[];
-  /** Right channel waveform display buffer (time-domain samples, -1.0 to 1.0), 512 samples */
+  /** Right channel waveform display buffer (time-domain samples, -1.0 to 1.0) - post-FX output */
   waveform_right: number[];
-  /** Left channel peak hold value (0.0 - 1.0, cleared after read) */
+  /** Left channel peak hold value (0.0 - 1.0, cleared after read) - post-FX output */
   waveform_peak_left: number;
-  /** Right channel peak hold value (0.0 - 1.0, cleared after read) */
+  /** Right channel peak hold value (0.0 - 1.0, cleared after read) - post-FX output */
   waveform_peak_right: number;
+  /** Left channel INPUT waveform display buffer (time-domain samples, -1.0 to 1.0) - pre-FX */
+  waveform_input_left: number[];
+  /** Right channel INPUT waveform display buffer (time-domain samples, -1.0 to 1.0) - pre-FX */
+  waveform_input_right: number[];
+  /** Left channel INPUT peak hold value (0.0 - 1.0) - pre-FX */
+  waveform_input_peak_left: number;
+  /** Right channel INPUT peak hold value (0.0 - 1.0) - pre-FX */
+  waveform_input_peak_right: number;
   /** Left channel clipping indicator */
   clipping_left: boolean;
   /** Right channel clipping indicator */
   clipping_right: boolean;
-  /** Stereo imaging positions: [angle, radius] pairs for particle display */
+  /** Stereo imaging positions: [angle, radius] pairs for particle display - post-FX output */
   stereo_positions: [number, number][];
-  /** Stereo correlation coefficient (-1.0 to +1.0) */
+  /** Stereo correlation coefficient (-1.0 to +1.0) - post-FX output */
   stereo_correlation: number;
+  /** INPUT stereo imaging positions: [angle, radius] pairs for particle display - pre-FX */
+  stereo_positions_input: [number, number][];
+  /** INPUT stereo correlation coefficient (-1.0 to +1.0) - pre-FX */
+  stereo_correlation_input: number;
 }
 
 /**

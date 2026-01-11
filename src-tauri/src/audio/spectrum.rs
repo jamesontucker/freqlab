@@ -46,8 +46,8 @@ impl SpectrumAnalyzer {
             .collect();
 
         // Calculate logarithmically spaced band frequencies
-        // Range: 20Hz to 20kHz
-        let min_freq = 20.0f32;
+        // Range: 10Hz to 20kHz (10Hz for sub-bass visibility, can't use 0 on log scale)
+        let min_freq = 10.0f32;
         let max_freq = 20000.0f32.min(sample_rate as f32 / 2.0);
         let log_min = min_freq.ln();
         let log_max = max_freq.ln();
@@ -68,7 +68,7 @@ impl SpectrumAnalyzer {
             write_pos: 0,
             band_magnitudes: [0.0; NUM_BANDS],
             band_frequencies,
-            smoothing: 0.7, // Higher = smoother, slower response
+            smoothing: 0.5, // 0.5 = balanced between responsiveness and smoothness
         }
     }
 
@@ -101,11 +101,14 @@ impl SpectrumAnalyzer {
         let bin_freq = self.sample_rate as f32 / FFT_SIZE as f32;
         let num_bins = self.spectrum_buffer.len();
 
+        // Minimum frequency for first band (matches band_frequencies calculation)
+        let min_freq = 10.0f32;
+
         for band_idx in 0..NUM_BANDS {
             // Get frequency range for this band
             let center_freq = self.band_frequencies[band_idx];
             let (low_freq, high_freq) = if band_idx == 0 {
-                (20.0, (center_freq + self.band_frequencies[1]) / 2.0)
+                (min_freq, (center_freq + self.band_frequencies[1]) / 2.0)
             } else if band_idx == NUM_BANDS - 1 {
                 (
                     (self.band_frequencies[band_idx - 1] + center_freq) / 2.0,
@@ -122,21 +125,21 @@ impl SpectrumAnalyzer {
             let low_bin = ((low_freq / bin_freq) as usize).max(1);
             let high_bin = ((high_freq / bin_freq) as usize).min(num_bins - 1);
 
-            // Sum magnitudes in this range
-            let mut sum = 0.0f32;
-            let mut count = 0;
+            // Find PEAK magnitude in this frequency range (not average)
+            // Peak shows where energy actually is, average gets diluted by empty bins
+            let mut peak_mag = 0.0f32;
             for bin in low_bin..=high_bin {
                 let mag = self.spectrum_buffer[bin].norm();
-                sum += mag;
-                count += 1;
+                if mag > peak_mag {
+                    peak_mag = mag;
+                }
             }
 
-            // Average magnitude
-            let avg_mag = if count > 0 { sum / count as f32 } else { 0.0 };
-
-            // Normalize (rough scaling for visualization)
-            // The scaling factor depends on FFT size and window
-            let normalized = (avg_mag / (FFT_SIZE as f32 / 4.0)).min(1.0);
+            // Normalize using peak magnitude
+            // Scale factor: FFT_SIZE/2 for Hann window normalization, /2 again for amplitude vs magnitude
+            // This should give ~1.0 for a full-scale sine wave at any frequency
+            let scale = (FFT_SIZE as f32) / 4.0;
+            let normalized = peak_mag / scale;
 
             // Apply smoothing
             self.band_magnitudes[band_idx] = self.band_magnitudes[band_idx] * self.smoothing

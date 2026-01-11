@@ -29,6 +29,48 @@ function getFolderName(projectPath: string): string {
   return projectPath.split('/').pop() || '';
 }
 
+// Output Volume Control - styled to match Input/Output sections
+function OutputVolumeControl() {
+  const masterVolume = usePreviewStore((s) => s.masterVolume);
+  const setMasterVolume = usePreviewStore.getState().setMasterVolume;
+
+  const handleVolumeChange = useCallback(async (volume: number) => {
+    setMasterVolume(volume);
+    if (usePreviewStore.getState().engineInitialized) {
+      try {
+        await previewApi.previewSetMasterVolume(volume);
+      } catch (err) {
+        console.error('Failed to set master volume:', err);
+      }
+    }
+  }, [setMasterVolume]);
+
+  return (
+    <div className="space-y-1.5 pb-3 border-b border-border mb-2" title="Preview output volume - controls how loud audio plays through your speakers">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+          <span className="text-xs text-text-muted font-medium">Output Volume</span>
+        </div>
+        <span className="text-xs text-text-muted font-medium tabular-nums">
+          {Math.round(masterVolume * 100)}%
+        </span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={masterVolume}
+        onChange={(e) => handleVolumeChange(Number(e.target.value))}
+        className="w-full h-2 bg-bg-tertiary rounded-full appearance-none cursor-pointer accent-accent"
+      />
+    </div>
+  );
+}
+
 export function PreviewPanel() {
   // Use selectors to prevent unnecessary re-renders
   // Group 1: Panel visibility (rarely changes)
@@ -40,10 +82,7 @@ export function PreviewPanel() {
   // Group 3: Input source (changes on user interaction)
   const inputSource = usePreviewStore((s) => s.inputSource);
 
-  // Group 4: Build status (changes on build)
-  const buildStatus = usePreviewStore((s) => s.buildStatus);
-
-  // Group 5: Plugin state (changes on plugin load/unload)
+  // Group 4: Plugin state (changes on plugin load/unload)
   const { loadedPlugin, webviewNeedsFreshBuild, engineInitialized } = usePreviewStore(
     useShallow((s) => ({
       loadedPlugin: s.loadedPlugin,
@@ -61,7 +100,6 @@ export function PreviewPanel() {
     setOpen,
     setPlaying,
     setInputSource,
-    setBuildStatus,
     setMetering,
     setDemoSamples,
     setLoadedPlugin,
@@ -152,14 +190,25 @@ export function PreviewPanel() {
                 inputLeftDb: data.input_left_db,
                 inputRightDb: data.input_right_db,
                 spectrum: data.spectrum,
+                spectrumInput: data.spectrum_input,
+                // Output waveform (post-FX)
                 waveformLeft: data.waveform_left,
                 waveformRight: data.waveform_right,
                 waveformPeakLeft: data.waveform_peak_left,
                 waveformPeakRight: data.waveform_peak_right,
+                // Input waveform (pre-FX)
+                waveformInputLeft: data.waveform_input_left,
+                waveformInputRight: data.waveform_input_right,
+                waveformInputPeakLeft: data.waveform_input_peak_left,
+                waveformInputPeakRight: data.waveform_input_peak_right,
                 clippingLeft: data.clipping_left,
                 clippingRight: data.clipping_right,
+                // Output stereo (post-FX)
                 stereoPositions: data.stereo_positions,
                 stereoCorrelation: data.stereo_correlation,
+                // Input stereo (pre-FX)
+                stereoPositionsInput: data.stereo_positions_input,
+                stereoCorrelationInput: data.stereo_correlation_input,
               });
             });
           }),
@@ -337,7 +386,6 @@ export function PreviewPanel() {
         // Always update plugin availability state
         setPluginAvailable(true);
         setCurrentPluginVersion(version);
-        setBuildStatus('ready');
 
         // For webview projects, check if this was a "fresh build" (first build after switching projects)
         // If so, DON'T do hot reload - require manual toggle instead
@@ -427,14 +475,13 @@ export function PreviewPanel() {
     // Only act on actual project changes, not every render
     if (!projectChanged) return;
 
-    // Stop playback on project switch
-    if (isPlayingRef.current) {
-      setPlaying(false);
-      if (engineInitializedRef.current) {
-        previewApi.previewStop().catch(err => {
-          console.error('Failed to stop playback on project switch:', err);
-        });
-      }
+    // Always stop playback on project switch (unconditionally, regardless of React state)
+    // This ensures audio stops even if isPlayingRef is out of sync
+    setPlaying(false);
+    if (engineInitializedRef.current) {
+      previewApi.previewStop().catch(err => {
+        console.error('Failed to stop playback on project switch:', err);
+      });
     }
 
     // Reset plugin state - actual unloading handled by PluginViewerToggle
@@ -611,6 +658,9 @@ export function PreviewPanel() {
             </div>
           )}
 
+          {/* Output Volume - always visible at top when engine is initialized */}
+          {engineInitialized && <OutputVolumeControl />}
+
           {activeProject && (
             <>
               {/* Input Source Section */}
@@ -708,102 +758,38 @@ export function PreviewPanel() {
                 </div>
               )}
 
-              {/* Output Meter & Spectrum */}
+              {/* Analysis Section (Level Meters, Spectrum, Waveform, Stereo) */}
               <div className="border-b border-border pb-2">
-                {renderSectionHeader('output', 'Output',
+                {renderSectionHeader('output', 'Analysis',
                   <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
                   </svg>
                 )}
                 {!collapsedSections.output && (
-                  <OutputSection isOpen={isOpen} isVisible={!collapsedSections.output} />
+                  <OutputSection isOpen={isOpen} isVisible={!collapsedSections.output} pluginType={effectivePluginType} />
                 )}
               </div>
 
-              {/* Build Status */}
-              <div className="pb-2">
-                {renderSectionHeader('build', 'Build Status',
-                  <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
-                  </svg>
-                )}
-                {!collapsedSections.build && (
-                <div className="space-y-3 pt-1.5">
-                {/* Status indicator */}
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-text-secondary">Status:</span>
-                  <span className={`flex items-center gap-1.5 ${
-                    buildStatus === 'ready' ? 'text-green-400' :
-                    buildStatus === 'building' ? 'text-amber-400' :
-                    buildStatus === 'needs_rebuild' ? 'text-amber-400' :
-                    buildStatus === 'error' ? 'text-error' :
-                    'text-text-muted'
-                  }`}>
-                    {buildStatus === 'building' && (
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                    )}
-                    {buildStatus === 'ready' && (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                    {buildStatus === 'needs_rebuild' && (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                    )}
-                    {buildStatus === 'error' && (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    )}
-                    {buildStatus === 'idle' ? 'Idle' :
-                     buildStatus === 'building' ? 'Building...' :
-                     buildStatus === 'ready' ? 'Ready' :
-                     buildStatus === 'needs_rebuild' ? 'Needs Rebuild' :
-                     'Error'}
-                  </span>
-                </div>
-                {/* Needs rebuild message */}
-                {buildStatus === 'needs_rebuild' && (
-                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
-                    <div className="flex items-start gap-2">
-                      <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span>Source code changed. Build to update the plugin.</span>
-                    </div>
-                  </div>
-                )}
-                </div>
-                )}
-              </div>
-
-              {/* Engine Status */}
-              <div className="p-4 bg-bg-tertiary rounded-lg border border-border">
-                <div className="flex items-start gap-3">
-                  <div className={`w-2 h-2 rounded-full mt-1.5 ${
-                    engineInitialized ? 'bg-green-400' : engineError ? 'bg-error' : 'bg-amber-400 animate-pulse'
-                  }`} />
-                  <div>
-                    <p className="text-sm text-text-secondary">
-                      {engineInitialized
-                        ? 'Audio engine ready'
-                        : engineError
+              {/* Engine Status - only show when initializing or on error */}
+              {!engineInitialized && (
+                <div className="p-4 bg-bg-tertiary rounded-lg border border-border">
+                  <div className="flex items-start gap-3">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 ${
+                      engineError ? 'bg-error' : 'bg-amber-400 animate-pulse'
+                    }`} />
+                    <div>
+                      <p className="text-sm text-text-secondary">
+                        {engineError
                           ? 'Audio engine failed to initialize'
                           : 'Initializing audio engine...'}
-                    </p>
-                    <p className="text-xs text-text-muted mt-1">
-                      {engineInitialized
-                        ? 'Test signals and CLAP plugin hosting available.'
-                        : 'Setting up audio output...'}
-                    </p>
+                      </p>
+                      <p className="text-xs text-text-muted mt-1">
+                        Setting up audio output...
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>

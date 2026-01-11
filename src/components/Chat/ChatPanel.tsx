@@ -671,8 +671,6 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       setActiveVersion(state.activeVersion);
       addLine(`[${direction === 'Reverting' ? 'Reverted' : 'Restored'} to v${version}]`);
 
-      // Mark that preview needs a fresh build (source code changed but plugin binary is stale)
-      usePreviewStore.getState().setBuildStatus('needs_rebuild');
       // Clear any pending build version since we've changed versions manually
       usePreviewStore.getState().setPendingBuildVersion(null);
 

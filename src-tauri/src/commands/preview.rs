@@ -41,27 +41,41 @@ pub struct MeteringData {
     pub input_left_db: f32,
     /// Right channel input level in dB (-60 to 0)
     pub input_right_db: f32,
-    /// Spectrum analyzer band magnitudes (0.0 - 1.0)
+    /// Spectrum analyzer band magnitudes (0.0 - 1.0) - post-FX output
     pub spectrum: Vec<f32>,
-    /// Left channel waveform display buffer (time-domain samples, -1.0 to 1.0)
+    /// Input spectrum analyzer band magnitudes (0.0 - 1.0) - pre-FX input
+    pub spectrum_input: Vec<f32>,
+    /// Left channel waveform display buffer (time-domain samples, -1.0 to 1.0) - post-FX output
     pub waveform_left: Vec<f32>,
-    /// Right channel waveform display buffer (time-domain samples, -1.0 to 1.0)
+    /// Right channel waveform display buffer (time-domain samples, -1.0 to 1.0) - post-FX output
     pub waveform_right: Vec<f32>,
-    /// Left channel peak hold value (0.0 - 1.0, cleared after read)
+    /// Left channel peak hold value (0.0 - 1.0, cleared after read) - post-FX output
     pub waveform_peak_left: f32,
-    /// Right channel peak hold value (0.0 - 1.0, cleared after read)
+    /// Right channel peak hold value (0.0 - 1.0, cleared after read) - post-FX output
     pub waveform_peak_right: f32,
+    /// Left channel INPUT waveform display buffer (time-domain samples, -1.0 to 1.0) - pre-FX
+    pub waveform_input_left: Vec<f32>,
+    /// Right channel INPUT waveform display buffer (time-domain samples, -1.0 to 1.0) - pre-FX
+    pub waveform_input_right: Vec<f32>,
+    /// Left channel INPUT peak hold value (0.0 - 1.0, cleared after read) - pre-FX
+    pub waveform_input_peak_left: f32,
+    /// Right channel INPUT peak hold value (0.0 - 1.0, cleared after read) - pre-FX
+    pub waveform_input_peak_right: f32,
     /// Left channel clipping indicator
     pub clipping_left: bool,
     /// Right channel clipping indicator
     pub clipping_right: bool,
-    /// Stereo imaging positions: Vec of [angle, radius] pairs
+    /// Stereo imaging positions: Vec of [angle, radius] pairs - post-FX output
     /// angle: 0 = full left, PI/2 = center, PI = full right
     /// radius: 0-1 based on amplitude
     pub stereo_positions: Vec<[f32; 2]>,
-    /// Stereo correlation coefficient (-1.0 to +1.0)
+    /// Stereo correlation coefficient (-1.0 to +1.0) - post-FX output
     /// +1 = mono/in-phase, 0 = uncorrelated, -1 = out of phase
     pub stereo_correlation: f32,
+    /// INPUT stereo imaging positions: Vec of [angle, radius] pairs - pre-FX
+    pub stereo_positions_input: Vec<[f32; 2]>,
+    /// INPUT stereo correlation coefficient (-1.0 to +1.0) - pre-FX
+    pub stereo_correlation_input: f32,
 }
 
 /// Convert linear level to dB
@@ -432,14 +446,27 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                 let (left, right) = handle.get_output_levels();
                 let (input_left, input_right) = handle.get_input_levels();
                 let spectrum = handle.get_spectrum_data();
+                let spectrum_input = handle.get_spectrum_input_data();
+                // Output waveform (post-FX)
                 let (waveform_left, waveform_right) = handle.get_waveform_data();
                 let (waveform_peak_left, waveform_peak_right) = handle.get_waveform_peaks();
+                // Input waveform (pre-FX)
+                let (waveform_input_left, waveform_input_right) = handle.get_waveform_input_data();
+                let (waveform_input_peak_left, waveform_input_peak_right) = handle.get_waveform_input_peaks();
                 let (clipping_left, clipping_right) = handle.get_clipping();
+                // Output stereo (post-FX)
                 let stereo_positions_tuples = handle.get_stereo_positions();
                 let stereo_correlation = handle.get_stereo_correlation();
+                // Input stereo (pre-FX)
+                let stereo_positions_input_tuples = handle.get_stereo_positions_input();
+                let stereo_correlation_input = handle.get_stereo_correlation_input();
 
                 // Convert stereo positions from tuples to arrays for JSON serialization
                 let stereo_positions: Vec<[f32; 2]> = stereo_positions_tuples
+                    .into_iter()
+                    .map(|(angle, radius)| [angle, radius])
+                    .collect();
+                let stereo_positions_input: Vec<[f32; 2]> = stereo_positions_input_tuples
                     .into_iter()
                     .map(|(angle, radius)| [angle, radius])
                     .collect();
@@ -455,14 +482,21 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                     input_left_db: level_to_db(input_left),
                     input_right_db: level_to_db(input_right),
                     spectrum: spectrum.to_vec(),
+                    spectrum_input: spectrum_input.to_vec(),
                     waveform_left,
                     waveform_right,
                     waveform_peak_left,
                     waveform_peak_right,
+                    waveform_input_left,
+                    waveform_input_right,
+                    waveform_input_peak_left,
+                    waveform_input_peak_right,
                     clipping_left,
                     clipping_right,
                     stereo_positions,
                     stereo_correlation,
+                    stereo_positions_input,
+                    stereo_correlation_input,
                 };
                 let _ = app_handle.emit("preview-metering", &metering);
             } else {

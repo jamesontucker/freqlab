@@ -1,6 +1,5 @@
-import { memo, useState, useEffect, useRef, useCallback } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import { usePreviewStore } from '../../stores/previewStore';
-import * as previewApi from '../../api/preview';
 import { LevelMeters } from './LevelMeters';
 import { SpectrumAnalyzer } from './SpectrumAnalyzer';
 import { WaveformDisplay } from './WaveformDisplay';
@@ -9,41 +8,65 @@ import { StereoImager } from './StereoImager';
 interface OutputSectionProps {
   isOpen: boolean;
   isVisible: boolean; // Whether the section is expanded (not collapsed)
+  pluginType: 'effect' | 'instrument'; // Plugin type - instruments don't have audio input
 }
 
-export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: OutputSectionProps) {
-  // Subscribe only to master volume
-  const masterVolume = usePreviewStore((s) => s.masterVolume);
+export const OutputSection = memo(function OutputSection({ isOpen, isVisible, pluginType }: OutputSectionProps) {
+  // Instruments use MIDI input, not audio - hide input meters/analysis
+  const isInstrument = pluginType === 'instrument';
 
   // Subscribe to clipping state for the clip hold indicator
   const clippingLeft = usePreviewStore((s) => s.metering.clippingLeft);
   const clippingRight = usePreviewStore((s) => s.metering.clippingRight);
 
-  // Get setter via getState to avoid re-renders
-  const setMasterVolume = usePreviewStore.getState().setMasterVolume;
-
   // Local UI state
   const [showSpectrum, setShowSpectrum] = useState(false);
+  const [showPrePost, setShowPrePost] = useState(false);  // Pre/post spectrum comparison toggle
+  const [showPeaks, setShowPeaks] = useState(false);  // Peak hold markers on spectrum
+  const [showInputMeters, setShowInputMeters] = useState(false);  // Toggleable input level meters
+  const [showOutputMeters, setShowOutputMeters] = useState(true);  // Toggleable output level meters (on by default)
   const [showWaveform, setShowWaveform] = useState(false);
   const [showStereoImager, setShowStereoImager] = useState(false);
 
-  // Ref for animation loop access (to avoid stale closures)
+  // Refs for animation loop access (to avoid stale closures)
   const showSpectrumRef = useRef(showSpectrum);
   showSpectrumRef.current = showSpectrum;
+  const showPrePostRef = useRef(showPrePost);
+  showPrePostRef.current = showPrePost;
+  const showPeaksRef = useRef(showPeaks);
+  showPeaksRef.current = showPeaks;
+  const showInputMetersRef = useRef(showInputMeters);
+  showInputMetersRef.current = showInputMeters;
+
+  // Reset spectrum peaks when disabled so stale peaks don't appear when re-enabled
+  useEffect(() => {
+    if (!showPeaks) {
+      peakSpectrumRef.current = new Array(32).fill(0);
+    }
+  }, [showPeaks]);
 
   // Debounced dB values for smoother display (text only)
   const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
+  const [displayInputDb, setDisplayInputDb] = useState({ left: -60, right: -60 });
   const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
+  const dbInputUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
 
   // Animated spectrum and levels for buttery smooth 60fps rendering
   // Note: Waveform now handles its own animation internally
   const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
+  const animatedSpectrumInputRef = useRef<number[]>(new Array(32).fill(0));  // Pre-FX input spectrum
+  const peakSpectrumRef = useRef<number[]>(new Array(32).fill(0));  // Peak hold values
+  const peakDecayCounterRef = useRef(0);  // Counter for peak decay timing
   const animatedLevelsRef = useRef({ left: 0, right: 0 });
+  const animatedInputLevelsRef = useRef({ left: 0, right: 0 });  // Pre-FX input levels
 
   // Single state object for all animations - triggers one re-render per frame
   const [animationState, setAnimationState] = useState({
     spectrum: new Array(32).fill(0) as number[],
+    spectrumInput: new Array(32).fill(0) as number[],  // Pre-FX input spectrum
+    peakSpectrum: new Array(32).fill(0) as number[],  // Peak hold values
     levels: { left: 0, right: 0 },
+    inputLevels: { left: 0, right: 0 },  // Pre-FX input levels
   });
 
   const rafIdRef = useRef<number | null>(null);
@@ -59,6 +82,8 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
 
     const interval = setInterval(() => {
       const metering = usePreviewStore.getState().metering;
+
+      // Output levels (post-FX)
       const newLeft = metering.leftDb;
       const newRight = metering.rightDb;
       const currentLeft = dbUpdateRef.current.left;
@@ -71,6 +96,22 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
       if (leftDiff > 1 || rightDiff > 1 || newLeft < currentLeft - 3 || newRight < currentRight - 3) {
         dbUpdateRef.current = { left: newLeft, right: newRight };
         setDisplayDb({ left: newLeft, right: newRight });
+      }
+
+      // Input levels (pre-FX) - only update when input meters visible
+      if (showInputMetersRef.current) {
+        const newInputLeft = metering.inputLeftDb;
+        const newInputRight = metering.inputRightDb;
+        const currentInputLeft = dbInputUpdateRef.current.left;
+        const currentInputRight = dbInputUpdateRef.current.right;
+
+        const inputLeftDiff = Math.abs(newInputLeft - currentInputLeft);
+        const inputRightDiff = Math.abs(newInputRight - currentInputRight);
+
+        if (inputLeftDiff > 1 || inputRightDiff > 1 || newInputLeft < currentInputLeft - 3 || newInputRight < currentInputRight - 3) {
+          dbInputUpdateRef.current = { left: newInputLeft, right: newInputRight };
+          setDisplayInputDb({ left: newInputLeft, right: newInputRight });
+        }
       }
     }, 100); // Update at most 10 times per second
 
@@ -89,9 +130,11 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
       const targetLeft = metering.left;
       const targetRight = metering.right;
 
-      // Skip spectrum interpolation when hidden (saves ~32 calculations per frame)
+      // Skip spectrum interpolation when hidden (saves ~32-64 calculations per frame)
       let spectrumChanged = false;
+      let spectrumInputChanged = false;
       if (showSpectrumRef.current) {
+        // Interpolate output spectrum (post-FX) - always needed when spectrum is visible
         const targetSpectrum = metering.spectrum;
         const currentSpectrum = animatedSpectrumRef.current;
         const numBands = Math.min(currentSpectrum.length, targetSpectrum?.length || 0);
@@ -102,6 +145,60 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
           if (Math.abs(diff) > 0.0001) {
             currentSpectrum[i] = current + diff * smoothingFactor;
             spectrumChanged = true;
+          }
+        }
+
+        // Only interpolate input spectrum when pre/post comparison is active
+        // This saves ~32 calculations per frame when not needed
+        if (showPrePostRef.current) {
+          const targetSpectrumInput = metering.spectrumInput;
+          const currentSpectrumInput = animatedSpectrumInputRef.current;
+          const numBandsInput = Math.min(currentSpectrumInput.length, targetSpectrumInput?.length || 0);
+          for (let i = 0; i < numBandsInput; i++) {
+            const target = targetSpectrumInput[i] || 0;
+            const current = currentSpectrumInput[i];
+            const diff = target - current;
+            if (Math.abs(diff) > 0.0001) {
+              currentSpectrumInput[i] = current + diff * smoothingFactor;
+              spectrumInputChanged = true;
+            }
+          }
+        }
+      }
+
+      // Track peaks when peak hold is enabled
+      let peaksChanged = false;
+      if (showPeaksRef.current && showSpectrumRef.current) {
+        const currentSpectrum = animatedSpectrumRef.current;
+        const peaks = peakSpectrumRef.current;
+        const numBands = currentSpectrum.length;
+
+        // Update peak hold values - capture new peaks, apply slow decay
+        for (let i = 0; i < numBands; i++) {
+          const currentValue = currentSpectrum[i] || 0;
+          const currentPeak = peaks[i] || 0;
+
+          if (currentValue > currentPeak) {
+            // New peak detected
+            peaks[i] = currentValue;
+            peaksChanged = true;
+          }
+        }
+
+        // Apply decay every ~30 frames (0.5 seconds at 60fps)
+        peakDecayCounterRef.current++;
+        if (peakDecayCounterRef.current >= 30) {
+          peakDecayCounterRef.current = 0;
+          const decayFactor = 0.85; // Slow decay
+          for (let i = 0; i < numBands; i++) {
+            const decayedPeak = peaks[i] * decayFactor;
+            if (decayedPeak > 0.001) {
+              peaks[i] = decayedPeak;
+              peaksChanged = true;
+            } else if (peaks[i] > 0) {
+              peaks[i] = 0;
+              peaksChanged = true;
+            }
           }
         }
       }
@@ -117,11 +214,29 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
         levelsChanged = true;
       }
 
+      // Interpolate input levels (only when input meters visible)
+      let inputLevelsChanged = false;
+      if (showInputMetersRef.current) {
+        const targetInputLeft = metering.inputLeft;
+        const targetInputRight = metering.inputRight;
+        const currentInputLevels = animatedInputLevelsRef.current;
+        const inputLeftDiff = (targetInputLeft || 0) - currentInputLevels.left;
+        const inputRightDiff = (targetInputRight || 0) - currentInputLevels.right;
+        if (Math.abs(inputLeftDiff) > 0.0001 || Math.abs(inputRightDiff) > 0.0001) {
+          currentInputLevels.left += inputLeftDiff * smoothingFactor;
+          currentInputLevels.right += inputRightDiff * smoothingFactor;
+          inputLevelsChanged = true;
+        }
+      }
+
       // Only update if something changed to avoid unnecessary re-renders
-      if (spectrumChanged || levelsChanged) {
+      if (spectrumChanged || spectrumInputChanged || peaksChanged || levelsChanged || inputLevelsChanged) {
         setAnimationState(prev => ({
           spectrum: spectrumChanged ? [...animatedSpectrumRef.current] : prev.spectrum,
+          spectrumInput: spectrumInputChanged ? [...animatedSpectrumInputRef.current] : prev.spectrumInput,
+          peakSpectrum: peaksChanged ? [...peakSpectrumRef.current] : prev.peakSpectrum,
           levels: levelsChanged ? { ...currentLevels } : prev.levels,
+          inputLevels: inputLevelsChanged ? { ...animatedInputLevelsRef.current } : prev.inputLevels,
         }));
       }
 
@@ -138,98 +253,87 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
   }, [isOpen, isVisible]);
 
   // Handle clipping indicator with hold time - left channel
+  // Only clears after 1 second of no new clips, not on every state change
   useEffect(() => {
     if (clippingLeft) {
       setClipHold(prev => ({ ...prev, left: true }));
+      // Clear any existing timeout before starting a new one
       if (clipTimeoutRef.current.left) clearTimeout(clipTimeoutRef.current.left);
       clipTimeoutRef.current.left = setTimeout(() => {
         setClipHold(prev => ({ ...prev, left: false }));
         clipTimeoutRef.current.left = null;
       }, 1000);
     }
-    return () => {
-      if (clipTimeoutRef.current.left) {
-        clearTimeout(clipTimeoutRef.current.left);
-        clipTimeoutRef.current.left = null;
-      }
-    };
+    // Don't clear timeout in cleanup - let it run to completion
+    // Only clear on unmount via the separate cleanup effect below
   }, [clippingLeft]);
 
   // Handle clipping indicator with hold time - right channel
   useEffect(() => {
     if (clippingRight) {
       setClipHold(prev => ({ ...prev, right: true }));
+      // Clear any existing timeout before starting a new one
       if (clipTimeoutRef.current.right) clearTimeout(clipTimeoutRef.current.right);
       clipTimeoutRef.current.right = setTimeout(() => {
         setClipHold(prev => ({ ...prev, right: false }));
         clipTimeoutRef.current.right = null;
       }, 1000);
     }
-    return () => {
-      if (clipTimeoutRef.current.right) {
-        clearTimeout(clipTimeoutRef.current.right);
-        clipTimeoutRef.current.right = null;
-      }
-    };
+    // Don't clear timeout in cleanup - let it run to completion
   }, [clippingRight]);
 
-  // Update master volume
-  const handleMasterVolumeChange = useCallback(async (volume: number) => {
-    setMasterVolume(volume);
-    if (usePreviewStore.getState().engineInitialized) {
-      try {
-        await previewApi.previewSetMasterVolume(volume);
-      } catch (err) {
-        console.error('Failed to set master volume:', err);
-      }
-    }
-  }, [setMasterVolume]);
+  // Cleanup timeouts on unmount only
+  useEffect(() => {
+    return () => {
+      if (clipTimeoutRef.current.left) clearTimeout(clipTimeoutRef.current.left);
+      if (clipTimeoutRef.current.right) clearTimeout(clipTimeoutRef.current.right);
+    };
+  }, []);
 
   return (
     <div className="space-y-3 pt-1.5">
-      {/* Master Volume */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <svg className="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-            </svg>
-            <span className="text-xs text-text-muted font-medium">Master Volume</span>
-          </div>
-          <span className="text-xs text-accent font-medium tabular-nums">
-            {Math.round(masterVolume * 100)}%
-          </span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={masterVolume}
-          onChange={(e) => handleMasterVolumeChange(Number(e.target.value))}
-          className="w-full h-2 bg-bg-tertiary rounded-lg appearance-none cursor-pointer accent-accent"
-        />
+      {/* Safety limiter note */}
+      <div className="flex items-center gap-1.5 px-2 py-1.5 bg-accent/5 border border-accent/20 rounded text-[10px] text-text-muted">
+        <svg className="w-3 h-3 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span>Output is safety-limited to prevent speaker damage — clipping shown here won't harm your audio system.</span>
       </div>
-
       <LevelMeters
         animatedLevels={animationState.levels}
+        animatedInputLevels={animationState.inputLevels}
         displayDb={displayDb}
+        displayInputDb={displayInputDb}
         clipHold={clipHold}
+        showInputMeters={showInputMeters && !isInstrument}
+        showOutputMeters={showOutputMeters}
+        onToggleInputMeters={() => setShowInputMeters(!showInputMeters)}
+        onToggleOutputMeters={() => setShowOutputMeters(!showOutputMeters)}
+        hideInput={isInstrument}
       />
       <SpectrumAnalyzer
         animatedSpectrum={animationState.spectrum}
+        animatedSpectrumInput={animationState.spectrumInput}
+        peakSpectrum={animationState.peakSpectrum}
         showSpectrum={showSpectrum}
+        showPrePost={showPrePost && !isInstrument}
+        showPeaks={showPeaks}
         onToggle={() => setShowSpectrum(!showSpectrum)}
+        onTogglePrePost={() => setShowPrePost(!showPrePost)}
+        onTogglePeaks={() => setShowPeaks(!showPeaks)}
+        hideInput={isInstrument}
       />
       <WaveformDisplay
         showWaveform={showWaveform}
         isActive={isOpen && isVisible}
         onToggle={() => setShowWaveform(!showWaveform)}
+        hideInput={isInstrument}
       />
       <StereoImager
         showStereoImager={showStereoImager}
         isActive={isOpen && isVisible}
         onToggle={() => setShowStereoImager(!showStereoImager)}
+        hideInput={isInstrument}
       />
     </div>
   );

@@ -402,19 +402,18 @@ npm run lint
 | **egui (Standard UI)**    | `.docs/nih-plug-egui-guide.md`    | All platforms |
 | **Native**                | No UI, DAW controls only          | All platforms |
 
-### Safety Requirement (ALL plugins)
+### NaN/Inf Protection (ALL plugins)
 
-**ALWAYS include a safety limiter:**
+**ALWAYS protect against NaN/Inf values** (which can crash DAWs), but do NOT hard-limit output:
 
 ```rust
-#[inline]
-fn safety_limit(sample: f32) -> f32 {
-    sample.clamp(-1.0, 1.0)
-}
-
 // In process():
-*sample = safety_limit(*sample);
+if !sample.is_finite() {
+    *sample = 0.0;
+}
 ```
+
+**Note:** Do NOT use `sample.clamp(-1.0, 1.0)` as a safety limiter - this masks problems and breaks gain staging. The preview engine has its own output limiter for speaker protection. Let plugins output their true levels so users can see accurate metering.
 
 ### WebView Plugin Pattern
 

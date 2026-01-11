@@ -95,7 +95,7 @@ Before generating DSP code, verify:
 - [ ] **Are filter coefficients from a crate or cookbook?** Never calculate biquad coefficients from memory
 - [ ] **Is sample rate used in ALL time-based calculations?** Delays, LFOs, envelopes all depend on it
 - [ ] **Are parameters being smoothed?** Any audio-rate parameter change needs smoothing
-- [ ] **Is there a safety limiter?** Output must be clamped to prevent speaker damage
+- [ ] **Is NaN/Inf protected?** Output must be finite to prevent DAW crashes
 
 ### When Uncertain
 
@@ -118,25 +118,23 @@ If unsure about DSP math or implementation:
 | Instant parameter changes | Clicks and pops | Use smoothing (50ms typical) |
 | Hardcoded sample rate | Broken at different rates | Always use `buffer_config.sample_rate` |
 | Allocations in process() | Audio glitches | Pre-allocate in initialize() |
-| Missing safety limiter | Blown speakers | Always clamp output to [-1, 1] |
+| NaN/Inf in output | DAW crash | Check `is_finite()`, set to 0.0 |
 | Hand-rolled filter math | Wrong coefficients | Use `biquad` crate |
 | Division by zero | NaN/Inf propagation | Guard all divisions |
 | Unbounded feedback | Runaway levels | Limit feedback to < 1.0 or use tanh() |
 
-### Safety Limiter (MANDATORY)
+### NaN/Inf Protection (MANDATORY)
 
-Every plugin must limit output. Choose one:
+Every plugin must protect against NaN/Inf values (which crash DAWs):
 
 ```rust
-// Simple hard clamp (always safe)
-*sample = sample.clamp(-1.0, 1.0);
-
-// Soft limiting (sounds better for distortion)
-*sample = sample.tanh();
-
-// Also catch NaN/Inf
-if !sample.is_finite() { *sample = 0.0; }
+// In process() - after all DSP processing:
+if !sample.is_finite() {
+    *sample = 0.0;
+}
 ```
+
+**Note:** Do NOT use `sample.clamp(-1.0, 1.0)` as a safety limiter - this masks problems and breaks gain staging. The preview engine has its own output limiter for speaker protection. Let plugins output their true levels so users can see accurate metering.
 
 ### nih-plug Specific Reminders
 

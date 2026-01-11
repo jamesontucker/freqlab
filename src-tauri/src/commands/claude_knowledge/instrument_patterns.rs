@@ -245,9 +245,10 @@ fn process(&mut self, buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, context:
         // Render all voices for this sample
         let output = self.render_voices();
 
-        // Write to all channels
+        // Write to all channels (protect against NaN/Inf)
+        let safe_output = if output.is_finite() { output } else { 0.0 };
         for channel in buffer.as_slice() {
-            channel[sample_idx] = output.clamp(-1.0, 1.0);
+            channel[sample_idx] = safe_output;
         }
     }
 

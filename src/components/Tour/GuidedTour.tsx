@@ -207,8 +207,7 @@ export function GuidedTour() {
   }, [isActive, currentStep, buildingPath, advanceToNextStep]);
 
   // Auto-advance: Build completed
-  // Note: We track build completion via buildingPath (from projectBusyStore), not buildStatus
-  // buildStatus is the preview engine status, not the cargo build status
+  // We track build completion via buildingPath (from projectBusyStore)
   useEffect(() => {
     if (!isActive || currentStep !== 'wait-for-build') return;
 

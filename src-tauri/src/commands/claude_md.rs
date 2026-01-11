@@ -176,8 +176,9 @@ Before saying a feature is "done", verify ALL boxes are checked:
 
 ### Safety Requirements
 
-- **Always limit output**: Use `.clamp(-1.0, 1.0)` or a safety limiter on final output
-- **Handle edge cases**: Check for zero/negative values, NaN, Inf
+- **Always protect against NaN/Inf**: Use `if !sample.is_finite() { *sample = 0.0; }` - these values crash DAWs
+- **Do NOT hard-limit output**: The preview engine has its own speaker protection limiter
+- **Handle edge cases**: Check for zero/negative values before division
 - **Smooth transitions**: Use parameter smoothing for any audio-rate changes
 
 "#
@@ -587,7 +588,7 @@ fn generate_effect_section() -> String {
 
 ### Audio Flow
 ```
-Input Buffer → Read Samples → Process/Transform → Safety Limit → Output Buffer
+Input Buffer → Read Samples → Process/Transform → NaN/Inf Check → Output Buffer
 ```
 
 ### Typical Process Loop
@@ -603,12 +604,11 @@ fn process(&mut self, buffer: &mut Buffer, ...) -> ProcessStatus {
             let dry = *sample;
             let wet = self.process_sample(*sample);
 
-            // Mix dry/wet
-            *sample = dry * (1.0 - mix) + wet * mix;
+            // Mix dry/wet and apply output gain
+            *sample = (dry * (1.0 - mix) + wet * mix) * gain;
 
-            // Apply output gain and safety limit
-            *sample *= gain;
-            *sample = sample.clamp(-1.0, 1.0);
+            // Protect against NaN/Inf (crashes DAWs)
+            if !sample.is_finite() { *sample = 0.0; }
         }
     }
     ProcessStatus::Normal
@@ -651,8 +651,10 @@ fn process(&mut self, buffer: &mut Buffer, ..., context: &mut impl ProcessContex
     // Generate audio from active voices
     for channel_samples in buffer.iter_samples() {
         let output = self.render_voices();
+        // Protect against NaN/Inf (crashes DAWs)
+        let safe_output = if output.is_finite() { output } else { 0.0 };
         for sample in channel_samples {
-            *sample = output.clamp(-1.0, 1.0);
+            *sample = safe_output;
         }
     }
 

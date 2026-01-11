@@ -202,16 +202,10 @@ export const TransportBar = memo(function TransportBar({
 
   const indicator = getInputIndicator();
 
-  // For instruments, only show the MIDI source indicator (no play/stop/loop)
+  // For instruments, the MIDI source is already shown in the tab selection
+  // No need for a redundant transport bar indicator
   if (pluginType === 'instrument') {
-    return (
-      <div className="flex items-center gap-2 py-2 px-3 bg-bg-tertiary/50 rounded-lg border border-border">
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-tertiary text-text-secondary text-xs">
-          <span className="text-text-muted flex-shrink-0">{indicator.icon}</span>
-          <span className="truncate">{indicator.label}</span>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // For effects, show full transport controls + input indicator

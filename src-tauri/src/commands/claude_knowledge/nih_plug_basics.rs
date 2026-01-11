@@ -147,7 +147,8 @@ fn process(&mut self, buffer: &mut Buffer, ...) -> ProcessStatus {
 
         for sample in channel_samples {
             *sample = process_sample(*sample, gain);
-            *sample = sample.clamp(-1.0, 1.0);  // Safety limiter
+            // Protect against NaN/Inf (crashes DAWs)
+            if !sample.is_finite() { *sample = 0.0; }
         }
     }
     ProcessStatus::Normal

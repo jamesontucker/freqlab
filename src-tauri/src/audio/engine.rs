@@ -208,7 +208,10 @@ struct SharedState {
     clipping_left: AtomicBool,
     clipping_right: AtomicBool,
     // Spectrum analyzer data - stored as AtomicU32 array for lock-free access
+    // Output spectrum (post-FX)
     spectrum_bands: [AtomicU32; NUM_BANDS],
+    // Input spectrum (pre-FX) for comparison overlay
+    spectrum_bands_input: [AtomicU32; NUM_BANDS],
     // Waveform display buffers (separate L/R for stereo visualization)
     waveform_buffer_left: [AtomicU32; WAVEFORM_SAMPLES],
     waveform_buffer_right: [AtomicU32; WAVEFORM_SAMPLES],
@@ -216,9 +219,19 @@ struct SharedState {
     // Peak hold values for waveform display (cleared after read)
     waveform_peak_left: AtomicU32,
     waveform_peak_right: AtomicU32,
+    // INPUT waveform display buffers (pre-FX for comparison)
+    waveform_buffer_input_left: [AtomicU32; WAVEFORM_SAMPLES],
+    waveform_buffer_input_right: [AtomicU32; WAVEFORM_SAMPLES],
+    waveform_input_write_pos: AtomicU32,
+    waveform_input_peak_left: AtomicU32,
+    waveform_input_peak_right: AtomicU32,
     // Stereo imaging data - positions stored as flat array [angle0, radius0, angle1, radius1, ...]
+    // OUTPUT stereo (post-FX)
     stereo_positions: [AtomicU32; STEREO_HISTORY_SIZE * 2],
     stereo_correlation: AtomicU32,
+    // INPUT stereo (pre-FX for comparison)
+    stereo_positions_input: [AtomicU32; STEREO_HISTORY_SIZE * 2],
+    stereo_correlation_input: AtomicU32,
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
@@ -459,10 +472,19 @@ impl AudioEngineHandle {
         u32_to_f32(self.shared.master_volume.load(Ordering::SeqCst))
     }
 
-    /// Get spectrum analyzer band magnitudes (0.0 - 1.0)
+    /// Get spectrum analyzer band magnitudes (0.0 - 1.0) - post-FX output
     pub fn get_spectrum_data(&self) -> [f32; NUM_BANDS] {
         let mut bands = [0.0f32; NUM_BANDS];
         for (i, band) in self.shared.spectrum_bands.iter().enumerate() {
+            bands[i] = u32_to_f32(band.load(Ordering::Relaxed));
+        }
+        bands
+    }
+
+    /// Get input spectrum analyzer band magnitudes (0.0 - 1.0) - pre-FX input
+    pub fn get_spectrum_input_data(&self) -> [f32; NUM_BANDS] {
+        let mut bands = [0.0f32; NUM_BANDS];
+        for (i, band) in self.shared.spectrum_bands_input.iter().enumerate() {
             bands[i] = u32_to_f32(band.load(Ordering::Relaxed));
         }
         bands
@@ -517,6 +539,45 @@ impl AudioEngineHandle {
     /// Returns value from -1.0 (out of phase) to +1.0 (mono/in-phase)
     pub fn get_stereo_correlation(&self) -> f32 {
         u32_to_f32(self.shared.stereo_correlation.load(Ordering::Relaxed))
+    }
+
+    /// Get INPUT (pre-FX) waveform display buffers for comparison
+    /// Returns (left_channel, right_channel) vectors
+    pub fn get_waveform_input_data(&self) -> (Vec<f32>, Vec<f32>) {
+        let write_pos = self.shared.waveform_input_write_pos.load(Ordering::Relaxed) as usize;
+        let mut left = Vec::with_capacity(WAVEFORM_SAMPLES);
+        let mut right = Vec::with_capacity(WAVEFORM_SAMPLES);
+
+        // Read from write_pos to end, then from start to write_pos (circular buffer order)
+        for i in 0..WAVEFORM_SAMPLES {
+            let idx = (write_pos + i) % WAVEFORM_SAMPLES;
+            left.push(u32_to_f32(self.shared.waveform_buffer_input_left[idx].load(Ordering::Relaxed)));
+            right.push(u32_to_f32(self.shared.waveform_buffer_input_right[idx].load(Ordering::Relaxed)));
+        }
+        (left, right)
+    }
+
+    /// Get and clear INPUT (pre-FX) peak hold values for waveform display
+    pub fn get_waveform_input_peaks(&self) -> (f32, f32) {
+        let left = u32_to_f32(self.shared.waveform_input_peak_left.swap(f32_to_u32(0.0), Ordering::Relaxed));
+        let right = u32_to_f32(self.shared.waveform_input_peak_right.swap(f32_to_u32(0.0), Ordering::Relaxed));
+        (left, right)
+    }
+
+    /// Get INPUT (pre-FX) stereo imaging positions for visualization
+    pub fn get_stereo_positions_input(&self) -> Vec<(f32, f32)> {
+        let mut positions = Vec::with_capacity(STEREO_HISTORY_SIZE);
+        for i in 0..STEREO_HISTORY_SIZE {
+            let angle = u32_to_f32(self.shared.stereo_positions_input[i * 2].load(Ordering::Relaxed));
+            let radius = u32_to_f32(self.shared.stereo_positions_input[i * 2 + 1].load(Ordering::Relaxed));
+            positions.push((angle, radius));
+        }
+        positions
+    }
+
+    /// Get INPUT (pre-FX) stereo correlation coefficient
+    pub fn get_stereo_correlation_input(&self) -> f32 {
+        u32_to_f32(self.shared.stereo_correlation_input.load(Ordering::Relaxed))
     }
 
     pub fn get_state(&self) -> EngineState {
@@ -818,13 +879,24 @@ impl AudioEngine {
             clipping_left: AtomicBool::new(false),
             clipping_right: AtomicBool::new(false),
             spectrum_bands: [INIT_BAND; NUM_BANDS],
+            spectrum_bands_input: [INIT_BAND; NUM_BANDS],
             waveform_buffer_left: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
             waveform_buffer_right: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
             waveform_write_pos: AtomicU32::new(0),
             waveform_peak_left: INIT_PEAK,
             waveform_peak_right: INIT_PEAK,
+            // Input waveform (pre-FX) for comparison
+            waveform_buffer_input_left: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
+            waveform_buffer_input_right: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
+            waveform_input_write_pos: AtomicU32::new(0),
+            waveform_input_peak_left: INIT_PEAK,
+            waveform_input_peak_right: INIT_PEAK,
+            // Output stereo (post-FX)
             stereo_positions: [INIT_STEREO; STEREO_HISTORY_SIZE * 2],
             stereo_correlation: AtomicU32::new(f32_to_u32(1.0)), // Start at mono
+            // Input stereo (pre-FX) for comparison
+            stereo_positions_input: [INIT_STEREO; STEREO_HISTORY_SIZE * 2],
+            stereo_correlation_input: AtomicU32::new(f32_to_u32(1.0)), // Start at mono
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
             midi_queue: RwLock::new(None),
@@ -846,14 +918,20 @@ impl AudioEngine {
         let max_buffer_size = max_frames * channels; // 8192 for stereo
         let mut input_buffer = vec![0.0f32; max_buffer_size];
         let mut output_buffer = vec![0.0f32; max_buffer_size];
+        // Pre-allocate buffers for metering/analysis (avoid allocation in audio callback)
+        let mut pre_limited_buffer = vec![0.0f32; max_buffer_size];
+        let mut mono_output_buffer = vec![0.0f32; max_frames];
+        let mut mono_input_buffer = vec![0.0f32; max_frames];
 
-        // Create spectrum analyzer for visualization
+        // Create spectrum analyzers for visualization (input = pre-FX, output = post-FX)
         let mut spectrum_analyzer = SpectrumAnalyzer::new(sample_rate);
+        let mut spectrum_analyzer_input = SpectrumAnalyzer::new(sample_rate);
         // Counter for throttling spectrum updates (every N callbacks)
         let mut spectrum_update_counter = 0u32;
 
-        // Create stereo analyzer for stereo imaging visualization
+        // Create stereo analyzers for stereo imaging visualization (input = pre-FX, output = post-FX)
         let mut stereo_analyzer = StereoAnalyzer::new();
+        let mut stereo_analyzer_input = StereoAnalyzer::new();
 
         // Build the output stream
         let stream = device
@@ -976,20 +1054,8 @@ impl AudioEngine {
                                     }
                                 }
 
-                                drop(resampler_guard); // Release lock before updating levels
-
-                                // Update input levels with smoothing
-                                let input_smoothing = 0.15f32;
-                                {
-                                    let current = u32_to_f32(shared_clone.input_level_left.load(Ordering::Relaxed));
-                                    let new_level = current * (1.0 - input_smoothing) + peak_left * input_smoothing;
-                                    shared_clone.input_level_left.store(f32_to_u32(new_level), Ordering::Relaxed);
-                                }
-                                {
-                                    let current = u32_to_f32(shared_clone.input_level_right.load(Ordering::Relaxed));
-                                    let new_level = current * (1.0 - input_smoothing) + peak_right * input_smoothing;
-                                    shared_clone.input_level_right.store(f32_to_u32(new_level), Ordering::Relaxed);
-                                }
+                                drop(resampler_guard); // Release lock
+                                // Input levels are captured universally after input_buffer copy
                             } else {
                                 // No input handle available, output silence
                                 for sample in data.iter_mut() {
@@ -1027,10 +1093,49 @@ impl AudioEngine {
                         // If we can't get the lock, skip this cycle - parameter sync can wait
                     }
 
-                    if has_plugin && data.len() <= max_buffer_size {
-                        // Copy input to buffer
+                    // ALWAYS copy input to buffer for pre-FX spectrum analysis
+                    // This must happen before plugin processing so we capture the original input
+                    if data.len() <= max_buffer_size {
                         input_buffer[..data.len()].copy_from_slice(data);
 
+                        // ========================================
+                        // CAPTURE INPUT (PRE-FX) LEVELS
+                        // ========================================
+                        // Calculate input peak levels for pre/post comparison
+                        let mut input_peak_left = 0.0f32;
+                        let mut input_peak_right = 0.0f32;
+
+                        for (i, &sample) in data.iter().enumerate() {
+                            if !sample.is_finite() {
+                                continue;
+                            }
+                            let abs_sample = sample.abs();
+                            if channels > 1 {
+                                if i % 2 == 0 {
+                                    input_peak_left = input_peak_left.max(abs_sample);
+                                } else {
+                                    input_peak_right = input_peak_right.max(abs_sample);
+                                }
+                            } else {
+                                input_peak_left = input_peak_left.max(abs_sample);
+                                input_peak_right = input_peak_left;
+                            }
+                        }
+
+                        // Update input levels with smoothing (lock-free using atomics)
+                        {
+                            let current = u32_to_f32(shared_clone.input_level_left.load(Ordering::Relaxed));
+                            let new_level = current * (1.0 - level_smoothing) + input_peak_left * level_smoothing;
+                            shared_clone.input_level_left.store(f32_to_u32(new_level), Ordering::Relaxed);
+                        }
+                        {
+                            let current = u32_to_f32(shared_clone.input_level_right.load(Ordering::Relaxed));
+                            let new_level = current * (1.0 - level_smoothing) + input_peak_right * level_smoothing;
+                            shared_clone.input_level_right.store(f32_to_u32(new_level), Ordering::Relaxed);
+                        }
+                    }
+
+                    if has_plugin && data.len() <= max_buffer_size {
                         // Try to process through plugin using try_write to avoid blocking
                         // If main thread holds the lock (during reload/param update), pass through input unchanged
                         let plugin_processed = if let Some(mut plugin_lock) = shared_clone.plugin_instance.try_write() {
@@ -1106,60 +1211,84 @@ impl AudioEngine {
                         // which passes through unchanged - this avoids audio glitches during hot reload
                     }
 
-                    // Apply master volume before limiting
-                    let master_vol = u32_to_f32(shared_clone.master_volume.load(Ordering::Relaxed));
-                    for sample in data.iter_mut() {
-                        *sample *= master_vol;
-                    }
-
-                    // SAFETY LIMITER: Clamp all output to prevent speaker/ear damage
-                    // This protects against poorly written plugins that output >0dB
-                    // Also handles NaN/infinity from buggy plugins
-                    // Also detect clipping for visual indicator
+                    // ========================================
+                    // CAPTURE TRUE PLUGIN OUTPUT FOR ANALYSIS
+                    // ========================================
+                    // Metering happens BEFORE volume control so meters show
+                    // true plugin output regardless of listening volume
+                    // Calculate TRUE peak levels BEFORE safety limiting
+                    // This shows what the plugin actually outputs (can be >0dB)
+                    let mut peak_left = 0.0f32;
+                    let mut peak_right = 0.0f32;
                     let mut clipped_left = false;
                     let mut clipped_right = false;
-                    for (i, sample) in data.iter_mut().enumerate() {
-                        // Check for NaN or infinity first (buggy plugins can output these)
+
+                    for (i, &sample) in data.iter().enumerate() {
+                        // Skip NaN/Inf for peak calculation
                         if !sample.is_finite() {
-                            *sample = 0.0; // Replace invalid values with silence
-                            // Mark as clipped since this is a plugin error
                             if channels > 1 {
                                 if i % 2 == 0 { clipped_left = true; } else { clipped_right = true; }
                             } else {
                                 clipped_left = true;
                                 clipped_right = true;
                             }
-                        } else if *sample > 1.0 || *sample < -1.0 {
-                            // Determine which channel clipped
-                            if channels > 1 {
-                                if i % 2 == 0 {
-                                    clipped_left = true;
-                                } else {
-                                    clipped_right = true;
-                                }
+                            continue;
+                        }
+
+                        let abs_sample = sample.abs();
+                        if channels > 1 {
+                            if i % 2 == 0 {
+                                peak_left = peak_left.max(abs_sample);
+                                if abs_sample > 1.0 { clipped_left = true; }
                             } else {
+                                peak_right = peak_right.max(abs_sample);
+                                if abs_sample > 1.0 { clipped_right = true; }
+                            }
+                        } else {
+                            peak_left = peak_left.max(abs_sample);
+                            peak_right = peak_left;
+                            if abs_sample > 1.0 {
                                 clipped_left = true;
                                 clipped_right = true;
                             }
+                        }
+                    }
+
+                    // Copy pre-limited data for spectrum/waveform analysis
+                    // Uses pre-allocated buffer to avoid heap allocation in audio callback
+                    let data_len = data.len();
+                    pre_limited_buffer[..data_len].copy_from_slice(data);
+                    let pre_limited_data = &pre_limited_buffer[..data_len];
+
+                    // ========================================
+                    // SAFETY LIMITER (for speaker protection)
+                    // ========================================
+                    // Clamp all output to prevent speaker/ear damage
+                    // This protects against poorly written plugins that output >0dB
+                    for sample in data.iter_mut() {
+                        if !sample.is_finite() {
+                            *sample = 0.0;
+                        } else {
                             *sample = sample.clamp(-1.0, 1.0);
                         }
                     }
+
+                    // ========================================
+                    // OUTPUT VOLUME (listening level control)
+                    // ========================================
+                    // Applied AFTER safety limiter so it only affects speaker output,
+                    // not metering. User can listen quietly while seeing true levels.
+                    let output_vol = u32_to_f32(shared_clone.master_volume.load(Ordering::Relaxed));
+                    for sample in data.iter_mut() {
+                        *sample *= output_vol;
+                    }
+
                     // Set clipping flags (will stay true until read and cleared)
                     if clipped_left {
                         shared_clone.clipping_left.store(true, Ordering::Relaxed);
                     }
                     if clipped_right {
                         shared_clone.clipping_right.store(true, Ordering::Relaxed);
-                    }
-
-                    // Calculate peak levels from final output (after limiting)
-                    let mut peak_left = 0.0f32;
-                    let mut peak_right = 0.0f32;
-                    for chunk in data.chunks(channels) {
-                        peak_left = peak_left.max(chunk[0].abs());
-                        if channels > 1 {
-                            peak_right = peak_right.max(chunk[1].abs());
-                        }
                     }
 
                     // Update output levels with smoothing (lock-free using atomics)
@@ -1176,7 +1305,8 @@ impl AudioEngine {
 
                     // Update waveform display buffer (downsample to fit display)
                     // Store L and R separately for stereo visualization
-                    let frames = data.len() / channels;
+                    // Uses PRE-LIMITED data to show true plugin output (not affected by volume)
+                    let frames = pre_limited_data.len() / channels;
                     let downsample_factor = (frames / 16).max(1); // Capture ~16 samples per callback for more detail
                     let mut write_pos = shared_clone.waveform_write_pos.load(Ordering::Relaxed) as usize;
 
@@ -1184,18 +1314,22 @@ impl AudioEngine {
                     let mut waveform_peak_l = 0.0f32;
                     let mut waveform_peak_r = 0.0f32;
 
-                    for (i, chunk) in data.chunks(channels).enumerate() {
+                    for (i, chunk) in pre_limited_data.chunks(channels).enumerate() {
                         let left_sample = chunk[0];
                         let right_sample = if channels > 1 { chunk[1] } else { chunk[0] };
 
-                        // Track peaks
-                        waveform_peak_l = waveform_peak_l.max(left_sample.abs());
-                        waveform_peak_r = waveform_peak_r.max(right_sample.abs());
+                        // Validate samples (plugin could output NaN/Inf)
+                        let left_valid = if left_sample.is_finite() { left_sample } else { 0.0 };
+                        let right_valid = if right_sample.is_finite() { right_sample } else { 0.0 };
+
+                        // Track peaks (using validated samples)
+                        waveform_peak_l = waveform_peak_l.max(left_valid.abs());
+                        waveform_peak_r = waveform_peak_r.max(right_valid.abs());
 
                         if i % downsample_factor == 0 {
                             // Store L and R separately
-                            shared_clone.waveform_buffer_left[write_pos].store(f32_to_u32(left_sample), Ordering::Relaxed);
-                            shared_clone.waveform_buffer_right[write_pos].store(f32_to_u32(right_sample), Ordering::Relaxed);
+                            shared_clone.waveform_buffer_left[write_pos].store(f32_to_u32(left_valid), Ordering::Relaxed);
+                            shared_clone.waveform_buffer_right[write_pos].store(f32_to_u32(right_valid), Ordering::Relaxed);
                             write_pos = (write_pos + 1) % WAVEFORM_SAMPLES;
                         }
                     }
@@ -1207,45 +1341,137 @@ impl AudioEngine {
                     shared_clone.waveform_peak_left.store(f32_to_u32(current_peak_l.max(waveform_peak_l)), Ordering::Relaxed);
                     shared_clone.waveform_peak_right.store(f32_to_u32(current_peak_r.max(waveform_peak_r)), Ordering::Relaxed);
 
+                    // Update INPUT waveform display buffer (pre-FX for comparison)
+                    // Uses input_buffer which contains the signal before plugin processing
+                    let input_data = &input_buffer[..data.len()];
+                    let mut input_write_pos = shared_clone.waveform_input_write_pos.load(Ordering::Relaxed) as usize;
+                    let mut waveform_input_peak_l = 0.0f32;
+                    let mut waveform_input_peak_r = 0.0f32;
+
+                    for (i, chunk) in input_data.chunks(channels).enumerate() {
+                        let left_sample = chunk[0];
+                        let right_sample = if channels > 1 { chunk[1] } else { chunk[0] };
+
+                        // Skip NaN/Inf for input waveform (could come from corrupted samples)
+                        let left_valid = if left_sample.is_finite() { left_sample } else { 0.0 };
+                        let right_valid = if right_sample.is_finite() { right_sample } else { 0.0 };
+
+                        // Track peaks (using validated samples)
+                        waveform_input_peak_l = waveform_input_peak_l.max(left_valid.abs());
+                        waveform_input_peak_r = waveform_input_peak_r.max(right_valid.abs());
+
+                        if i % downsample_factor == 0 {
+                            shared_clone.waveform_buffer_input_left[input_write_pos].store(f32_to_u32(left_valid), Ordering::Relaxed);
+                            shared_clone.waveform_buffer_input_right[input_write_pos].store(f32_to_u32(right_valid), Ordering::Relaxed);
+                            input_write_pos = (input_write_pos + 1) % WAVEFORM_SAMPLES;
+                        }
+                    }
+                    shared_clone.waveform_input_write_pos.store(input_write_pos as u32, Ordering::Relaxed);
+
+                    // Update input peak hold values
+                    let current_input_peak_l = u32_to_f32(shared_clone.waveform_input_peak_left.load(Ordering::Relaxed));
+                    let current_input_peak_r = u32_to_f32(shared_clone.waveform_input_peak_right.load(Ordering::Relaxed));
+                    shared_clone.waveform_input_peak_left.store(f32_to_u32(current_input_peak_l.max(waveform_input_peak_l)), Ordering::Relaxed);
+                    shared_clone.waveform_input_peak_right.store(f32_to_u32(current_input_peak_r.max(waveform_input_peak_r)), Ordering::Relaxed);
+
                     // Update spectrum analyzer (mono mix of L/R for analysis)
                     // Update every 2 callbacks for smoother visuals (~6ms at 44.1kHz/512)
                     spectrum_update_counter += 1;
                     if spectrum_update_counter >= 2 {
                         spectrum_update_counter = 0;
 
-                        // Create mono mix for analysis
-                        let mono_samples: Vec<f32> = if channels > 1 {
-                            data.chunks(2)
-                                .map(|chunk| (chunk[0] + chunk[1]) * 0.5)
-                                .collect()
+                        // Create mono mix for output (post-FX) analysis
+                        // Uses pre-allocated buffer to avoid heap allocation in audio callback
+                        let mono_frames = data_len / channels;
+                        if channels > 1 {
+                            for (i, chunk) in pre_limited_data.chunks(2).enumerate() {
+                                mono_output_buffer[i] = (chunk[0] + chunk[1]) * 0.5;
+                            }
                         } else {
-                            data.to_vec()
-                        };
+                            mono_output_buffer[..mono_frames].copy_from_slice(pre_limited_data);
+                        }
 
-                        // Push samples and compute FFT
-                        spectrum_analyzer.push_samples(&mono_samples);
+                        // Create mono mix for input (pre-FX) analysis
+                        // Uses pre-allocated buffer to avoid heap allocation in audio callback
+                        if channels > 1 {
+                            for (i, chunk) in input_buffer[..data_len].chunks(2).enumerate() {
+                                mono_input_buffer[i] = (chunk[0] + chunk[1]) * 0.5;
+                            }
+                        } else {
+                            mono_input_buffer[..mono_frames].copy_from_slice(&input_buffer[..data_len]);
+                        }
+
+                        // Push samples and compute FFT for output (post-FX)
+                        spectrum_analyzer.push_samples(&mono_output_buffer[..mono_frames]);
                         spectrum_analyzer.analyze();
 
-                        // Store spectrum data to shared state (lock-free)
+                        // Push samples and compute FFT for input (pre-FX)
+                        spectrum_analyzer_input.push_samples(&mono_input_buffer[..mono_frames]);
+                        spectrum_analyzer_input.analyze();
+
+                        // Store output spectrum data to shared state (lock-free)
                         let magnitudes = spectrum_analyzer.get_magnitudes();
                         for (i, &mag) in magnitudes.iter().enumerate() {
                             shared_clone.spectrum_bands[i].store(f32_to_u32(mag), Ordering::Relaxed);
                         }
 
-                        // Stereo analysis - push stereo samples (not mono)
-                        if channels > 1 {
-                            stereo_analyzer.push_samples(data);
+                        // Store input spectrum data to shared state (lock-free)
+                        let magnitudes_input = spectrum_analyzer_input.get_magnitudes();
+                        for (i, &mag) in magnitudes_input.iter().enumerate() {
+                            shared_clone.spectrum_bands_input[i].store(f32_to_u32(mag), Ordering::Relaxed);
+                        }
 
-                            // Store stereo positions to shared state (lock-free)
+                        // Stereo analysis - push stereo samples (not mono)
+                        // OUTPUT stereo: Uses PRE-LIMITED data to show true stereo field
+                        // INPUT stereo: Uses input_buffer for pre-FX comparison
+                        if channels > 1 {
+                            // Output stereo analysis (post-FX)
+                            stereo_analyzer.push_samples(&pre_limited_data);
+
+                            // Store output stereo positions to shared state (lock-free)
                             let positions = stereo_analyzer.get_positions();
                             for (i, &(angle, radius)) in positions.iter().enumerate() {
                                 shared_clone.stereo_positions[i * 2].store(f32_to_u32(angle), Ordering::Relaxed);
                                 shared_clone.stereo_positions[i * 2 + 1].store(f32_to_u32(radius), Ordering::Relaxed);
                             }
 
-                            // Store correlation
+                            // Store output correlation
                             let correlation = stereo_analyzer.get_correlation();
                             shared_clone.stereo_correlation.store(f32_to_u32(correlation), Ordering::Relaxed);
+
+                            // Input stereo analysis (pre-FX)
+                            stereo_analyzer_input.push_samples(&input_buffer[..data.len()]);
+
+                            // Store input stereo positions to shared state (lock-free)
+                            let positions_input = stereo_analyzer_input.get_positions();
+                            for (i, &(angle, radius)) in positions_input.iter().enumerate() {
+                                shared_clone.stereo_positions_input[i * 2].store(f32_to_u32(angle), Ordering::Relaxed);
+                                shared_clone.stereo_positions_input[i * 2 + 1].store(f32_to_u32(radius), Ordering::Relaxed);
+                            }
+
+                            // Store input correlation
+                            let correlation_input = stereo_analyzer_input.get_correlation();
+                            shared_clone.stereo_correlation_input.store(f32_to_u32(correlation_input), Ordering::Relaxed);
+                        } else {
+                            // Mono audio: reset stereo analyzers and clear positions to center
+                            // This prevents stale stereo particles from displaying when switching from stereo to mono
+                            stereo_analyzer.reset();
+                            stereo_analyzer_input.reset();
+
+                            // Set all positions to center (PI/2) with zero radius (invisible)
+                            let center_angle = std::f32::consts::FRAC_PI_2;
+                            for i in 0..STEREO_HISTORY_SIZE {
+                                // Output positions
+                                shared_clone.stereo_positions[i * 2].store(f32_to_u32(center_angle), Ordering::Relaxed);
+                                shared_clone.stereo_positions[i * 2 + 1].store(f32_to_u32(0.0), Ordering::Relaxed);
+                                // Input positions
+                                shared_clone.stereo_positions_input[i * 2].store(f32_to_u32(center_angle), Ordering::Relaxed);
+                                shared_clone.stereo_positions_input[i * 2 + 1].store(f32_to_u32(0.0), Ordering::Relaxed);
+                            }
+
+                            // Correlation is 1.0 for mono (perfect correlation)
+                            shared_clone.stereo_correlation.store(f32_to_u32(1.0), Ordering::Relaxed);
+                            shared_clone.stereo_correlation_input.store(f32_to_u32(1.0), Ordering::Relaxed);
                         }
                     }
                 },

@@ -4,8 +4,6 @@ import type { PluginState } from '../api/preview';
 export type InputSourceType = 'sample' | 'signal' | 'custom' | 'live';
 export type SignalType = 'sine' | 'white_noise' | 'pink_noise' | 'impulse' | 'sweep' | 'square';
 export type GatePattern = 'continuous' | 'pulse' | 'quarter' | 'eighth' | 'sixteenth';
-export type BuildStatus = 'idle' | 'building' | 'ready' | 'error' | 'needs_rebuild';
-
 export type { PluginState } from '../api/preview';
 
 export interface DemoSample {
@@ -53,17 +51,27 @@ export interface OutputMetering {
   inputRight: number;
   inputLeftDb: number;
   inputRightDb: number;
-  spectrum: number[];
-  // Stereo waveform data
+  // Spectrum data
+  spectrum: number[];         // Post-FX output spectrum
+  spectrumInput: number[];    // Pre-FX input spectrum for comparison
+  // Output waveform data (post-FX)
   waveformLeft: number[];
   waveformRight: number[];
   waveformPeakLeft: number;   // Peak hold value (0.0 - 1.0, cleared after read)
   waveformPeakRight: number;  // Peak hold value (0.0 - 1.0, cleared after read)
+  // Input waveform data (pre-FX)
+  waveformInputLeft: number[];
+  waveformInputRight: number[];
+  waveformInputPeakLeft: number;
+  waveformInputPeakRight: number;
   clippingLeft: boolean;
   clippingRight: boolean;
-  // Stereo imaging data
+  // Output stereo imaging data (post-FX)
   stereoPositions: [number, number][];  // [angle, radius] pairs for particle display
   stereoCorrelation: number;            // -1 to +1 correlation coefficient
+  // Input stereo imaging data (pre-FX)
+  stereoPositionsInput: [number, number][];
+  stereoCorrelationInput: number;
 }
 
 interface PreviewState {
@@ -92,7 +100,6 @@ interface PreviewState {
   availableInputDevices: AudioDevice[];
 
   // Build/reload state
-  buildStatus: BuildStatus;
   isAutoReload: boolean;
   lastReloadTime: number | null;
 
@@ -131,7 +138,6 @@ interface PreviewState {
   setSignalFrequency: (freq: number) => void;
   setLivePaused: (paused: boolean) => void;
   setAvailableInputDevices: (devices: AudioDevice[]) => void;
-  setBuildStatus: (status: BuildStatus) => void;
   setAutoReload: (enabled: boolean) => void;
   setLastReloadTime: (time: number | null) => void;
   setMetering: (metering: OutputMetering) => void;
@@ -169,14 +175,25 @@ const defaultMetering: OutputMetering = {
   inputLeftDb: -60,
   inputRightDb: -60,
   spectrum: new Array(32).fill(0),
+  spectrumInput: new Array(32).fill(0),  // Pre-FX input spectrum
+  // Output waveform (post-FX)
   waveformLeft: new Array(4096).fill(0),
   waveformRight: new Array(4096).fill(0),
   waveformPeakLeft: 0,
   waveformPeakRight: 0,
+  // Input waveform (pre-FX)
+  waveformInputLeft: new Array(4096).fill(0),
+  waveformInputRight: new Array(4096).fill(0),
+  waveformInputPeakLeft: 0,
+  waveformInputPeakRight: 0,
   clippingLeft: false,
   clippingRight: false,
+  // Output stereo (post-FX)
   stereoPositions: [],  // Empty initially, will be populated by metering events
   stereoCorrelation: 1.0,  // Start at mono
+  // Input stereo (pre-FX)
+  stereoPositionsInput: [],
+  stereoCorrelationInput: 1.0,
 };
 
 const initialState = {
@@ -190,7 +207,6 @@ const initialState = {
   inputSource: defaultInputSource,
   isLivePaused: false,
   availableInputDevices: [] as AudioDevice[],
-  buildStatus: 'idle' as BuildStatus,
   isAutoReload: true,
   lastReloadTime: null as number | null,
   metering: defaultMetering,
@@ -231,7 +247,6 @@ export const usePreviewStore = create<PreviewState>()((set) => ({
   setLivePaused: (paused) => set({ isLivePaused: paused }),
   setAvailableInputDevices: (devices) => set({ availableInputDevices: devices }),
 
-  setBuildStatus: (status) => set({ buildStatus: status }),
   setAutoReload: (enabled) => set({ isAutoReload: enabled }),
   setLastReloadTime: (time) => set({ lastReloadTime: time }),
 

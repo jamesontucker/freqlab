@@ -56,11 +56,16 @@ impl StereoAnalyzer {
     /// - magnitude = sqrt(L² + R²)
     /// This maps: pure right → 0, center → π/2, pure left → π
     pub fn push_sample(&mut self, left: f32, right: f32) {
+        // Guard against NaN/Inf from buggy plugins or corrupted audio
+        if !left.is_finite() || !right.is_finite() {
+            return;
+        }
+
         // Calculate magnitude (Euclidean distance)
         let magnitude = (left * left + right * right).sqrt();
 
-        // Skip very quiet samples
-        if magnitude < 0.001 {
+        // Skip very quiet samples (threshold above denormalized float range)
+        if magnitude < 0.005 {
             return;
         }
 
@@ -103,14 +108,14 @@ impl StereoAnalyzer {
     fn compute_correlation(&mut self) {
         // correlation = Σ(L×R) / sqrt(Σ(L²) × Σ(R²))
         let denom = (self.sum_l2 * self.sum_r2).sqrt();
-        let raw_correlation = if denom > 0.0 {
-            self.sum_lr / denom
-        } else {
-            1.0 // If both channels are silent, assume mono
-        };
 
-        // Clamp to valid range
-        let raw_correlation = raw_correlation.clamp(-1.0, 1.0);
+        // Use threshold above denormalized range to avoid floating point issues
+        // Also check is_finite() to guard against NaN/Inf propagation
+        let raw_correlation = if denom > 1e-10 && denom.is_finite() {
+            (self.sum_lr / denom).clamp(-1.0, 1.0)
+        } else {
+            1.0 // If both channels are silent or invalid, assume mono
+        };
 
         // Apply smoothing
         self.correlation = self.correlation * self.smoothing

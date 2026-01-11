@@ -1,16 +1,109 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 
 interface SpectrumAnalyzerProps {
-  animatedSpectrum: number[];
+  animatedSpectrum: number[];         // Post-FX output spectrum
+  animatedSpectrumInput: number[];    // Pre-FX input spectrum
+  peakSpectrum: number[];             // Peak hold values for output spectrum
   showSpectrum: boolean;
+  showPrePost: boolean;               // Whether to show pre/post comparison (controlled by parent)
+  showPeaks: boolean;                 // Whether to show peak hold markers
   onToggle: () => void;
+  onTogglePrePost: () => void;        // Toggle handler for pre/post (controlled by parent for perf)
+  onTogglePeaks: () => void;          // Toggle handler for peak hold
+  hideInput?: boolean;                // Hide input-related features (for instruments)
 }
+
+// Spectrum tilt/slope options (dB per octave)
+// Tilt compensates for the natural roll-off of audio, tilting around 1kHz reference
+// - 0: Flat/accurate - white noise appears flat, shows true magnitude
+// - 3: Pink noise reference - pink noise appears flat, classic mixing standard
+// - 4.5: Human perception (Pro-Q/SPAN default) - modern music appears balanced
+// - 6: Steep tilt - for sawtooth/synth analysis
+type TiltOption = 0 | 3 | 4.5 | 6;
+
+const TILT_OPTIONS: { value: TiltOption; label: string; description: string }[] = [
+  { value: 0, label: 'Flat', description: 'Accurate magnitude (0 dB/oct)' },
+  { value: 3, label: 'Pink', description: 'Pink noise flat (3 dB/oct)' },
+  { value: 4.5, label: 'Default', description: 'Pro-Q style (4.5 dB/oct)' },
+  { value: 6, label: 'Steep', description: 'Maximum tilt (6 dB/oct)' },
+];
+
+// Reference frequency for tilt calculation (1kHz is standard)
+const TILT_REFERENCE_FREQ = 1000;
+
+// Vertical range options for spectrum display
+// Each range has: total dB range, max dB (top), min dB (bottom), and label positions
+// Calculated to place 0dB at ~32% from top (68% from bottom) to match Pro-Q style
+// Formula: dbMax = 0.32 × range, dbMin = -0.68 × range
+type RangeOption = 6 | 12 | 30 | 60 | 90 | 120;
+
+interface RangeConfig {
+  value: RangeOption;
+  label: string;
+  dbMax: number;
+  dbMin: number;
+  dbLabels: number[];
+}
+
+const RANGE_OPTIONS: RangeConfig[] = [
+  { value: 6, label: '6dB', dbMax: 2, dbMin: -4, dbLabels: [0, -3] },
+  { value: 12, label: '12dB', dbMax: 4, dbMin: -8, dbLabels: [3, 0, -3, -6] },
+  { value: 30, label: '30dB', dbMax: 10, dbMin: -20, dbLabels: [6, 0, -6, -12, -18] },
+  { value: 60, label: '60dB', dbMax: 20, dbMin: -40, dbLabels: [18, 12, 6, 0, -12, -24, -36] },
+  { value: 90, label: '90dB', dbMax: 30, dbMin: -60, dbLabels: [24, 12, 0, -18, -36, -54] },
+  { value: 120, label: '120dB', dbMax: 40, dbMin: -80, dbLabels: [36, 18, 0, -24, -48, -72] },
+];
+
+// SVG dimensions - spectrum area plus margins for labels
+const SPECTRUM_WIDTH = 370;   // Width of actual spectrum display
+const SPECTRUM_HEIGHT = 120;  // Height of actual spectrum display
+const LEFT_MARGIN = 0;        // Space for left labels (none needed)
+const RIGHT_MARGIN = 30;      // Space for dB labels on right
+const TOP_MARGIN = 8;         // Space for top dB label padding
+const BOTTOM_MARGIN = 14;     // Space for frequency labels at bottom
+const SVG_WIDTH = LEFT_MARGIN + SPECTRUM_WIDTH + RIGHT_MARGIN;
+const SVG_HEIGHT = TOP_MARGIN + SPECTRUM_HEIGHT + BOTTOM_MARGIN;
+
+// Frequency labels with mathematically accurate logarithmic positions
+// Formula: pos = ln(freq/10) / ln(20000/10) = ln(freq/10) / ln(2000)
+// The spectrum backend uses the same log spacing for 32 bands from 10Hz-20kHz
+const FREQ_LABELS = [
+  { freq: '10', pos: 0 },
+  { freq: '20', pos: 9.1 },
+  { freq: '50', pos: 21.2 },
+  { freq: '100', pos: 30.3 },
+  { freq: '200', pos: 39.4 },
+  { freq: '500', pos: 51.5 },
+  { freq: '1k', pos: 60.6 },
+  { freq: '2k', pos: 69.7 },
+  { freq: '5k', pos: 81.8 },
+  { freq: '10k', pos: 90.9 },
+  { freq: '20k', pos: 100 },
+];
 
 export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
   animatedSpectrum,
+  animatedSpectrumInput,
+  peakSpectrum,
   showSpectrum,
+  showPrePost,
+  showPeaks,
   onToggle,
+  onTogglePrePost,
+  onTogglePeaks,
+  hideInput = false,
 }: SpectrumAnalyzerProps) {
+  // Tilt/slope setting for spectrum display (default to 4.5 dB/oct like Pro-Q)
+  const [tilt, setTilt] = useState<TiltOption>(4.5);
+  const [showTiltMenu, setShowTiltMenu] = useState(false);
+
+  // Vertical range setting (default to 60dB)
+  const [range, setRange] = useState<RangeOption>(60);
+  const [showRangeMenu, setShowRangeMenu] = useState(false);
+
+  const currentTiltOption = TILT_OPTIONS.find(o => o.value === tilt) || TILT_OPTIONS[2];
+  const currentRangeConfig = RANGE_OPTIONS.find(o => o.value === range) || RANGE_OPTIONS[2];
+
   return (
     <div className="mt-3">
       <div className="flex items-center justify-between mb-2">
@@ -20,28 +113,127 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
           </svg>
           <span className="text-xs text-text-muted font-medium">Spectrum</span>
         </div>
-        <button
-          onClick={onToggle}
-          className={`text-xs px-2 py-0.5 rounded transition-colors ${
-            showSpectrum
-              ? 'bg-accent/20 text-accent'
-              : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
-          }`}
-        >
-          {showSpectrum ? 'On' : 'Off'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {showSpectrum && (
+            <>
+              {/* Range/Zoom dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowRangeMenu(!showRangeMenu)}
+                  onBlur={() => setTimeout(() => setShowRangeMenu(false), 150)}
+                  className="text-xs px-2 py-0.5 rounded transition-colors bg-bg-tertiary text-text-muted hover:text-text-primary flex items-center gap-1"
+                  title="Vertical range (zoom)"
+                >
+                  <span>{currentRangeConfig.label}</span>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showRangeMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-bg-secondary border border-border rounded-lg shadow-lg z-10 py-1 min-w-[80px]">
+                    {RANGE_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => {
+                          setRange(option.value);
+                          setShowRangeMenu(false);
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                          range === option.value
+                            ? 'bg-accent/20 text-accent'
+                            : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Tilt/Slope dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowTiltMenu(!showTiltMenu)}
+                  onBlur={() => setTimeout(() => setShowTiltMenu(false), 150)}
+                  className="text-xs px-2 py-0.5 rounded transition-colors bg-bg-tertiary text-text-muted hover:text-text-primary flex items-center gap-1"
+                  title={currentTiltOption.description}
+                >
+                  <span>{currentTiltOption.label}</span>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showTiltMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-bg-secondary border border-border rounded-lg shadow-lg z-10 py-1 min-w-[140px]">
+                    {TILT_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => {
+                          setTilt(option.value);
+                          setShowTiltMenu(false);
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                          tilt === option.value
+                            ? 'bg-accent/20 text-accent'
+                            : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+                        }`}
+                      >
+                        <div className="font-medium">{option.label}</div>
+                        <div className="text-[10px] text-text-muted">{option.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Peak hold toggle */}
+              <button
+                onClick={onTogglePeaks}
+                className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                  showPeaks
+                    ? 'bg-yellow-500/20 text-yellow-400'
+                    : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
+                }`}
+                title="Show peak hold markers"
+              >
+                Peaks
+              </button>
+              {!hideInput && (
+                <button
+                  onClick={onTogglePrePost}
+                  className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                    showPrePost
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
+                  }`}
+                  title="Show pre/post FX comparison"
+                >
+                  Pre/Post
+                </button>
+              )}
+            </>
+          )}
+          <button
+            onClick={onToggle}
+            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+              showSpectrum
+                ? 'bg-accent/20 text-accent'
+                : 'bg-bg-tertiary text-text-muted hover:text-text-primary'
+            }`}
+          >
+            {showSpectrum ? 'On' : 'Off'}
+          </button>
+        </div>
       </div>
       {showSpectrum && (
         <div className="bg-bg-tertiary rounded-lg border border-border overflow-hidden">
-          {/* Smooth curve spectrum like FabFilter Pro-Q */}
           <svg
-            viewBox="0 0 400 100"
-            className="w-full h-28"
+            viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
+            className="w-full"
+            style={{ height: '156px' }}
             preserveAspectRatio="none"
           >
-            {/* Grid lines */}
             <defs>
-              {/* Using accent color #2DA86E directly since CSS vars don't work in SVG */}
+              {/* Output spectrum gradient (green - post-FX) */}
               <linearGradient id="spectrumGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#2DA86E" stopOpacity="0.7" />
                 <stop offset="50%" stopColor="#2DA86E" stopOpacity="0.3" />
@@ -51,56 +243,215 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
                 <stop offset="0%" stopColor="#36C07E" stopOpacity="1" />
                 <stop offset="100%" stopColor="#2DA86E" stopOpacity="0.7" />
               </linearGradient>
-            </defs>
-            {/* Horizontal grid lines for dB */}
-            <line x1="0" y1="16.67" x2="400" y2="16.67" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            <line x1="0" y1="50" x2="400" y2="50" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            <line x1="0" y1="83.33" x2="400" y2="83.33" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            {/* Vertical grid lines for frequencies */}
-            <line x1="50" y1="0" x2="50" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            <line x1="125" y1="0" x2="125" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            <line x1="225" y1="0" x2="225" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
-            <line x1="325" y1="0" x2="325" y2="100" stroke="currentColor" strokeOpacity="0.1" strokeWidth="0.5" />
+              {/* Input spectrum gradient (blue/purple - pre-FX) */}
+              <linearGradient id="spectrumInputGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
+                <stop offset="50%" stopColor="#6366f1" stopOpacity="0.15" />
+                <stop offset="100%" stopColor="#6366f1" stopOpacity="0.02" />
+              </linearGradient>
+              <linearGradient id="spectrumInputStroke" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#818cf8" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#6366f1" stopOpacity="0.5" />
+              </linearGradient>
 
-            {/* Spectrum curve - smooth bezier path */}
-            {renderSpectrumCurve(animatedSpectrum)}
+              {/* Clip path to contain spectrum within the chart area */}
+              <clipPath id="spectrumClip">
+                <rect x={LEFT_MARGIN} y={TOP_MARGIN} width={SPECTRUM_WIDTH} height={SPECTRUM_HEIGHT} />
+              </clipPath>
+            </defs>
+
+            {/* Horizontal grid lines at each dB level */}
+            {currentRangeConfig.dbLabels.map((db) => {
+              const y = dbToY(db, currentRangeConfig);
+              // 0dB line is more prominent (reference level)
+              const is0dB = db === 0;
+              return (
+                <line
+                  key={db}
+                  x1={LEFT_MARGIN}
+                  y1={y}
+                  x2={LEFT_MARGIN + SPECTRUM_WIDTH}
+                  y2={y}
+                  stroke={is0dB ? "#f59e0b" : "currentColor"}
+                  strokeOpacity={is0dB ? "0.5" : "0.08"}
+                  strokeWidth={is0dB ? "1.5" : "0.5"}
+                />
+              );
+            })}
+
+            {/* Vertical grid lines at frequency positions */}
+            {FREQ_LABELS.filter(f => f.pos > 0 && f.pos < 100).map(({ freq, pos }) => {
+              const x = LEFT_MARGIN + (pos / 100) * SPECTRUM_WIDTH;
+              return (
+                <line
+                  key={freq}
+                  x1={x}
+                  y1={TOP_MARGIN}
+                  x2={x}
+                  y2={TOP_MARGIN + SPECTRUM_HEIGHT}
+                  stroke="currentColor"
+                  strokeOpacity="0.06"
+                  strokeWidth="0.5"
+                />
+              );
+            })}
+
+            {/* Spectrum curves clipped to chart area */}
+            <g clipPath="url(#spectrumClip)">
+              {/* Input spectrum curve (pre-FX) - rendered behind output */}
+              {showPrePost && renderSpectrumCurve(animatedSpectrumInput, 'input', tilt, currentRangeConfig)}
+
+              {/* Output spectrum curve (post-FX) - rendered on top */}
+              {renderSpectrumCurve(animatedSpectrum, 'output', tilt, currentRangeConfig)}
+
+              {/* Peak hold markers */}
+              {showPeaks && renderPeakMarkers(peakSpectrum, tilt, currentRangeConfig)}
+            </g>
+
+            {/* Right border of spectrum area */}
+            <line
+              x1={LEFT_MARGIN + SPECTRUM_WIDTH}
+              y1={TOP_MARGIN}
+              x2={LEFT_MARGIN + SPECTRUM_WIDTH}
+              y2={TOP_MARGIN + SPECTRUM_HEIGHT}
+              stroke="currentColor"
+              strokeOpacity="0.1"
+              strokeWidth="0.5"
+            />
+
+            {/* Bottom border line for chart area */}
+            <line
+              x1={LEFT_MARGIN}
+              y1={TOP_MARGIN + SPECTRUM_HEIGHT}
+              x2={LEFT_MARGIN + SPECTRUM_WIDTH}
+              y2={TOP_MARGIN + SPECTRUM_HEIGHT}
+              stroke="currentColor"
+              strokeOpacity="0.15"
+              strokeWidth="0.5"
+            />
+
+            {/* dB labels on right side - positioned to align with grid lines */}
+            {currentRangeConfig.dbLabels.map((db) => {
+              const y = dbToY(db, currentRangeConfig);
+              return (
+                <text
+                  key={db}
+                  x={LEFT_MARGIN + SPECTRUM_WIDTH + 4}
+                  y={y + 3} // +3 for vertical centering of text
+                  textAnchor="start"
+                  className="fill-current text-text-muted"
+                  style={{ fontSize: '8px' }}
+                >
+                  {db}
+                </text>
+              );
+            })}
+
+            {/* Frequency labels at bottom - positioned to align with grid lines */}
+            {FREQ_LABELS.map(({ freq, pos }) => {
+              const x = LEFT_MARGIN + (pos / 100) * SPECTRUM_WIDTH;
+              const textAnchor = pos === 0 ? 'start' : pos === 100 ? 'end' : 'middle';
+              const xOffset = pos === 0 ? 2 : pos === 100 ? -2 : 0;
+              return (
+                <text
+                  key={freq}
+                  x={x + xOffset}
+                  y={TOP_MARGIN + SPECTRUM_HEIGHT + 10}
+                  textAnchor={textAnchor}
+                  className="fill-current text-text-muted"
+                  style={{ fontSize: '8px' }}
+                >
+                  {freq}
+                </text>
+              );
+            })}
+
+            {/* Pre/Post legend (if active) - positioned at top-left to avoid Hz labels */}
+            {showPrePost && (
+              <g>
+                <rect x={LEFT_MARGIN + 4} y={TOP_MARGIN + 4} width="60" height="14" rx="3" fill="rgba(26, 26, 30, 0.8)" />
+                <circle cx={LEFT_MARGIN + 12} cy={TOP_MARGIN + 11} r="3" fill="#818cf8" fillOpacity="0.7" />
+                <text x={LEFT_MARGIN + 18} y={TOP_MARGIN + 14} className="fill-current text-text-muted" style={{ fontSize: '8px' }}>Pre</text>
+                <circle cx={LEFT_MARGIN + 42} cy={TOP_MARGIN + 11} r="3" className="fill-accent" />
+                <text x={LEFT_MARGIN + 48} y={TOP_MARGIN + 14} className="fill-current text-text-muted" style={{ fontSize: '8px' }}>Post</text>
+              </g>
+            )}
           </svg>
-          {/* Frequency labels */}
-          <div className="flex justify-between px-2 py-1 border-t border-border/50 bg-bg-primary/30">
-            <span className="text-[9px] text-text-muted">20Hz</span>
-            <span className="text-[9px] text-text-muted">100</span>
-            <span className="text-[9px] text-text-muted">1k</span>
-            <span className="text-[9px] text-text-muted">10k</span>
-            <span className="text-[9px] text-text-muted">20k</span>
-          </div>
         </div>
       )}
     </div>
   );
 });
 
-function renderSpectrumCurve(animatedSpectrum: number[]) {
+// Convert dB value to Y coordinate (dbMax = top, dbMin = bottom)
+// Uses SPECTRUM_HEIGHT for accurate positioning within the spectrum area
+// Accounts for TOP_MARGIN offset
+function dbToY(db: number, rangeConfig: RangeConfig): number {
+  const dbRange = rangeConfig.dbMax - rangeConfig.dbMin;
+  // Normalize: dbMax maps to 1.0 (top), dbMin maps to 0.0 (bottom)
+  const normalized = (db - rangeConfig.dbMin) / dbRange;
+  return TOP_MARGIN + SPECTRUM_HEIGHT - (normalized * SPECTRUM_HEIGHT);
+}
+
+type SpectrumType = 'input' | 'output';
+
+// Calculate frequency for a given band index (logarithmically spaced from 10Hz to 20kHz)
+// This matches the backend's band_frequencies calculation
+function getBandFrequency(bandIndex: number, numBands: number): number {
+  const minFreq = 10;
+  const maxFreq = 20000;
+  const logMin = Math.log(minFreq);
+  const logMax = Math.log(maxFreq);
+  const t = bandIndex / (numBands - 1);
+  return Math.exp(logMin + t * (logMax - logMin));
+}
+
+// Calculate tilt compensation in dB for a given frequency
+// Tilt is applied relative to the reference frequency (1kHz)
+// Formula: tiltDb = slope * log2(freq / refFreq)
+function getTiltCompensation(freq: number, slopeDbPerOctave: number): number {
+  if (slopeDbPerOctave === 0) return 0;
+  const octavesFromRef = Math.log2(freq / TILT_REFERENCE_FREQ);
+  return slopeDbPerOctave * octavesFromRef;
+}
+
+// Renders spectrum curve within the spectrum area
+// The curve uses the same coordinate system as the grid (LEFT_MARGIN offset, SPECTRUM_WIDTH, SPECTRUM_HEIGHT)
+// Accounts for TOP_MARGIN offset
+function renderSpectrumCurve(animatedSpectrum: number[], type: SpectrumType, tilt: TiltOption, rangeConfig: RangeConfig) {
   // Safety check for empty or too-small spectrum
   if (!animatedSpectrum || animatedSpectrum.length < 2) {
     return null;
   }
 
   const numBands = animatedSpectrum.length;
-  const width = 400;
-  const height = 100;
+  const dbRange = rangeConfig.dbMax - rangeConfig.dbMin;
 
   // Convert magnitudes to Y positions (using animated values for smooth 60fps)
+  // X positions are within the spectrum area (LEFT_MARGIN to LEFT_MARGIN + SPECTRUM_WIDTH)
   const points = animatedSpectrum.map((mag, i) => {
     // Handle edge cases: NaN, undefined, negative
     const safeMag = (typeof mag === 'number' && !isNaN(mag) && mag > 0) ? mag : 0;
-    const db = safeMag > 0 ? 20 * Math.log10(safeMag) : -60;
-    const normalizedDb = Math.max(0, Math.min(1, (db + 60) / 60));
-    const x = (i / (numBands - 1)) * width;
-    const y = height - (normalizedDb * height);
-    return { x: isNaN(x) ? 0 : x, y: isNaN(y) ? height : y };
+    // Convert linear magnitude to dB (can go above 0dB for clipping)
+    let db = safeMag > 0 ? 20 * Math.log10(safeMag) : rangeConfig.dbMin;
+
+    // Apply tilt compensation based on frequency
+    // This tilts the spectrum around 1kHz by the specified dB/octave
+    // Higher frequencies get boosted, lower frequencies get cut
+    const freq = getBandFrequency(i, numBands);
+    db += getTiltCompensation(freq, tilt);
+
+    // Normalize dB to 0-1 range for Y positioning
+    // dbMax maps to 1.0 (top), dbMin maps to 0.0 (bottom)
+    const normalizedDb = Math.max(0, Math.min(1, (db - rangeConfig.dbMin) / dbRange));
+    // X position: map band index to spectrum width
+    const x = LEFT_MARGIN + (i / (numBands - 1)) * SPECTRUM_WIDTH;
+    // Y position: dbMax at top (y=TOP_MARGIN), dbMin at bottom (y=TOP_MARGIN+SPECTRUM_HEIGHT)
+    const y = TOP_MARGIN + SPECTRUM_HEIGHT - (normalizedDb * SPECTRUM_HEIGHT);
+    return { x: isNaN(x) ? LEFT_MARGIN : x, y: isNaN(y) ? TOP_MARGIN + SPECTRUM_HEIGHT : y };
   });
 
-  // Create smooth bezier curve path
+  // Create smooth bezier curve path using Catmull-Rom spline
   let pathD = `M ${points[0].x} ${points[0].y}`;
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -119,23 +470,83 @@ function renderSpectrumCurve(animatedSpectrum: number[]) {
     pathD += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
   }
 
-  // Create filled area path
-  const areaD = pathD + ` L ${width} ${height} L 0 ${height} Z`;
+  // Create filled area path (close at bottom of spectrum area)
+  const areaD = pathD + ` L ${LEFT_MARGIN + SPECTRUM_WIDTH} ${TOP_MARGIN + SPECTRUM_HEIGHT} L ${LEFT_MARGIN} ${TOP_MARGIN + SPECTRUM_HEIGHT} Z`;
+
+  // Use different gradients based on type
+  const fillGradient = type === 'input' ? 'url(#spectrumInputGradient)' : 'url(#spectrumGradient)';
+  const strokeGradient = type === 'input' ? 'url(#spectrumInputStroke)' : 'url(#spectrumStroke)';
+  const strokeWidth = type === 'input' ? '1' : '1.5';
 
   return (
     <>
       {/* Filled area under curve */}
       <path
         d={areaD}
-        fill="url(#spectrumGradient)"
+        fill={fillGradient}
       />
       {/* Curve line */}
       <path
         d={pathD}
         fill="none"
-        stroke="url(#spectrumStroke)"
-        strokeWidth="1.5"
+        stroke={strokeGradient}
+        strokeWidth={strokeWidth}
       />
     </>
+  );
+}
+
+// Renders peak hold markers as small horizontal lines at each band's peak
+function renderPeakMarkers(peakSpectrum: number[], tilt: TiltOption, rangeConfig: RangeConfig) {
+  if (!peakSpectrum || peakSpectrum.length < 2) {
+    return null;
+  }
+
+  const numBands = peakSpectrum.length;
+  const dbRange = rangeConfig.dbMax - rangeConfig.dbMin;
+
+  // Convert peak magnitudes to positions
+  const markers = peakSpectrum.map((mag, i) => {
+    const safeMag = (typeof mag === 'number' && !isNaN(mag) && mag > 0) ? mag : 0;
+    if (safeMag < 0.001) return null; // Skip very low peaks
+
+    // Convert linear magnitude to dB
+    let db = safeMag > 0 ? 20 * Math.log10(safeMag) : rangeConfig.dbMin;
+
+    // Apply tilt compensation
+    const freq = getBandFrequency(i, numBands);
+    db += getTiltCompensation(freq, tilt);
+
+    // Skip if below visible range
+    if (db < rangeConfig.dbMin) return null;
+
+    // Normalize dB to Y position
+    const normalizedDb = Math.max(0, Math.min(1, (db - rangeConfig.dbMin) / dbRange));
+    const x = LEFT_MARGIN + (i / (numBands - 1)) * SPECTRUM_WIDTH;
+    const y = TOP_MARGIN + SPECTRUM_HEIGHT - (normalizedDb * SPECTRUM_HEIGHT);
+
+    // Calculate marker width (wider for bands with more frequency range)
+    const bandWidth = SPECTRUM_WIDTH / (numBands - 1);
+    const markerWidth = Math.max(4, bandWidth * 0.6);
+
+    return { x, y, markerWidth };
+  }).filter(Boolean);
+
+  return (
+    <g>
+      {markers.map((marker, i) => marker && (
+        <line
+          key={i}
+          x1={marker.x - marker.markerWidth / 2}
+          y1={marker.y}
+          x2={marker.x + marker.markerWidth / 2}
+          y2={marker.y}
+          stroke="#fbbf24"
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity="0.8"
+        />
+      ))}
+    </g>
   );
 }

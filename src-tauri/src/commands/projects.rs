@@ -549,12 +549,6 @@ fn generate_effect_native_template(
         r#"use nih_plug::prelude::*;
 use std::sync::Arc;
 
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
-
 /// {description}
 struct {pascal_name} {{
     params: Arc<{pascal_name}Params>,
@@ -627,8 +621,10 @@ impl Plugin for {pascal_name} {{
             let gain = self.params.gain.smoothed.next();
             for sample in channel_samples {{
                 *sample *= gain;
-                // Safety limiter - prevent clipping/speaker damage
-                *sample = safety_limit(*sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                if !sample.is_finite() {{
+                    *sample = 0.0;
+                }}
             }}
         }}
         ProcessStatus::Normal
@@ -676,12 +672,6 @@ fn generate_instrument_native_template(
     format!(
         r#"use nih_plug::prelude::*;
 use std::sync::Arc;
-
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
 
 /// {description}
 struct {pascal_name} {{
@@ -813,8 +803,8 @@ impl Plugin for {pascal_name} {{
             }};
 
             for output_sample in channel_samples {{
-                // Safety limiter - prevent clipping/speaker damage
-                *output_sample = safety_limit(sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                *output_sample = if sample.is_finite() {{ sample }} else {{ 0.0 }};
             }}
         }}
 
@@ -869,10 +859,6 @@ use std::sync::Arc;
 use std::sync::atomic::{{AtomicBool, Ordering}};
 
 /// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
 
 /// Messages from the WebView UI
 #[derive(Deserialize)]
@@ -1008,7 +994,10 @@ impl Plugin for {pascal_name} {{
             let gain = self.params.gain.smoothed.next();
             for sample in channel_samples {{
                 *sample *= gain;
-                *sample = safety_limit(*sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                if !sample.is_finite() {{
+                    *sample = 0.0;
+                }}
             }}
         }}
         ProcessStatus::Normal
@@ -1057,12 +1046,6 @@ fn generate_effect_egui_template(
         r#"use nih_plug::prelude::*;
 use nih_plug_egui::{{create_egui_editor, egui, widgets, EguiState}};
 use std::sync::Arc;
-
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
 
 /// {description}
 struct {pascal_name} {{
@@ -1158,7 +1141,10 @@ impl Plugin for {pascal_name} {{
             let gain = self.params.gain.smoothed.next();
             for sample in channel_samples {{
                 *sample *= gain;
-                *sample = safety_limit(*sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                if !sample.is_finite() {{
+                    *sample = 0.0;
+                }}
             }}
         }}
         ProcessStatus::Normal
@@ -1212,10 +1198,6 @@ use std::sync::Arc;
 use std::sync::atomic::{{AtomicBool, Ordering}};
 
 /// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
 
 /// Messages from the WebView UI
 #[derive(Deserialize)]
@@ -1400,7 +1382,8 @@ impl Plugin for {pascal_name} {{
             }};
 
             for output_sample in channel_samples {{
-                *output_sample = safety_limit(sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                *output_sample = if sample.is_finite() {{ sample }} else {{ 0.0 }};
             }}
         }}
 
@@ -1450,12 +1433,6 @@ fn generate_instrument_egui_template(
         r#"use nih_plug::prelude::*;
 use nih_plug_egui::{{create_egui_editor, egui, widgets, EguiState}};
 use std::sync::Arc;
-
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-#[inline]
-fn safety_limit(sample: f32) -> f32 {{
-    sample.clamp(-1.0, 1.0)
-}}
 
 /// {description}
 struct {pascal_name} {{
@@ -1600,7 +1577,8 @@ impl Plugin for {pascal_name} {{
             }};
 
             for output_sample in channel_samples {{
-                *output_sample = safety_limit(sample);
+                // Protect against NaN/Inf (can crash DAWs)
+                *output_sample = if sample.is_finite() {{ sample }} else {{ 0.0 }};
             }}
         }}
 
