@@ -239,8 +239,11 @@ export const StereoImager = memo(function StereoImager({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5">
           <svg className="w-3.5 h-3.5 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            {/* Stereo field icon */}
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+            {/* Stereo field icon - semicircle with L/R */}
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 18 A 8 8 0 0 1 20 18" />
+            <circle cx="4" cy="18" r="1.5" fill="currentColor" />
+            <circle cx="20" cy="18" r="1.5" fill="currentColor" />
+            <line x1="12" y1="18" x2="12" y2="10" strokeOpacity="0.5" />
           </svg>
           <span className="text-xs text-text-muted font-medium">Stereo Field</span>
         </div>
