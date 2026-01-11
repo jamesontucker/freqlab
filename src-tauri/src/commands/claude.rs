@@ -289,7 +289,7 @@ When modifying the plugin:
 2. Edit src/lib.rs with your changes
 3. Keep code clean and well-commented
 4. Use proper DSP practices (avoid denormals, handle edge cases)
-5. Always check for NaN/Inf values in output (use `if !sample.is_finite() { *sample = 0.0; }`) - do NOT hard-limit with clamp()
+5. Always check for NaN/Inf values in output (use `if !sample.is_finite() {{ *sample = 0.0; }}`) - do NOT hard-limit with clamp()
 6. Briefly summarize what you changed after making edits
 
 The user will describe what they want. Make the changes directly to the code."#,

@@ -176,7 +176,7 @@ Before saying a feature is "done", verify ALL boxes are checked:
 
 ### Safety Requirements
 
-- **Always protect against NaN/Inf**: Use `if !sample.is_finite() { *sample = 0.0; }` - these values crash DAWs
+- **Always protect against NaN/Inf**: Use `if !sample.is_finite() {{ *sample = 0.0; }}` - these values crash DAWs
 - **Do NOT hard-limit output**: The preview engine has its own speaker protection limiter
 - **Handle edge cases**: Check for zero/negative values before division
 - **Smooth transitions**: Use parameter smoothing for any audio-rate changes
