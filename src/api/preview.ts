@@ -197,8 +197,14 @@ export interface MeteringData {
   input_right_db: number;
   /** Spectrum analyzer band magnitudes (0.0 - 1.0), 32 bands */
   spectrum: number[];
-  /** Waveform display buffer (time-domain samples, -1.0 to 1.0), 256 samples */
-  waveform: number[];
+  /** Left channel waveform display buffer (time-domain samples, -1.0 to 1.0), 512 samples */
+  waveform_left: number[];
+  /** Right channel waveform display buffer (time-domain samples, -1.0 to 1.0), 512 samples */
+  waveform_right: number[];
+  /** Left channel peak hold value (0.0 - 1.0, cleared after read) */
+  waveform_peak_left: number;
+  /** Right channel peak hold value (0.0 - 1.0, cleared after read) */
+  waveform_peak_right: number;
   /** Left channel clipping indicator */
   clipping_left: boolean;
   /** Right channel clipping indicator */

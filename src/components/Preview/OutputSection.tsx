@@ -27,25 +27,22 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
   const [showWaveform, setShowWaveform] = useState(false);
   const [showStereoImager, setShowStereoImager] = useState(false);
 
-  // Refs for animation loop access (to avoid stale closures)
+  // Ref for animation loop access (to avoid stale closures)
   const showSpectrumRef = useRef(showSpectrum);
-  const showWaveformRef = useRef(showWaveform);
   showSpectrumRef.current = showSpectrum;
-  showWaveformRef.current = showWaveform;
 
   // Debounced dB values for smoother display (text only)
   const [displayDb, setDisplayDb] = useState({ left: -60, right: -60 });
   const dbUpdateRef = useRef<{ left: number; right: number }>({ left: -60, right: -60 });
 
-  // Animated spectrum, waveform, and levels for buttery smooth 60fps rendering
+  // Animated spectrum and levels for buttery smooth 60fps rendering
+  // Note: Waveform now handles its own animation internally
   const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
-  const animatedWaveformRef = useRef<number[]>(new Array(256).fill(0));
   const animatedLevelsRef = useRef({ left: 0, right: 0 });
 
   // Single state object for all animations - triggers one re-render per frame
   const [animationState, setAnimationState] = useState({
     spectrum: new Array(32).fill(0) as number[],
-    waveform: new Array(256).fill(0) as number[],
     levels: { left: 0, right: 0 },
   });
 
@@ -86,7 +83,6 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
     if (!isOpen || !isVisible) return;
 
     const smoothingFactor = 0.25; // Lower = smoother but more laggy
-    const waveformSmoothing = 0.5; // Faster response for time-domain
 
     const animate = () => {
       const metering = usePreviewStore.getState().metering;
@@ -110,23 +106,6 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
         }
       }
 
-      // Skip waveform interpolation when hidden (saves ~256 calculations per frame)
-      let waveformChanged = false;
-      if (showWaveformRef.current) {
-        const targetWaveform = metering.waveform;
-        const currentWaveform = animatedWaveformRef.current;
-        const numSamples = Math.min(currentWaveform.length, targetWaveform?.length || 0);
-        for (let i = 0; i < numSamples; i++) {
-          const target = targetWaveform[i] || 0;
-          const current = currentWaveform[i];
-          const diff = target - current;
-          if (Math.abs(diff) > 0.0001) {
-            currentWaveform[i] = current + diff * waveformSmoothing;
-            waveformChanged = true;
-          }
-        }
-      }
-
       // Interpolate output levels (always visible)
       const currentLevels = animatedLevelsRef.current;
       const leftDiff = (targetLeft || 0) - currentLevels.left;
@@ -139,10 +118,9 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
       }
 
       // Only update if something changed to avoid unnecessary re-renders
-      if (spectrumChanged || waveformChanged || levelsChanged) {
+      if (spectrumChanged || levelsChanged) {
         setAnimationState(prev => ({
           spectrum: spectrumChanged ? [...animatedSpectrumRef.current] : prev.spectrum,
-          waveform: waveformChanged ? [...animatedWaveformRef.current] : prev.waveform,
           levels: levelsChanged ? { ...currentLevels } : prev.levels,
         }));
       }
@@ -244,8 +222,8 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
         onToggle={() => setShowSpectrum(!showSpectrum)}
       />
       <WaveformDisplay
-        animatedWaveform={animationState.waveform}
         showWaveform={showWaveform}
+        isActive={isOpen && isVisible}
         onToggle={() => setShowWaveform(!showWaveform)}
       />
       <StereoImager

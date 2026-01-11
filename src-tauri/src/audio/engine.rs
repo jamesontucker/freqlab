@@ -59,8 +59,9 @@ const CROSSFADE_IN: u8 = 2;
 /// Crossfade duration in samples (at 44.1kHz: 4410 = 100ms)
 const CROSSFADE_SAMPLES: u32 = 4410;
 
-/// Number of samples in waveform display buffer
-const WAVEFORM_SAMPLES: usize = 256;
+/// Number of samples in waveform display buffer (per channel)
+/// 4096 samples = ~85ms at 48kHz, allows for various zoom levels
+const WAVEFORM_SAMPLES: usize = 4096;
 
 /// Maximum output buffer size to prevent unbounded growth (about 1 second at 48kHz)
 const MAX_OUTPUT_BUFFER_SIZE: usize = 48000;
@@ -208,9 +209,13 @@ struct SharedState {
     clipping_right: AtomicBool,
     // Spectrum analyzer data - stored as AtomicU32 array for lock-free access
     spectrum_bands: [AtomicU32; NUM_BANDS],
-    // Waveform display buffer (downsampled stereo samples as mono)
-    waveform_buffer: [AtomicU32; WAVEFORM_SAMPLES],
+    // Waveform display buffers (separate L/R for stereo visualization)
+    waveform_buffer_left: [AtomicU32; WAVEFORM_SAMPLES],
+    waveform_buffer_right: [AtomicU32; WAVEFORM_SAMPLES],
     waveform_write_pos: AtomicU32,
+    // Peak hold values for waveform display (cleared after read)
+    waveform_peak_left: AtomicU32,
+    waveform_peak_right: AtomicU32,
     // Stereo imaging data - positions stored as flat array [angle0, radius0, angle1, radius1, ...]
     stereo_positions: [AtomicU32; STEREO_HISTORY_SIZE * 2],
     stereo_correlation: AtomicU32,
@@ -470,17 +475,28 @@ impl AudioEngineHandle {
         (left, right)
     }
 
-    /// Get waveform display buffer (circular buffer of recent samples)
-    pub fn get_waveform_data(&self) -> Vec<f32> {
+    /// Get stereo waveform display buffers (circular buffer of recent samples)
+    /// Returns (left_channel, right_channel) vectors
+    pub fn get_waveform_data(&self) -> (Vec<f32>, Vec<f32>) {
         let write_pos = self.shared.waveform_write_pos.load(Ordering::Relaxed) as usize;
-        let mut waveform = Vec::with_capacity(WAVEFORM_SAMPLES);
+        let mut left = Vec::with_capacity(WAVEFORM_SAMPLES);
+        let mut right = Vec::with_capacity(WAVEFORM_SAMPLES);
 
         // Read from write_pos to end, then from start to write_pos (circular buffer order)
         for i in 0..WAVEFORM_SAMPLES {
             let idx = (write_pos + i) % WAVEFORM_SAMPLES;
-            waveform.push(u32_to_f32(self.shared.waveform_buffer[idx].load(Ordering::Relaxed)));
+            left.push(u32_to_f32(self.shared.waveform_buffer_left[idx].load(Ordering::Relaxed)));
+            right.push(u32_to_f32(self.shared.waveform_buffer_right[idx].load(Ordering::Relaxed)));
         }
-        waveform
+        (left, right)
+    }
+
+    /// Get and clear peak hold values for waveform display
+    /// Returns (left_peak, right_peak) - the maximum absolute sample values since last read
+    pub fn get_waveform_peaks(&self) -> (f32, f32) {
+        let left = u32_to_f32(self.shared.waveform_peak_left.swap(f32_to_u32(0.0), Ordering::Relaxed));
+        let right = u32_to_f32(self.shared.waveform_peak_right.swap(f32_to_u32(0.0), Ordering::Relaxed));
+        (left, right)
     }
 
     /// Get stereo imaging positions for visualization
@@ -785,6 +801,7 @@ impl AudioEngine {
         const INIT_BAND: AtomicU32 = AtomicU32::new(0);
         const INIT_WAVEFORM: AtomicU32 = AtomicU32::new(0);
         const INIT_STEREO: AtomicU32 = AtomicU32::new(0);
+        const INIT_PEAK: AtomicU32 = AtomicU32::new(0);
         let shared = Arc::new(SharedState {
             input_source: RwLock::new(InputSource::None),
             signal_generator: RwLock::new(SignalGenerator::new(sample_rate)),
@@ -801,8 +818,11 @@ impl AudioEngine {
             clipping_left: AtomicBool::new(false),
             clipping_right: AtomicBool::new(false),
             spectrum_bands: [INIT_BAND; NUM_BANDS],
-            waveform_buffer: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
+            waveform_buffer_left: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
+            waveform_buffer_right: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
             waveform_write_pos: AtomicU32::new(0),
+            waveform_peak_left: INIT_PEAK,
+            waveform_peak_right: INIT_PEAK,
             stereo_positions: [INIT_STEREO; STEREO_HISTORY_SIZE * 2],
             stereo_correlation: AtomicU32::new(f32_to_u32(1.0)), // Start at mono
             plugin_instance: RwLock::new(None),
@@ -1155,24 +1175,37 @@ impl AudioEngine {
                     }
 
                     // Update waveform display buffer (downsample to fit display)
-                    // Take every Nth frame to capture a longer time window
+                    // Store L and R separately for stereo visualization
                     let frames = data.len() / channels;
-                    let downsample_factor = (frames / 8).max(1); // Capture ~8 samples per callback
+                    let downsample_factor = (frames / 16).max(1); // Capture ~16 samples per callback for more detail
                     let mut write_pos = shared_clone.waveform_write_pos.load(Ordering::Relaxed) as usize;
 
+                    // Track peak values for peak hold display
+                    let mut waveform_peak_l = 0.0f32;
+                    let mut waveform_peak_r = 0.0f32;
+
                     for (i, chunk) in data.chunks(channels).enumerate() {
+                        let left_sample = chunk[0];
+                        let right_sample = if channels > 1 { chunk[1] } else { chunk[0] };
+
+                        // Track peaks
+                        waveform_peak_l = waveform_peak_l.max(left_sample.abs());
+                        waveform_peak_r = waveform_peak_r.max(right_sample.abs());
+
                         if i % downsample_factor == 0 {
-                            // Store mono mix of L/R
-                            let mono = if channels > 1 {
-                                (chunk[0] + chunk[1]) * 0.5
-                            } else {
-                                chunk[0]
-                            };
-                            shared_clone.waveform_buffer[write_pos].store(f32_to_u32(mono), Ordering::Relaxed);
+                            // Store L and R separately
+                            shared_clone.waveform_buffer_left[write_pos].store(f32_to_u32(left_sample), Ordering::Relaxed);
+                            shared_clone.waveform_buffer_right[write_pos].store(f32_to_u32(right_sample), Ordering::Relaxed);
                             write_pos = (write_pos + 1) % WAVEFORM_SAMPLES;
                         }
                     }
                     shared_clone.waveform_write_pos.store(write_pos as u32, Ordering::Relaxed);
+
+                    // Update peak hold values (keep max of current and new)
+                    let current_peak_l = u32_to_f32(shared_clone.waveform_peak_left.load(Ordering::Relaxed));
+                    let current_peak_r = u32_to_f32(shared_clone.waveform_peak_right.load(Ordering::Relaxed));
+                    shared_clone.waveform_peak_left.store(f32_to_u32(current_peak_l.max(waveform_peak_l)), Ordering::Relaxed);
+                    shared_clone.waveform_peak_right.store(f32_to_u32(current_peak_r.max(waveform_peak_r)), Ordering::Relaxed);
 
                     // Update spectrum analyzer (mono mix of L/R for analysis)
                     // Update every 2 callbacks for smoother visuals (~6ms at 44.1kHz/512)

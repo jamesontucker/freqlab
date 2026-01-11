@@ -54,7 +54,11 @@ export interface OutputMetering {
   inputLeftDb: number;
   inputRightDb: number;
   spectrum: number[];
-  waveform: number[];
+  // Stereo waveform data
+  waveformLeft: number[];
+  waveformRight: number[];
+  waveformPeakLeft: number;   // Peak hold value (0.0 - 1.0, cleared after read)
+  waveformPeakRight: number;  // Peak hold value (0.0 - 1.0, cleared after read)
   clippingLeft: boolean;
   clippingRight: boolean;
   // Stereo imaging data
@@ -165,7 +169,10 @@ const defaultMetering: OutputMetering = {
   inputLeftDb: -60,
   inputRightDb: -60,
   spectrum: new Array(32).fill(0),
-  waveform: new Array(256).fill(0),
+  waveformLeft: new Array(4096).fill(0),
+  waveformRight: new Array(4096).fill(0),
+  waveformPeakLeft: 0,
+  waveformPeakRight: 0,
   clippingLeft: false,
   clippingRight: false,
   stereoPositions: [],  // Empty initially, will be populated by metering events

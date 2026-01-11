@@ -43,8 +43,14 @@ pub struct MeteringData {
     pub input_right_db: f32,
     /// Spectrum analyzer band magnitudes (0.0 - 1.0)
     pub spectrum: Vec<f32>,
-    /// Waveform display buffer (time-domain samples, -1.0 to 1.0)
-    pub waveform: Vec<f32>,
+    /// Left channel waveform display buffer (time-domain samples, -1.0 to 1.0)
+    pub waveform_left: Vec<f32>,
+    /// Right channel waveform display buffer (time-domain samples, -1.0 to 1.0)
+    pub waveform_right: Vec<f32>,
+    /// Left channel peak hold value (0.0 - 1.0, cleared after read)
+    pub waveform_peak_left: f32,
+    /// Right channel peak hold value (0.0 - 1.0, cleared after read)
+    pub waveform_peak_right: f32,
     /// Left channel clipping indicator
     pub clipping_left: bool,
     /// Right channel clipping indicator
@@ -426,7 +432,8 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                 let (left, right) = handle.get_output_levels();
                 let (input_left, input_right) = handle.get_input_levels();
                 let spectrum = handle.get_spectrum_data();
-                let waveform = handle.get_waveform_data();
+                let (waveform_left, waveform_right) = handle.get_waveform_data();
+                let (waveform_peak_left, waveform_peak_right) = handle.get_waveform_peaks();
                 let (clipping_left, clipping_right) = handle.get_clipping();
                 let stereo_positions_tuples = handle.get_stereo_positions();
                 let stereo_correlation = handle.get_stereo_correlation();
@@ -448,7 +455,10 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                     input_left_db: level_to_db(input_left),
                     input_right_db: level_to_db(input_right),
                     spectrum: spectrum.to_vec(),
-                    waveform,
+                    waveform_left,
+                    waveform_right,
+                    waveform_peak_left,
+                    waveform_peak_right,
                     clipping_left,
                     clipping_right,
                     stereo_positions,
