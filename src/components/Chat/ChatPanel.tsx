@@ -9,6 +9,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 import { markdownComponents } from './markdownUtils';
 
@@ -67,6 +68,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   });
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const versionBadgeRef = useRef<HTMLSpanElement>(null);
+  const chatPanelRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessageType[]>([]);
   const isInitialMount = useRef(true);
   const isSavingRef = useRef(false);
@@ -151,6 +154,16 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
+    };
+  }, []);
+
+  // Register tour refs
+  useEffect(() => {
+    registerTourRef('chat-panel', chatPanelRef);
+    registerTourRef('chat-version-badge', versionBadgeRef);
+    return () => {
+      unregisterTourRef('chat-panel');
+      unregisterTourRef('chat-version-badge');
     };
   }, []);
 
@@ -642,7 +655,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const effectiveActiveVersion = activeVersion ?? latestVersion;
 
   return (
-    <div className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in">
+    <div ref={chatPanelRef} className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in">
       {/* Header with UI type and version */}
       <div className="px-4 py-2 border-b border-border flex items-center gap-2">
         {/* UI type with label */}
@@ -734,8 +747,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
                 // Assistant messages: split by \n\n into separate grey bubbles on the left
                 const blocks = message.content.split(/\n\n+/).filter((block) => block.trim());
-                return (
-                  <div key={message.id} className={`space-y-2 ${isInactiveVersion ? 'opacity-50' : ''}`}>
+                const conversationalContent = (
+                  <div className={`space-y-2 ${isInactiveVersion ? 'opacity-50' : ''}`}>
                     {blocks.map((block, index) => {
                       const isLastBlock = index === blocks.length - 1;
                       const trimmedBlock = block.trimEnd();
@@ -765,7 +778,10 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                                     {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                   {message.version && (
-                                    <span className={`text-xs px-1.5 py-0.5 rounded ${isCurrentVersion ? 'bg-violet-500 text-white' : 'bg-violet-500/20 text-violet-400'}`}>
+                                    <span
+                                      ref={isCurrentVersion ? versionBadgeRef : undefined}
+                                      className={`text-xs px-1.5 py-0.5 rounded ${isCurrentVersion ? 'bg-violet-500 text-white' : 'bg-violet-500/20 text-violet-400'}`}
+                                    >
                                       v{message.version}{isCurrentVersion ? ' (current)' : ''}
                                     </span>
                                   )}
@@ -800,8 +816,12 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                     })}
                   </div>
                 );
+
+                // Version badge ref is now applied directly to the badge element inside conversationalContent
+                return <div key={message.id}>{conversationalContent}</div>;
               }
 
+              // Minimal mode: Version badge ref is passed directly to the ChatMessage component
               return (
                 <ChatMessage
                   key={message.id}
@@ -813,6 +833,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                       ? () => handleVersionChange(message.version!, message.commitHash!)
                       : undefined
                   }
+                  versionBadgeRef={isCurrentVersion && message.version ? versionBadgeRef : undefined}
                 />
               );
             })}

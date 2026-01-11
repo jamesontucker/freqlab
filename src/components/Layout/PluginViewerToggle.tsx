@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useTourStore } from '../../stores/tourStore';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import * as previewApi from '../../api/preview';
 
 // Helper to extract folder name from project path
@@ -11,6 +13,15 @@ function getFolderName(projectPath: string): string {
 }
 
 export function PluginViewerToggle() {
+  // Tour ref
+  const toggleButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Register tour ref
+  useEffect(() => {
+    registerTourRef('launch-plugin-toggle', toggleButtonRef);
+    return () => unregisterTourRef('launch-plugin-toggle');
+  }, []);
+
   // === REACTIVE STATE (with selectors) ===
   const loadedPlugin = usePreviewStore((s) => s.loadedPlugin);
   const pluginAvailable = usePreviewStore((s) => s.pluginAvailable);
@@ -22,6 +33,14 @@ export function PluginViewerToggle() {
   const activeProject = useProjectStore((s) => s.activeProject);
   const buildInProgress = useProjectBusyStore((s) => s.buildingPath !== null);
   const audioSettings = useSettingsStore((s) => s.audioSettings);
+
+  // Tour state
+  const tourActive = useTourStore((s) => s.isActive);
+  const currentTourStep = useTourStore((s) => s.currentStep);
+  // Block during tour except during launch-plugin step when plugin is NOT active
+  // Once plugin is active during launch-plugin step, block to prevent accidental double-click toggle
+  const isActive = loadedPlugin.status === 'active';
+  const launchPluginBlocked = tourActive && (currentTourStep !== 'launch-plugin' || isActive);
 
   // === STABLE ACTION REFERENCES ===
   const setPluginLoading = usePreviewStore.getState().setPluginLoading;
@@ -138,7 +157,6 @@ export function PluginViewerToggle() {
   }
 
   const isLoading = pluginLoading || loadedPlugin.status === 'loading' || loadedPlugin.status === 'reloading';
-  const isActive = loadedPlugin.status === 'active';
   const isNative = activeProject.uiFramework === 'native';
   const needsBuild = !pluginAvailable;
   const needsFreshBuild = webviewNeedsFreshBuild && activeProject.uiFramework === 'webview';
@@ -146,7 +164,8 @@ export function PluginViewerToggle() {
   // Always allow disabling if plugin is active - only disable when trying to enable but can't
   // Native plugins have no UI, so always disabled
   // Disable during builds to prevent version conflicts
-  const isDisabled = isNative || isLoading || buildInProgress ||
+  // Disable during tour unless it's the launch-plugin step
+  const isDisabled = isNative || isLoading || buildInProgress || launchPluginBlocked ||
     (!isActive && needsFreshBuild && loadedPlugin.status === 'unloaded') ||
     (!isActive && needsBuild);
 
@@ -205,6 +224,9 @@ export function PluginViewerToggle() {
 
   // Build tooltip text
   const getTooltip = () => {
+    if (launchPluginBlocked) {
+      return 'Complete the current step first';
+    }
     if (isNative) {
       return 'Native plugins have no UI to preview';
     }
@@ -250,6 +272,7 @@ export function PluginViewerToggle() {
 
       {/* Toggle button - styled to match Controls button */}
       <button
+        ref={toggleButtonRef}
         onClick={handleToggle}
         disabled={isDisabled}
         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 ${

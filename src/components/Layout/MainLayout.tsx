@@ -13,6 +13,7 @@ import { Modal } from '../Common/Modal'
 import { useProjectStore } from '../../stores/projectStore'
 import { useToastStore } from '../../stores/toastStore'
 import { usePreviewStore } from '../../stores/previewStore'
+import { useTourStore } from '../../stores/tourStore'
 
 interface AvailableFormats {
     vst3: boolean
@@ -41,6 +42,7 @@ export function MainLayout() {
     const activeProject = useProjectStore((s) => s.activeProject)
     const projects = useProjectStore((s) => s.projects)
     const isPreviewOpen = usePreviewStore((s) => s.isOpen)
+    const tourActive = useTourStore((s) => s.isActive)
 
     // === STABLE ACTION REFERENCES ===
     const createProject = useProjectStore.getState().createProject
@@ -257,8 +259,14 @@ export function MainLayout() {
                                                 new one.
                                             </p>
                                             <button
-                                                onClick={() => setIsNewProjectModalOpen(true)}
-                                                className="px-6 py-3 bg-accent hover:bg-accent-hover text-white font-medium rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-accent/25"
+                                                onClick={() => !tourActive && setIsNewProjectModalOpen(true)}
+                                                disabled={tourActive}
+                                                className={`px-6 py-3 font-medium rounded-xl transition-all duration-200 ${
+                                                    tourActive
+                                                        ? 'bg-bg-tertiary text-text-muted cursor-not-allowed'
+                                                        : 'bg-accent hover:bg-accent-hover text-white hover:shadow-lg hover:shadow-accent/25'
+                                                }`}
+                                                title={tourActive ? 'Use the sidebar button during the tour' : undefined}
                                             >
                                                 New Plugin
                                             </button>

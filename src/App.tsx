@@ -8,6 +8,7 @@ import { useUpdateStore } from './stores/updateStore';
 import { useNetworkStatusChange } from './hooks/useNetworkStatus';
 import { WelcomeWizard } from './components/Setup/WelcomeWizard';
 import { MainLayout } from './components/Layout/MainLayout';
+import { GuidedTour } from './components/Tour';
 import { applyTheme } from './components/Settings/ThemePicker';
 import type { PrerequisiteStatus } from './types';
 
@@ -132,10 +133,20 @@ function App() {
   }, [setupComplete, hasCheckedUpdates, addToast, setStatus, setUpdateInfo, setLastChecked]);
 
   if (!setupComplete) {
-    return <WelcomeWizard />;
+    return (
+      <>
+        <WelcomeWizard />
+        <GuidedTour />
+      </>
+    );
   }
 
-  return <MainLayout />;
+  return (
+    <>
+      <MainLayout />
+      <GuidedTour />
+    </>
+  );
 }
 
 export default App;

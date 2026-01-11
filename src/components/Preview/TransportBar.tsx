@@ -1,8 +1,9 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef, useEffect } from 'react';
 import { usePreviewStore, type SignalType } from '../../stores/previewStore';
 import { useShallow } from 'zustand/react/shallow';
 import * as previewApi from '../../api/preview';
 import { Tooltip } from '../Common/Tooltip';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 
 interface TransportBarProps {
   pluginType: 'effect' | 'instrument';
@@ -32,6 +33,15 @@ export const TransportBar = memo(function TransportBar({
   patternInfo,
   midiFileName,
 }: TransportBarProps) {
+  // Tour ref for play button
+  const playButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Register tour ref
+  useEffect(() => {
+    registerTourRef('play-button', playButtonRef);
+    return () => unregisterTourRef('play-button');
+  }, []);
+
   // Subscribe to playback state
   const { isPlaying, isLooping, engineInitialized, inputSource, demoSamples } = usePreviewStore(
     useShallow((s) => ({
@@ -210,6 +220,7 @@ export const TransportBar = memo(function TransportBar({
       {/* Play/Stop button */}
       <Tooltip content={!engineInitialized ? 'Waiting for audio engine...' : isPlaying ? 'Stop' : 'Play'}>
         <button
+          ref={playButtonRef}
           onClick={onPlay}
           disabled={!engineInitialized}
           className={`p-2.5 rounded-lg transition-all duration-200 ${

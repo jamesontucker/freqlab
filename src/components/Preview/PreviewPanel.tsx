@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useProjectStore } from '../../stores/projectStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useTourStore } from '../../stores/tourStore';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import * as previewApi from '../../api/preview';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -85,6 +87,20 @@ export function PreviewPanel() {
   const [instrumentMidiSource, setInstrumentMidiSource] = useState<'piano' | 'patterns' | 'midi' | 'live'>('patterns');
   const levelListenerRef = useRef<(() => void) | null>(null);
   const pluginListenersRef = useRef<(() => void)[]>([]);
+
+  // Tour ref for the preview panel
+  const previewPanelRef = useRef<HTMLDivElement>(null);
+
+  // Tour state
+  const tourActive = useTourStore((s) => s.isActive);
+  const currentTourStep = useTourStore((s) => s.currentStep);
+  const previewPanelBlocked = tourActive && currentTourStep === 'introduce-preview-panel';
+
+  // Register tour ref
+  useEffect(() => {
+    registerTourRef('preview-panel', previewPanelRef);
+    return () => unregisterTourRef('preview-panel');
+  }, []);
   // Refs to avoid stale closure issues in project-switching cleanup and build handlers
   const isPlayingRef = useRef(isPlaying);
   const engineInitializedRef = useRef(engineInitialized);
@@ -539,10 +555,15 @@ export function PreviewPanel() {
 
   return (
     <div
+      ref={previewPanelRef}
       className={`fixed top-14 right-0 bottom-0 w-[480px] bg-bg-secondary border-l border-border shadow-2xl z-40 transform transition-transform duration-300 ease-in-out ${
         isOpen ? 'translate-x-0' : 'translate-x-full'
       }`}
     >
+      {/* Blocking overlay during tour introduction */}
+      {previewPanelBlocked && (
+        <div className="absolute inset-0 z-50 pointer-events-auto" />
+      )}
       <div className="h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">

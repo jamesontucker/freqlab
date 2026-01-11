@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
+import { useTourStore, TOUR_STEPS } from '../../stores/tourStore';
 
 interface PendingAttachment {
   id: string;
@@ -78,6 +80,58 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewErrors, setPreviewErrors] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
+
+  // Tour state
+  const tourActive = useTourStore((s) => s.isActive);
+  const currentTourStep = useTourStore((s) => s.currentStep);
+
+  // Get tour step config for suggested message
+  const tourStepConfig = TOUR_STEPS.find(s => s.id === currentTourStep);
+  const tourSuggestedMessage = tourStepConfig?.suggestedMessage;
+
+  // Check if we're in the send-chat-message tour step (block send until they click "Got it")
+  const isChatTourStep = tourActive && currentTourStep === 'send-chat-message';
+  // Check if we're in waiting step (block interrupt)
+  const isWaitingTourStep = tourActive && currentTourStep === 'wait-for-response';
+
+  // Steps where chat input should be completely blocked (after we've sent the initial message)
+  const chatBlockedSteps = [
+    'send-chat-message',
+    'highlight-send-button',
+    'wait-for-response',
+    'show-version-message',
+    'click-build',
+    'wait-for-build',
+    'launch-plugin',
+    'open-controls',
+    'select-sample',
+    'click-play',
+    'show-publish',
+    'show-settings',
+    'complete',
+  ];
+  const isChatTourInputLocked = tourActive && currentTourStep !== null && chatBlockedSteps.includes(currentTourStep);
+
+  // Auto-fill the input with suggested message when entering the chat tour step
+  useEffect(() => {
+    if (isChatTourStep && tourSuggestedMessage && !value) {
+      setValue(tourSuggestedMessage);
+    }
+  }, [isChatTourStep, tourSuggestedMessage]);
+
+  // Register tour refs
+  useEffect(() => {
+    registerTourRef('chat-input', textareaRef);
+    registerTourRef('chat-send-button', sendButtonRef);
+    registerTourRef('chat-input-container', inputContainerRef);
+    return () => {
+      unregisterTourRef('chat-input');
+      unregisterTourRef('chat-send-button');
+      unregisterTourRef('chat-input-container');
+    };
+  }, []);
 
   // Handle preview image load error - fall back to file icon
   const handlePreviewError = (id: string) => {
@@ -148,7 +202,7 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
   const canSend = (value.trim() || attachments.length > 0) && !disabled;
 
   return (
-    <div className="border-t border-border bg-bg-secondary p-3">
+    <div ref={inputContainerRef} className="border-t border-border bg-bg-secondary p-3">
       {/* Attachment previews */}
       {attachments.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -213,12 +267,24 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={handleKeyDown}
+            onChange={(e) => {
+              // Prevent changes during tour chat steps
+              if (isChatTourInputLocked) return;
+              setValue(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              // Prevent submit during tour chat steps
+              if (isChatTourInputLocked && e.key === 'Enter') {
+                e.preventDefault();
+                return;
+              }
+              handleKeyDown(e);
+            }}
             placeholder={placeholder}
             disabled={disabled}
+            readOnly={isChatTourInputLocked}
             rows={1}
-            className="flex-1 bg-transparent text-text-primary placeholder-text-muted focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed leading-normal text-sm py-1"
+            className={`flex-1 bg-transparent text-text-primary placeholder-text-muted focus:outline-none resize-none disabled:opacity-50 disabled:cursor-not-allowed leading-normal text-sm py-1 ${isChatTourInputLocked ? 'cursor-default' : ''}`}
           />
           {/* Keyboard hint inside input */}
           <span className="text-[10px] text-text-muted hidden sm:block whitespace-nowrap">
@@ -229,9 +295,18 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
         {/* Send or Stop button */}
         {showInterrupt && onInterrupt ? (
           <button
-            onClick={onInterrupt}
-            className="p-2.5 rounded-lg border transition-all duration-200 flex-shrink-0 flex items-center justify-center bg-error/10 text-error border-error/30 hover:bg-error/20 hover:border-error/50"
-            title="Stop generating"
+            onClick={() => {
+              // Block interrupt during tour waiting step
+              if (isWaitingTourStep) return;
+              onInterrupt();
+            }}
+            disabled={isWaitingTourStep}
+            className={`p-2.5 rounded-lg border transition-all duration-200 flex-shrink-0 flex items-center justify-center ${
+              isWaitingTourStep
+                ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
+                : 'bg-error/10 text-error border-error/30 hover:bg-error/20 hover:border-error/50'
+            }`}
+            title={isWaitingTourStep ? 'Please wait for the plugin to be created' : 'Stop generating'}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h12v12H6z" />
@@ -239,14 +314,20 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
           </button>
         ) : (
           <button
-            onClick={handleSubmit}
-            disabled={!canSend}
+            ref={sendButtonRef}
+            onClick={() => {
+              // During send-chat-message step, block send (user needs to click "Got it" first)
+              if (isChatTourStep) return;
+              // During highlight-send-button step, allow send
+              handleSubmit();
+            }}
+            disabled={!canSend || isChatTourStep}
             className={`p-2.5 rounded-lg border transition-all duration-200 flex-shrink-0 flex items-center justify-center ${
-              !canSend
+              !canSend || isChatTourStep
                 ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
                 : 'bg-accent hover:bg-accent-hover text-white border-accent hover:shadow-lg hover:shadow-accent/25'
             }`}
-            title="Send message"
+            title={isChatTourStep ? 'Type the suggested message first' : 'Send message'}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />

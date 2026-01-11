@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, RefObject } from 'react';
 import type { ChatMessage as ChatMessageType } from '../../types';
 import { AttachmentPreview } from './AttachmentPreview';
 import ReactMarkdown from 'react-markdown';
@@ -9,9 +9,10 @@ interface ChatMessageProps {
   isInactive?: boolean;  // Version is ahead of active version (greyed out)
   isCurrentVersion?: boolean;  // This is the currently active version
   onVersionClick?: () => void;  // Click to switch to this version
+  versionBadgeRef?: RefObject<HTMLSpanElement>;  // Ref for tour highlighting
 }
 
-export const ChatMessage = memo(function ChatMessage({ message, isInactive, isCurrentVersion, onVersionClick }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isInactive, isCurrentVersion, onVersionClick, versionBadgeRef }: ChatMessageProps) {
   const isUser = message.role === 'user';
   // Use isInactive for styling, fall back to legacy reverted field
   const isGreyedOut = isInactive || message.reverted;
@@ -69,7 +70,10 @@ export const ChatMessage = memo(function ChatMessage({ message, isInactive, isCu
               {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
             {message.version && !isUser && (
-              <span className={`text-xs px-1.5 py-0.5 rounded ${isCurrentVersion ? 'bg-violet-500 text-white' : 'bg-violet-500/20 text-violet-400'}`}>
+              <span
+                ref={versionBadgeRef}
+                className={`text-xs px-1.5 py-0.5 rounded ${isCurrentVersion ? 'bg-violet-500 text-white' : 'bg-violet-500/20 text-violet-400'}`}
+              >
                 v{message.version}{isCurrentVersion ? ' (current)' : ''}
               </span>
             )}

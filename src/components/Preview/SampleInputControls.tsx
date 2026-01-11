@@ -1,11 +1,23 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useRef, useEffect } from 'react';
 import { usePreviewStore, type DemoSample } from '../../stores/previewStore';
 import { open } from '@tauri-apps/plugin-dialog';
 import * as previewApi from '../../api/preview';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 
 export const SampleInputControls = memo(function SampleInputControls() {
   const inputSource = usePreviewStore((s) => s.inputSource);
   const demoSamples = usePreviewStore((s) => s.demoSamples);
+
+  // Tour ref for drums sample button (preferred for tour demo)
+  const drumsSampleRef = useRef<HTMLButtonElement>(null);
+
+  // Register tour ref when samples are available - prefer Drums sample
+  useEffect(() => {
+    if (demoSamples.length > 0) {
+      registerTourRef('sample-select', drumsSampleRef);
+      return () => unregisterTourRef('sample-select');
+    }
+  }, [demoSamples.length]);
 
   // Get setters via getState to avoid re-renders
   const setInputSource = usePreviewStore.getState().setInputSource;
@@ -68,6 +80,7 @@ export const SampleInputControls = memo(function SampleInputControls() {
           {demoSamples.map((sample) => (
             <button
               key={sample.id}
+              ref={sample.id === 'drums' || sample.name.toLowerCase() === 'drums' ? drumsSampleRef : undefined}
               onClick={() => handleSampleSelect(sample.id)}
               className={`p-2 rounded-lg text-sm text-left transition-colors ${
                 inputSource.sampleId === sample.id && !inputSource.customPath

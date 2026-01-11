@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Modal } from '../Common/Modal';
 import { Spinner } from '../Common/Spinner';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useProjectStore } from '../../stores/projectStore';
+import { useTourStore } from '../../stores/tourStore';
+import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import type { CreateProjectInput, PluginTemplate, UIFramework } from '../../types';
 
 interface NewProjectModalProps {
@@ -181,6 +183,72 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { vendorName, vendorUrl, vendorEmail } = useSettingsStore();
 
+  // Tour mode - check if we're in the guided tour during new plugin creation
+  const tourActive = useTourStore((s) => s.isActive);
+  const currentTourStep = useTourStore((s) => s.currentStep);
+  const exitTour = useTourStore.getState().exitTour;
+  const isTourMode = tourActive && (currentTourStep?.startsWith('new-plugin-') || currentTourStep?.startsWith('introduce-'));
+
+  // Tour refs
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const descriptionInputRef = useRef<HTMLTextAreaElement>(null);
+  const typeSelectionRef = useRef<HTMLDivElement>(null);
+  const effectTypeRef = useRef<HTMLButtonElement>(null);
+  const nextButtonRef = useRef<HTMLButtonElement>(null);
+  const nextUiButtonRef = useRef<HTMLButtonElement>(null);
+  const frameworkSelectionRef = useRef<HTMLDivElement>(null);
+  const webviewFrameworkRef = useRef<HTMLButtonElement>(null);
+  const eguiFrameworkRef = useRef<HTMLButtonElement>(null);
+  const componentsSelectionRef = useRef<HTMLDivElement>(null);
+  const createButtonRef = useRef<HTMLButtonElement>(null);
+  const skipButtonRef = useRef<HTMLButtonElement>(null);
+  const modalContentRef = useRef<HTMLDivElement>(null);
+
+  // Register tour refs when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      registerTourRef('new-plugin-name-input', nameInputRef);
+      registerTourRef('new-plugin-description-input', descriptionInputRef);
+      registerTourRef('new-plugin-type-selection', typeSelectionRef);
+      registerTourRef('new-plugin-type-effect', effectTypeRef);
+      registerTourRef('new-plugin-next-button', nextButtonRef);
+      registerTourRef('new-plugin-next-ui-button', nextUiButtonRef);
+      registerTourRef('new-plugin-framework-selection', frameworkSelectionRef);
+      registerTourRef('new-plugin-framework-webview', webviewFrameworkRef);
+      registerTourRef('new-plugin-framework-egui', eguiFrameworkRef);
+      registerTourRef('new-plugin-components-selection', componentsSelectionRef);
+      registerTourRef('new-plugin-create-button', createButtonRef);
+      registerTourRef('new-plugin-skip-button', skipButtonRef);
+      registerTourRef('new-plugin-modal', modalContentRef);
+      return () => {
+        unregisterTourRef('new-plugin-name-input');
+        unregisterTourRef('new-plugin-description-input');
+        unregisterTourRef('new-plugin-type-selection');
+        unregisterTourRef('new-plugin-type-effect');
+        unregisterTourRef('new-plugin-next-button');
+        unregisterTourRef('new-plugin-next-ui-button');
+        unregisterTourRef('new-plugin-framework-selection');
+        unregisterTourRef('new-plugin-framework-webview');
+        unregisterTourRef('new-plugin-framework-egui');
+        unregisterTourRef('new-plugin-components-selection');
+        unregisterTourRef('new-plugin-create-button');
+        unregisterTourRef('new-plugin-skip-button');
+        unregisterTourRef('new-plugin-modal');
+      };
+    }
+  }, [isOpen]);
+
+  // Tour mode: pre-fill values when modal opens in tour mode
+  useEffect(() => {
+    if (isOpen && isTourMode && name === '') {
+      // Pre-fill suggested name for tour
+      setName('My Phaser');
+      setTemplate('effect');
+      setUiFramework('egui'); // Use Simple UI for tour - easier and faster
+      setDescription('A phaser effect with rate and depth controls');
+    }
+  }, [isOpen, isTourMode]);
+
   // Get existing project names for duplicate checking
   const projects = useProjectStore((s) => s.projects);
   const existingFolderNames = projects.map(p => p.path.split('/').pop() || '');
@@ -269,6 +337,10 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
   };
 
   const handleClose = () => {
+    // If in tour mode and user closes modal, exit the tour
+    if (isTourMode) {
+      exitTour();
+    }
     // Reset state when closing
     setName('');
     setDescription('');
@@ -298,8 +370,8 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
   const components = template === 'effect' ? EFFECT_COMPONENTS : INSTRUMENT_COMPONENTS;
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="New Plugin" size="lg">
-      <div className="flex flex-col min-h-[435px]">
+    <Modal isOpen={isOpen} onClose={handleClose} title="New Plugin" size="lg" preventClose={isTourMode}>
+      <div ref={modalContentRef} className="flex flex-col min-h-[435px]">
         {step === 'basic' && (
           <div className="space-y-4">
             {/* Plugin Name */}
@@ -308,6 +380,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                 Plugin Name
               </label>
               <input
+                ref={nameInputRef}
                 type="text"
                 id="name"
                 value={name}
@@ -325,13 +398,15 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
             </div>
 
             {/* Plugin Type */}
-            <div>
+            <div ref={typeSelectionRef}>
               <label className="block text-sm font-medium text-text-secondary mb-1.5">
                 Plugin Type
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
+                  ref={effectTypeRef}
                   type="button"
+                  disabled={isTourMode}
                   onClick={() => {
                     setTemplate('effect');
                     setSelectedComponents([]);
@@ -361,6 +436,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                 </button>
                 <button
                   type="button"
+                  disabled={isTourMode}
                   onClick={() => {
                     setTemplate('instrument');
                     setSelectedComponents([]);
@@ -368,7 +444,9 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                   className={`p-3 rounded-xl border-2 transition-all text-left ${
                     template === 'instrument'
                       ? 'border-accent bg-accent/5'
-                      : 'border-border hover:border-text-muted hover:bg-bg-tertiary/50'
+                      : isTourMode
+                        ? 'border-border opacity-50 cursor-not-allowed'
+                        : 'border-border hover:border-text-muted hover:bg-bg-tertiary/50'
                   }`}
                 >
                   <div className="flex items-center gap-3 mb-2">
@@ -402,6 +480,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                 <span className="text-xs text-text-muted">Helps the chat understand your vision</span>
               </div>
               <textarea
+                ref={descriptionInputRef}
                 id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value.slice(0, 280))}
@@ -426,17 +505,24 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
               <p className="text-xs text-text-muted mb-4">
                 How important is your plugin's visual appearance vs. CPU efficiency?
               </p>
-              <div className="grid grid-cols-3 gap-3">
-                {UI_FRAMEWORK_OPTIONS.map((option) => (
+              <div ref={frameworkSelectionRef} className="grid grid-cols-3 gap-3">
+                {UI_FRAMEWORK_OPTIONS.map((option) => {
+                  // During tour, only webview is selectable (pre-selected)
+                  const isBlockedByTour = isTourMode && option.id !== 'egui';
+                  return (
                   <button
                     key={option.id}
+                    ref={option.id === 'webview' ? webviewFrameworkRef : option.id === 'egui' ? eguiFrameworkRef : undefined}
                     type="button"
-                    onClick={() => setUiFramework(option.id)}
+                    onClick={() => {
+                      if (isBlockedByTour) return;
+                      setUiFramework(option.id);
+                    }}
                     className={`relative p-4 rounded-xl border-2 transition-all duration-200 text-left flex flex-col ${
                       uiFramework === option.id
                         ? 'border-accent bg-gradient-to-br from-accent/10 to-accent/5 shadow-lg shadow-accent/10'
                         : 'border-border hover:border-text-muted hover:bg-bg-tertiary/50'
-                    }`}
+                    } ${isBlockedByTour ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     {/* Selection indicator */}
                     {uiFramework === option.id && (
@@ -498,7 +584,8 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                       </div>
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </>
@@ -511,19 +598,24 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                 <h3 className="text-sm font-medium text-text-secondary">Features to Develop</h3>
                 <span className="text-xs text-text-muted">Optional - skip if unsure</span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div ref={componentsSelectionRef} className="grid grid-cols-2 gap-2">
                 {components.map((component) => {
                   const isSelected = selectedComponents.includes(component.id);
                   return (
                     <button
                       key={component.id}
                       type="button"
-                      onClick={() => toggleComponent(component.id)}
+                      onClick={() => {
+                        // Block component selection during tour
+                        if (isTourMode) return;
+                        toggleComponent(component.id);
+                      }}
+                      disabled={isTourMode}
                       className={`relative p-4 rounded-xl border-2 transition-all duration-200 text-left group ${
                         isSelected
                           ? 'border-accent bg-accent/5'
                           : 'border-border hover:border-text-muted'
-                      }`}
+                      } ${isTourMode ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <div className="flex items-start gap-3">
                         {/* Checkbox */}
@@ -598,15 +690,27 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
             <>
               <button
                 type="button"
-                onClick={handleClose}
-                className="flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200"
+                onClick={() => {
+                  // Block cancel during tour
+                  if (isTourMode) return;
+                  handleClose();
+                }}
+                disabled={isTourMode}
+                className={`flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200 ${
+                  isTourMode ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 Cancel
               </button>
               <button
+                ref={nextButtonRef}
                 type="button"
-                onClick={handleNext}
-                disabled={!name}
+                onClick={() => {
+                  // Only allow Next when on the next-button tour step
+                  if (isTourMode && currentTourStep !== 'new-plugin-next-basic') return;
+                  handleNext();
+                }}
+                disabled={!name || (isTourMode && currentTourStep !== 'new-plugin-next-basic')}
                 className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-xl transition-all duration-200 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none"
               >
                 Next
@@ -617,15 +721,30 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
             <>
               <button
                 type="button"
-                onClick={handleBack}
-                className="flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200"
+                onClick={() => {
+                  // Block back during tour
+                  if (isTourMode) return;
+                  handleBack();
+                }}
+                disabled={isTourMode}
+                className={`flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200 ${
+                  isTourMode ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 Back
               </button>
               <button
+                ref={nextUiButtonRef}
                 type="button"
-                onClick={handleNext}
-                className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover text-white font-medium rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-accent/25"
+                onClick={() => {
+                  // Allow Next during new-plugin-next-ui tour step
+                  if (isTourMode && currentTourStep !== 'new-plugin-next-ui') return;
+                  handleNext();
+                }}
+                disabled={isTourMode && currentTourStep !== 'new-plugin-next-ui'}
+                className={`flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover text-white font-medium rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-accent/25 ${
+                  isTourMode && currentTourStep !== 'new-plugin-next-ui' ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 Next
               </button>
@@ -634,17 +753,29 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
           {step === 'components' && (
             <>
               <button
+                ref={skipButtonRef}
                 type="button"
-                onClick={handleBack}
-                disabled={isSubmitting}
-                className="flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200 disabled:opacity-50"
+                onClick={() => {
+                  // Block back during tour
+                  if (isTourMode) return;
+                  handleBack();
+                }}
+                disabled={isSubmitting || isTourMode}
+                className={`flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200 ${
+                  isSubmitting || isTourMode ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
               >
                 Back
               </button>
               <button
+                ref={createButtonRef}
                 type="button"
-                onClick={handleSubmit}
-                disabled={isSubmitting}
+                onClick={() => {
+                  // Only allow Create when on the create tour step
+                  if (isTourMode && currentTourStep !== 'new-plugin-create') return;
+                  handleSubmit();
+                }}
+                disabled={isSubmitting || (isTourMode && currentTourStep !== 'new-plugin-create')}
                 className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-xl transition-all duration-200 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none flex items-center justify-center gap-2"
               >
                 {isSubmitting && <Spinner size="sm" />}

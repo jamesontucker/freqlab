@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useCallback } from 'react';
 import { useProjectStore } from '../../stores/projectStore';
 import { useProjectBusyStore } from '../../stores/projectBusyStore';
+import { useTourStore } from '../../stores/tourStore';
 import { ProjectCard } from './ProjectCard';
 import { Spinner } from '../Common/Spinner';
 
@@ -19,6 +20,9 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
   const buildingPath = useProjectBusyStore((s) => s.buildingPath);
   // Get the Set directly - we'll check membership in the card
   const claudeBusyPaths = useProjectBusyStore((s) => s.claudeBusyPaths);
+
+  // Tour state - block switching to other projects during tour
+  const tourActive = useTourStore((s) => s.isActive);
 
   // === STABLE ACTION REFERENCES ===
   const loadProjects = useProjectStore.getState().loadProjects;
@@ -50,15 +54,17 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
     return projects.map((project) => {
       const { isBusy, busyType } = getBusyState(project.path);
       const isCurrentProject = activeProjectId === project.id;
+      // Disable non-active projects during build OR during tour
+      const disabled = (anyBuildInProgress && !isCurrentProject) || (tourActive && !isCurrentProject);
       return {
         project,
         isActive: isCurrentProject,
         isBusy,
         busyType,
-        disabled: anyBuildInProgress && !isCurrentProject,
+        disabled,
       };
     });
-  }, [projects, activeProjectId, getBusyState, anyBuildInProgress]);
+  }, [projects, activeProjectId, getBusyState, anyBuildInProgress, tourActive]);
 
   // Stable callback for delete - memoize with project path
   const handleDelete = useCallback(async (projectPath: string) => {
