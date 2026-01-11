@@ -203,6 +203,10 @@ export interface MeteringData {
   clipping_left: boolean;
   /** Right channel clipping indicator */
   clipping_right: boolean;
+  /** Stereo imaging positions: [angle, radius] pairs for particle display */
+  stereo_positions: [number, number][];
+  /** Stereo correlation coefficient (-1.0 to +1.0) */
+  stereo_correlation: number;
 }
 
 /**

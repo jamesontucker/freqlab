@@ -57,6 +57,9 @@ export interface OutputMetering {
   waveform: number[];
   clippingLeft: boolean;
   clippingRight: boolean;
+  // Stereo imaging data
+  stereoPositions: [number, number][];  // [angle, radius] pairs for particle display
+  stereoCorrelation: number;            // -1 to +1 correlation coefficient
 }
 
 interface PreviewState {
@@ -165,6 +168,8 @@ const defaultMetering: OutputMetering = {
   waveform: new Array(256).fill(0),
   clippingLeft: false,
   clippingRight: false,
+  stereoPositions: [],  // Empty initially, will be populated by metering events
+  stereoCorrelation: 1.0,  // Start at mono
 };
 
 const initialState = {

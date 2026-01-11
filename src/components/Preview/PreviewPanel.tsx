@@ -155,6 +155,8 @@ export function PreviewPanel() {
                 waveform: data.waveform,
                 clippingLeft: data.clipping_left,
                 clippingRight: data.clipping_right,
+                stereoPositions: data.stereo_positions,
+                stereoCorrelation: data.stereo_correlation,
               });
             });
           }),

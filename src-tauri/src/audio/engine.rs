@@ -17,6 +17,7 @@ use super::plugin::{PluginInstance, PluginState};
 use super::samples::{AudioSample, SamplePlayer};
 use super::signals::{GatePattern, SignalConfig, SignalGenerator};
 use super::spectrum::{SpectrumAnalyzer, NUM_BANDS};
+use super::stereo::{StereoAnalyzer, STEREO_HISTORY_SIZE};
 
 /// Current state of the audio engine
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -210,6 +211,9 @@ struct SharedState {
     // Waveform display buffer (downsampled stereo samples as mono)
     waveform_buffer: [AtomicU32; WAVEFORM_SAMPLES],
     waveform_write_pos: AtomicU32,
+    // Stereo imaging data - positions stored as flat array [angle0, radius0, angle1, radius1, ...]
+    stereo_positions: [AtomicU32; STEREO_HISTORY_SIZE * 2],
+    stereo_correlation: AtomicU32,
     // Plugin hosting
     plugin_instance: RwLock<Option<PluginInstance>>,
     plugin_state: RwLock<PluginState>,
@@ -477,6 +481,26 @@ impl AudioEngineHandle {
             waveform.push(u32_to_f32(self.shared.waveform_buffer[idx].load(Ordering::Relaxed)));
         }
         waveform
+    }
+
+    /// Get stereo imaging positions for visualization
+    /// Returns Vec of (angle, radius) pairs where:
+    /// - angle: 0 = full left, PI/2 = center, PI = full right
+    /// - radius: 0-1 based on amplitude
+    pub fn get_stereo_positions(&self) -> Vec<(f32, f32)> {
+        let mut positions = Vec::with_capacity(STEREO_HISTORY_SIZE);
+        for i in 0..STEREO_HISTORY_SIZE {
+            let angle = u32_to_f32(self.shared.stereo_positions[i * 2].load(Ordering::Relaxed));
+            let radius = u32_to_f32(self.shared.stereo_positions[i * 2 + 1].load(Ordering::Relaxed));
+            positions.push((angle, radius));
+        }
+        positions
+    }
+
+    /// Get stereo correlation coefficient
+    /// Returns value from -1.0 (out of phase) to +1.0 (mono/in-phase)
+    pub fn get_stereo_correlation(&self) -> f32 {
+        u32_to_f32(self.shared.stereo_correlation.load(Ordering::Relaxed))
     }
 
     pub fn get_state(&self) -> EngineState {
@@ -757,9 +781,10 @@ impl AudioEngine {
         );
 
         // Create shared state
-        // Initialize spectrum bands and waveform arrays with zeros
+        // Initialize spectrum bands, waveform, and stereo arrays with zeros
         const INIT_BAND: AtomicU32 = AtomicU32::new(0);
         const INIT_WAVEFORM: AtomicU32 = AtomicU32::new(0);
+        const INIT_STEREO: AtomicU32 = AtomicU32::new(0);
         let shared = Arc::new(SharedState {
             input_source: RwLock::new(InputSource::None),
             signal_generator: RwLock::new(SignalGenerator::new(sample_rate)),
@@ -778,6 +803,8 @@ impl AudioEngine {
             spectrum_bands: [INIT_BAND; NUM_BANDS],
             waveform_buffer: [INIT_WAVEFORM; WAVEFORM_SAMPLES],
             waveform_write_pos: AtomicU32::new(0),
+            stereo_positions: [INIT_STEREO; STEREO_HISTORY_SIZE * 2],
+            stereo_correlation: AtomicU32::new(f32_to_u32(1.0)), // Start at mono
             plugin_instance: RwLock::new(None),
             plugin_state: RwLock::new(PluginState::Unloaded),
             midi_queue: RwLock::new(None),
@@ -804,6 +831,9 @@ impl AudioEngine {
         let mut spectrum_analyzer = SpectrumAnalyzer::new(sample_rate);
         // Counter for throttling spectrum updates (every N callbacks)
         let mut spectrum_update_counter = 0u32;
+
+        // Create stereo analyzer for stereo imaging visualization
+        let mut stereo_analyzer = StereoAnalyzer::new();
 
         // Build the output stream
         let stream = device
@@ -1167,6 +1197,22 @@ impl AudioEngine {
                         let magnitudes = spectrum_analyzer.get_magnitudes();
                         for (i, &mag) in magnitudes.iter().enumerate() {
                             shared_clone.spectrum_bands[i].store(f32_to_u32(mag), Ordering::Relaxed);
+                        }
+
+                        // Stereo analysis - push stereo samples (not mono)
+                        if channels > 1 {
+                            stereo_analyzer.push_samples(data);
+
+                            // Store stereo positions to shared state (lock-free)
+                            let positions = stereo_analyzer.get_positions();
+                            for (i, &(angle, radius)) in positions.iter().enumerate() {
+                                shared_clone.stereo_positions[i * 2].store(f32_to_u32(angle), Ordering::Relaxed);
+                                shared_clone.stereo_positions[i * 2 + 1].store(f32_to_u32(radius), Ordering::Relaxed);
+                            }
+
+                            // Store correlation
+                            let correlation = stereo_analyzer.get_correlation();
+                            shared_clone.stereo_correlation.store(f32_to_u32(correlation), Ordering::Relaxed);
                         }
                     }
                 },

@@ -49,6 +49,13 @@ pub struct MeteringData {
     pub clipping_left: bool,
     /// Right channel clipping indicator
     pub clipping_right: bool,
+    /// Stereo imaging positions: Vec of [angle, radius] pairs
+    /// angle: 0 = full left, PI/2 = center, PI = full right
+    /// radius: 0-1 based on amplitude
+    pub stereo_positions: Vec<[f32; 2]>,
+    /// Stereo correlation coefficient (-1.0 to +1.0)
+    /// +1 = mono/in-phase, 0 = uncorrelated, -1 = out of phase
+    pub stereo_correlation: f32,
 }
 
 /// Convert linear level to dB
@@ -421,6 +428,14 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                 let spectrum = handle.get_spectrum_data();
                 let waveform = handle.get_waveform_data();
                 let (clipping_left, clipping_right) = handle.get_clipping();
+                let stereo_positions_tuples = handle.get_stereo_positions();
+                let stereo_correlation = handle.get_stereo_correlation();
+
+                // Convert stereo positions from tuples to arrays for JSON serialization
+                let stereo_positions: Vec<[f32; 2]> = stereo_positions_tuples
+                    .into_iter()
+                    .map(|(angle, radius)| [angle, radius])
+                    .collect();
 
                 // Send combined metering data with dB values, waveform, and clipping indicators
                 let metering = MeteringData {
@@ -436,6 +451,8 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                     waveform,
                     clipping_left,
                     clipping_right,
+                    stereo_positions,
+                    stereo_correlation,
                 };
                 let _ = app_handle.emit("preview-metering", &metering);
             } else {

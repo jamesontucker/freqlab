@@ -4,6 +4,7 @@ import * as previewApi from '../../api/preview';
 import { LevelMeters } from './LevelMeters';
 import { SpectrumAnalyzer } from './SpectrumAnalyzer';
 import { WaveformDisplay } from './WaveformDisplay';
+import { StereoImager } from './StereoImager';
 
 interface OutputSectionProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
   // Local UI state
   const [showSpectrum, setShowSpectrum] = useState(false);
   const [showWaveform, setShowWaveform] = useState(false);
+  const [showStereoImager, setShowStereoImager] = useState(false);
 
   // Refs for animation loop access (to avoid stale closures)
   const showSpectrumRef = useRef(showSpectrum);
@@ -245,6 +247,11 @@ export const OutputSection = memo(function OutputSection({ isOpen, isVisible }: 
         animatedWaveform={animationState.waveform}
         showWaveform={showWaveform}
         onToggle={() => setShowWaveform(!showWaveform)}
+      />
+      <StereoImager
+        showStereoImager={showStereoImager}
+        isActive={isOpen && isVisible}
+        onToggle={() => setShowStereoImager(!showStereoImager)}
       />
     </div>
   );
