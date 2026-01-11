@@ -119,7 +119,7 @@ export function PreviewPanel() {
     input: false,
     transport: false,
     output: false,  // Open by default (contains spectrum analyzer)
-    performance: true,  // Collapsed by default
+    performance: false,  // Open by default
     plugin: false,
     build: true,    // Collapsed by default
   });

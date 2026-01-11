@@ -1,6 +1,5 @@
 import { memo, useState, useCallback, useRef, useEffect } from 'react';
 import { usePreviewStore } from '../../stores/previewStore';
-import type { PluginPerformance } from '../../types';
 
 interface PerformanceMonitorProps {
   enabled: boolean;

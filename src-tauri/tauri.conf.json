@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "freqlab",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "identifier": "com.freqlab.desktop",
     "build": {
         "frontendDist": "../dist",
@@ -36,7 +36,9 @@
         "createUpdaterArtifacts": true,
         "macOS": {
             "entitlements": "./entitlements.plist",
-            "signingIdentity": "Developer ID Application: Nanoshrine Interactive LLC (PC4KPNUNP8)"
+            "signingIdentity": "Developer ID Application: Nanoshrine Interactive LLC (PC4KPNUNP8)",
+            "hardenedRuntime": true,
+            "minimumSystemVersion": "10.13"
         }
     },
     "plugins": {
