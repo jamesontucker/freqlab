@@ -1,15 +1,9 @@
-import { memo, useMemo } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
+import { usePreviewStore } from '../../stores/previewStore';
 
 interface LevelMetersProps {
-  animatedLevels: { left: number; right: number };
-  animatedInputLevels: { left: number; right: number };
-  displayDb: { left: number; right: number };
-  displayInputDb: { left: number; right: number };
-  clipHold: { left: boolean; right: boolean };
-  showInputMeters: boolean;
-  showOutputMeters: boolean;
-  onToggleInputMeters: () => void;
-  onToggleOutputMeters: () => void;
+  isOpen: boolean;
+  isVisible: boolean;
   hideInput?: boolean; // Hide input meters entirely (for instruments)
 }
 
@@ -47,14 +41,12 @@ const MeterBar = memo(function MeterBar({
   label,
   width,
   color,
-  clipHold,
   displayDb,
   showNotches = true,
 }: {
   label: string;
   width: number;
   color: string;
-  clipHold?: boolean;
   displayDb: number;
   showNotches?: boolean;
 }) {
@@ -77,7 +69,7 @@ const MeterBar = memo(function MeterBar({
           </div>
         )}
       </div>
-      <span className={`text-[10px] w-14 text-right font-mono tabular-nums ${(clipHold || displayDb > 0) ? 'text-red-500 font-bold' : 'text-text-muted'}`}>
+      <span className={`text-[10px] w-14 text-right font-mono tabular-nums ${displayDb > 0 ? 'text-red-500 font-bold' : 'text-text-muted'}`}>
         {displayDb > -60 ? `${displayDb > 0 ? '+' : ''}${displayDb.toFixed(1)}` : '-∞'} dB
       </span>
     </div>
@@ -104,40 +96,126 @@ const DbScale = memo(function DbScale() {
 });
 
 export const LevelMeters = memo(function LevelMeters({
-  animatedLevels,
-  animatedInputLevels,
-  displayDb,
-  displayInputDb,
-  clipHold,
-  showInputMeters,
-  showOutputMeters,
-  onToggleInputMeters,
-  onToggleOutputMeters,
+  isOpen,
+  isVisible,
   hideInput = false,
 }: LevelMetersProps) {
-  // Convert animated linear levels to dB for smooth bar rendering
-  const outputMetrics = useMemo(() => {
-    const leftDb = animatedLevels.left > 0 ? 20 * Math.log10(animatedLevels.left) : DB_MIN;
-    const rightDb = animatedLevels.right > 0 ? 20 * Math.log10(animatedLevels.right) : DB_MIN;
-    return {
-      leftWidth: dbToWidth(leftDb),
-      rightWidth: dbToWidth(rightDb),
-      leftColor: getMeterColor(leftDb),
-      rightColor: getMeterColor(rightDb),
-    };
-  }, [animatedLevels.left, animatedLevels.right]);
+  // Local UI toggle state
+  const [showInputMeters, setShowInputMeters] = useState(false);
+  const [showOutputMeters, setShowOutputMeters] = useState(true);
 
-  // Input levels (pre-FX)
-  const inputMetrics = useMemo(() => {
-    const leftDb = animatedInputLevels.left > 0 ? 20 * Math.log10(animatedInputLevels.left) : DB_MIN;
-    const rightDb = animatedInputLevels.right > 0 ? 20 * Math.log10(animatedInputLevels.right) : DB_MIN;
-    return {
-      leftWidth: dbToWidth(leftDb),
-      rightWidth: dbToWidth(rightDb),
-      leftColor: getInputMeterColor(leftDb),
-      rightColor: getInputMeterColor(rightDb),
+  // Animation state - all meter data in one object for single re-render per frame
+  const [meterState, setMeterState] = useState({
+    outputLeft: { width: 0, color: getMeterColor(DB_MIN), displayDb: DB_MIN },
+    outputRight: { width: 0, color: getMeterColor(DB_MIN), displayDb: DB_MIN },
+    inputLeft: { width: 0, color: getInputMeterColor(DB_MIN), displayDb: DB_MIN },
+    inputRight: { width: 0, color: getInputMeterColor(DB_MIN), displayDb: DB_MIN },
+  });
+
+  // Refs for animation loop
+  const rafIdRef = useRef<number | null>(null);
+  const animatedLevelsRef = useRef({ left: 0, right: 0 });
+  const animatedInputLevelsRef = useRef({ left: 0, right: 0 });
+  const displayDbRef = useRef({ left: DB_MIN, right: DB_MIN });
+  const displayInputDbRef = useRef({ left: DB_MIN, right: DB_MIN });
+  const showInputMetersRef = useRef(showInputMeters);
+  showInputMetersRef.current = showInputMeters;
+
+  // Animation loop - runs at 60fps when visible
+  useEffect(() => {
+    if (!isOpen || !isVisible) return;
+
+    const smoothingFactor = 0.25;
+
+    const animate = () => {
+      const metering = usePreviewStore.getState().metering;
+
+      // Interpolate output levels
+      const targetLeft = metering.left;
+      const targetRight = metering.right;
+      const currentLeft = animatedLevelsRef.current.left;
+      const currentRight = animatedLevelsRef.current.right;
+
+      const newLeft = currentLeft + (targetLeft - currentLeft) * smoothingFactor;
+      const newRight = currentRight + (targetRight - currentRight) * smoothingFactor;
+      animatedLevelsRef.current = { left: newLeft, right: newRight };
+
+      // Calculate output dB and metrics
+      const outputLeftDb = newLeft > 0 ? 20 * Math.log10(newLeft) : DB_MIN;
+      const outputRightDb = newRight > 0 ? 20 * Math.log10(newRight) : DB_MIN;
+
+      // Update display dB with debouncing (only update if change > 1dB or dropping significantly)
+      const currentDisplayLeft = displayDbRef.current.left;
+      const currentDisplayRight = displayDbRef.current.right;
+      const leftDiff = Math.abs(metering.leftDb - currentDisplayLeft);
+      const rightDiff = Math.abs(metering.rightDb - currentDisplayRight);
+
+      if (leftDiff > 1 || rightDiff > 1 || metering.leftDb < currentDisplayLeft - 3 || metering.rightDb < currentDisplayRight - 3) {
+        displayDbRef.current = { left: metering.leftDb, right: metering.rightDb };
+      }
+
+      // Interpolate input levels if input meters are visible
+      let inputLeftDb = DB_MIN;
+      let inputRightDb = DB_MIN;
+      if (showInputMetersRef.current) {
+        const targetInputLeft = metering.inputLeft;
+        const targetInputRight = metering.inputRight;
+        const currentInputLeft = animatedInputLevelsRef.current.left;
+        const currentInputRight = animatedInputLevelsRef.current.right;
+
+        const newInputLeft = currentInputLeft + (targetInputLeft - currentInputLeft) * smoothingFactor;
+        const newInputRight = currentInputRight + (targetInputRight - currentInputRight) * smoothingFactor;
+        animatedInputLevelsRef.current = { left: newInputLeft, right: newInputRight };
+
+        inputLeftDb = newInputLeft > 0 ? 20 * Math.log10(newInputLeft) : DB_MIN;
+        inputRightDb = newInputRight > 0 ? 20 * Math.log10(newInputRight) : DB_MIN;
+
+        // Update input display dB
+        const currentInputDisplayLeft = displayInputDbRef.current.left;
+        const currentInputDisplayRight = displayInputDbRef.current.right;
+        const inputLeftDiff = Math.abs(metering.inputLeftDb - currentInputDisplayLeft);
+        const inputRightDiff = Math.abs(metering.inputRightDb - currentInputDisplayRight);
+
+        if (inputLeftDiff > 1 || inputRightDiff > 1 || metering.inputLeftDb < currentInputDisplayLeft - 3 || metering.inputRightDb < currentInputDisplayRight - 3) {
+          displayInputDbRef.current = { left: metering.inputLeftDb, right: metering.inputRightDb };
+        }
+      }
+
+      // Update state with all meter data
+      setMeterState({
+        outputLeft: {
+          width: dbToWidth(outputLeftDb),
+          color: getMeterColor(outputLeftDb),
+          displayDb: displayDbRef.current.left,
+        },
+        outputRight: {
+          width: dbToWidth(outputRightDb),
+          color: getMeterColor(outputRightDb),
+          displayDb: displayDbRef.current.right,
+        },
+        inputLeft: {
+          width: dbToWidth(inputLeftDb),
+          color: getInputMeterColor(inputLeftDb),
+          displayDb: displayInputDbRef.current.left,
+        },
+        inputRight: {
+          width: dbToWidth(inputRightDb),
+          color: getInputMeterColor(inputRightDb),
+          displayDb: displayInputDbRef.current.right,
+        },
+      });
+
+      rafIdRef.current = requestAnimationFrame(animate);
     };
-  }, [animatedInputLevels.left, animatedInputLevels.right]);
+
+    rafIdRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [isOpen, isVisible]);
 
   return (
     <div className="space-y-2">
@@ -152,7 +230,7 @@ export const LevelMeters = memo(function LevelMeters({
               <span className="text-xs text-indigo-400 font-medium">Input (Pre-FX)</span>
             </div>
             <button
-              onClick={onToggleInputMeters}
+              onClick={() => setShowInputMeters(!showInputMeters)}
               className={`text-xs px-2 py-0.5 rounded transition-colors ${
                 showInputMeters
                   ? 'bg-indigo-500/20 text-indigo-400'
@@ -168,15 +246,15 @@ export const LevelMeters = memo(function LevelMeters({
             <div className="space-y-1">
               <MeterBar
                 label="L"
-                width={inputMetrics.leftWidth}
-                color={inputMetrics.leftColor}
-                displayDb={displayInputDb.left}
+                width={meterState.inputLeft.width}
+                color={meterState.inputLeft.color}
+                displayDb={meterState.inputLeft.displayDb}
               />
               <MeterBar
                 label="R"
-                width={inputMetrics.rightWidth}
-                color={inputMetrics.rightColor}
-                displayDb={displayInputDb.right}
+                width={meterState.inputRight.width}
+                color={meterState.inputRight.color}
+                displayDb={meterState.inputRight.displayDb}
               />
             </div>
           )}
@@ -193,7 +271,7 @@ export const LevelMeters = memo(function LevelMeters({
             <span className="text-xs text-accent font-medium">Output (Post-FX)</span>
           </div>
           <button
-            onClick={onToggleOutputMeters}
+            onClick={() => setShowOutputMeters(!showOutputMeters)}
             className={`text-xs px-2 py-0.5 rounded transition-colors ${
               showOutputMeters
                 ? 'bg-accent/20 text-accent'
@@ -210,17 +288,15 @@ export const LevelMeters = memo(function LevelMeters({
             <div className="space-y-1">
               <MeterBar
                 label="L"
-                width={outputMetrics.leftWidth}
-                color={outputMetrics.leftColor}
-                clipHold={clipHold.left}
-                displayDb={displayDb.left}
+                width={meterState.outputLeft.width}
+                color={meterState.outputLeft.color}
+                displayDb={meterState.outputLeft.displayDb}
               />
               <MeterBar
                 label="R"
-                width={outputMetrics.rightWidth}
-                color={outputMetrics.rightColor}
-                clipHold={clipHold.right}
-                displayDb={displayDb.right}
+                width={meterState.outputRight.width}
+                color={meterState.outputRight.color}
+                displayDb={meterState.outputRight.displayDb}
               />
             </div>
             {/* dB scale labels */}
