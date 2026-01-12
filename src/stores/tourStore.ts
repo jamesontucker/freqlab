@@ -22,6 +22,8 @@ export type TourStepId =
     | 'highlight-send-button'
     | 'wait-for-response'
     | 'show-version-message'
+    | 'introduce-build'
+    | 'introduce-auto-build'
     | 'click-build'
     | 'wait-for-build'
     | 'show-fix-error'
@@ -224,14 +226,30 @@ export const TOUR_STEPS: TourStepConfig[] = [
         advanceOn: 'manual'
     },
     {
+        id: 'introduce-build',
+        type: 'spotlight',
+        target: 'build-button',
+        title: 'Building Your Plugin',
+        message: 'This button compiles your plugin code into a working audio plugin you can test and use.',
+        position: 'bottom',
+        advanceOn: 'manual'
+    },
+    {
+        id: 'introduce-auto-build',
+        type: 'spotlight',
+        target: 'auto-build-toggle',
+        title: 'Auto Build',
+        message: 'Pro tip: Enable Auto Build and your plugin will automatically compile after each chat response. Great for rapid iteration!',
+        position: 'bottom',
+        advanceOn: 'manual'
+    },
+    {
         id: 'click-build',
         type: 'spotlight',
         target: 'build-button',
-        message:
-            'Click Build to compile your plugin. Tip: You can enable "Auto Build" to do this automatically after each new version!',
+        message: "Now let's build your plugin! Click Build to compile it.",
         position: 'bottom',
-        advanceOn: 'click',
-        allowedTargets: ['auto-build-toggle']
+        advanceOn: 'click'
     },
     {
         id: 'wait-for-build',

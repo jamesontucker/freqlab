@@ -102,6 +102,8 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
     'highlight-send-button',
     'wait-for-response',
     'show-version-message',
+    'introduce-build',
+    'introduce-auto-build',
     'click-build',
     'wait-for-build',
     'launch-plugin',

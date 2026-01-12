@@ -16,7 +16,7 @@ interface VerbosityOption {
 const modelOptions: ModelOption[] = [
   { id: 'haiku', label: 'Haiku', description: 'Fast intern' },
   { id: 'sonnet', label: 'Sonnet', description: 'Reliable engineer' },
-  { id: 'opus', label: 'Opus', description: 'Senior audio engineer' },
+  { id: 'opus', label: 'Opus (Recommended)', description: 'Senior audio engineer' },
 ];
 
 const verbosityOptions: VerbosityOption[] = [
