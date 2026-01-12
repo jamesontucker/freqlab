@@ -4,5 +4,7 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>freqlab needs microphone access to enable live audio input for real-time plugin preview and audio processing.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>freqlab needs to control Terminal to help you sign in to Claude during initial setup.</string>
 </dict>
 </plist>

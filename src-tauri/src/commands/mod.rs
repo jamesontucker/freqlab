@@ -22,15 +22,12 @@ pub fn get_extended_path() -> String {
 
     // Add common tool installation paths that bundled apps don't see
     let extra_paths = [
+        format!("{}/.claude/bin", home),          // Claude CLI (native installer)
         format!("{}/.cargo/bin", home),           // Rust/Cargo
+        format!("{}/.local/bin", home),           // Claude CLI alt location, pip, etc.
         "/opt/homebrew/bin".to_string(),          // Homebrew (Apple Silicon)
         "/usr/local/bin".to_string(),             // Homebrew (Intel) / general
-        format!("{}/.local/bin", home),           // pip, etc.
         "/opt/local/bin".to_string(),             // MacPorts
-        format!("{}/Library/pnpm", home),         // pnpm global
-        format!("{}/.npm-global/bin", home),      // npm custom prefix (common)
-        "/opt/homebrew/lib/node_modules/.bin".to_string(),  // npm global (Apple Silicon)
-        "/usr/local/lib/node_modules/.bin".to_string(),     // npm global (Intel)
         "/usr/bin".to_string(),                   // System binaries
         "/bin".to_string(),                       // Core binaries
     ];
