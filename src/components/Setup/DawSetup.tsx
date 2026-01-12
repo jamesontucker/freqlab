@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { DawPaths } from '../../types';
 
@@ -12,6 +12,8 @@ interface DawOption {
   name: string;
   icon: React.ReactNode;
 }
+
+type DawKey = keyof DawPaths;
 
 const dawOptions: DawOption[] = [
   {
@@ -66,22 +68,30 @@ const dawOptions: DawOption[] = [
 
 export function DawSetup({ onComplete, onBack }: DawSetupProps) {
   const { dawPaths, updateDawPath } = useSettingsStore();
-  const [selectedDaw, setSelectedDaw] = useState<keyof DawPaths | null>(null);
+  const [selectedDaws, setSelectedDaws] = useState<Set<DawKey>>(new Set());
   const [useDefaults, setUseDefaults] = useState(true);
 
   const defaultVst3 = '~/Library/Audio/Plug-Ins/VST3';
   const defaultClap = '~/Library/Audio/Plug-Ins/CLAP';
 
-  const handleDawSelect = (dawKey: keyof DawPaths) => {
-    setSelectedDaw(dawKey);
-    // Pre-fill with defaults if empty
-    if (!dawPaths[dawKey].vst3.trim()) {
-      updateDawPath(dawKey, 'vst3', defaultVst3);
-    }
-    if (!dawPaths[dawKey].clap.trim()) {
-      updateDawPath(dawKey, 'clap', defaultClap);
-    }
-  };
+  const toggleDaw = useCallback((dawKey: DawKey) => {
+    setSelectedDaws(prev => {
+      const next = new Set(prev);
+      if (next.has(dawKey)) {
+        next.delete(dawKey);
+      } else {
+        next.add(dawKey);
+        // Pre-fill with defaults if empty
+        if (!dawPaths[dawKey].vst3.trim()) {
+          updateDawPath(dawKey, 'vst3', defaultVst3);
+        }
+        if (!dawPaths[dawKey].clap.trim()) {
+          updateDawPath(dawKey, 'clap', defaultClap);
+        }
+      }
+      return next;
+    });
+  }, [dawPaths, updateDawPath]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -115,31 +125,49 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
 
       {/* DAW Selection */}
       <div>
-        <label className="block text-xs font-medium text-text-secondary mb-2">
-          Select your primary DAW
+        <label className="block text-xs font-medium text-text-secondary mb-1">
+          Select your DAWs
         </label>
+        <p className="text-[11px] text-text-muted mb-2">
+          Select all DAWs you use — we&apos;ll configure plugin paths for each
+        </p>
         <div className="grid grid-cols-2 gap-2">
-          {dawOptions.map((daw) => (
-            <button
-              key={daw.key}
-              onClick={() => handleDawSelect(daw.key)}
-              className={`p-2.5 rounded-lg border transition-all duration-200 flex items-center gap-2 ${
-                selectedDaw === daw.key
-                  ? 'border-accent bg-accent-subtle text-accent'
-                  : 'border-border bg-bg-tertiary/50 text-text-secondary hover:border-accent/30 hover:text-text-primary'
-              }`}
-            >
-              <div className={selectedDaw === daw.key ? 'text-accent' : 'text-text-muted'}>
-                {daw.icon}
-              </div>
-              <span className="text-sm font-medium">{daw.name}</span>
-            </button>
-          ))}
+          {dawOptions.map((daw) => {
+            const isSelected = selectedDaws.has(daw.key);
+            return (
+              <button
+                key={daw.key}
+                onClick={() => toggleDaw(daw.key)}
+                className={`p-2.5 rounded-lg border transition-all duration-200 flex items-center gap-2 ${
+                  isSelected
+                    ? 'border-accent bg-accent-subtle text-accent'
+                    : 'border-border bg-bg-tertiary/50 text-text-secondary hover:border-accent/30 hover:text-text-primary'
+                }`}
+              >
+                {/* Checkbox indicator */}
+                <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                  isSelected
+                    ? 'bg-accent border-accent'
+                    : 'border-border-strong bg-bg-tertiary'
+                }`}>
+                  {isSelected && (
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </div>
+                <div className={isSelected ? 'text-accent' : 'text-text-muted'}>
+                  {daw.icon}
+                </div>
+                <span className="text-sm font-medium">{daw.name}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Path Configuration (shown when DAW selected) */}
-      {selectedDaw && (
+      {/* Path Configuration (shown when DAWs selected) */}
+      {selectedDaws.size > 0 && (
         <div className="space-y-3 animate-fade-in">
           <div className="flex items-center gap-2">
             <input
@@ -148,9 +176,12 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
               checked={useDefaults}
               onChange={(e) => {
                 setUseDefaults(e.target.checked);
-                if (e.target.checked && selectedDaw) {
-                  updateDawPath(selectedDaw, 'vst3', defaultVst3);
-                  updateDawPath(selectedDaw, 'clap', defaultClap);
+                if (e.target.checked) {
+                  // Apply defaults to all selected DAWs
+                  selectedDaws.forEach(dawKey => {
+                    updateDawPath(dawKey, 'vst3', defaultVst3);
+                    updateDawPath(dawKey, 'clap', defaultClap);
+                  });
                 }
               }}
               className="w-4 h-4 rounded border-border bg-bg-tertiary text-accent focus:ring-accent focus:ring-offset-0 cursor-pointer"
@@ -160,28 +191,45 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
             </label>
           </div>
 
+          {useDefaults && (
+            <div className="pl-6 text-[11px] text-text-muted space-y-0.5">
+              <p>VST3: <span className="text-text-secondary font-mono">{defaultVst3}</span></p>
+              <p>CLAP: <span className="text-text-secondary font-mono">{defaultClap}</span></p>
+            </div>
+          )}
+
           {!useDefaults && (
-            <div className="space-y-2 pl-5">
-              <div>
-                <label className="block text-xs text-text-muted mb-1">VST3 Path</label>
-                <input
-                  type="text"
-                  value={dawPaths[selectedDaw].vst3}
-                  onChange={(e) => updateDawPath(selectedDaw, 'vst3', e.target.value)}
-                  placeholder={defaultVst3}
-                  className="w-full px-2.5 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-text-muted mb-1">CLAP Path</label>
-                <input
-                  type="text"
-                  value={dawPaths[selectedDaw].clap}
-                  onChange={(e) => updateDawPath(selectedDaw, 'clap', e.target.value)}
-                  placeholder={defaultClap}
-                  className="w-full px-2.5 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent"
-                />
-              </div>
+            <div className="space-y-3 pl-5">
+              {Array.from(selectedDaws).map(dawKey => {
+                const dawName = dawOptions.find(d => d.key === dawKey)?.name || dawKey;
+                return (
+                  <div key={dawKey} className="space-y-2">
+                    <p className="text-xs font-medium text-text-secondary">{dawName}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">VST3 Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].vst3}
+                          onChange={(e) => updateDawPath(dawKey, 'vst3', e.target.value)}
+                          placeholder={defaultVst3}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">CLAP Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].clap}
+                          onChange={(e) => updateDawPath(dawKey, 'clap', e.target.value)}
+                          placeholder={defaultClap}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -210,7 +258,7 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
           onClick={onComplete}
           className="flex-1 py-2 px-3 text-sm bg-accent hover:bg-accent-hover text-white font-medium rounded-lg transition-all duration-200 hover:shadow-lg hover:shadow-accent/25"
         >
-          {selectedDaw ? 'Continue' : 'Skip for now'}
+          {selectedDaws.size > 0 ? 'Continue' : 'Skip for now'}
         </button>
       </div>
     </div>

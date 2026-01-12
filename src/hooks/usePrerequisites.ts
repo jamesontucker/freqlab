@@ -1,9 +1,11 @@
 import { useState, useCallback } from 'react';
-import { checkPrerequisites } from '../lib/tauri';
-import type { PrerequisiteStatus } from '../types';
+import { checkPrerequisites, checkDiskSpace, checkPermissions } from '../lib/tauri';
+import type { PrerequisiteStatus, DiskSpaceInfo, PermissionStatus } from '../types';
 
 export function usePrerequisites() {
   const [status, setStatus] = useState<PrerequisiteStatus | null>(null);
+  const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null);
+  const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -11,12 +13,28 @@ export function usePrerequisites() {
     setLoading(true);
     setError(null);
     try {
-      const result = await checkPrerequisites();
-      setStatus(result);
+      // Fetch prerequisites, disk space, and permissions in parallel
+      const [prereqResult, spaceResult, permResult] = await Promise.all([
+        checkPrerequisites(),
+        checkDiskSpace(),
+        checkPermissions(),
+      ]);
+      setStatus(prereqResult);
+      setDiskSpace(spaceResult);
+      setPermissions(permResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to check prerequisites');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const refreshPermissions = useCallback(async () => {
+    try {
+      const permResult = await checkPermissions();
+      setPermissions(permResult);
+    } catch {
+      // Ignore errors on permission refresh
     }
   }, []);
 
@@ -27,5 +45,17 @@ export function usePrerequisites() {
       status.claude_auth.status === 'installed'
     : false;
 
-  return { status, loading, error, check, allInstalled };
+  const hasSufficientSpace = diskSpace?.sufficient ?? false;
+
+  return {
+    status,
+    diskSpace,
+    permissions,
+    loading,
+    error,
+    check,
+    refreshPermissions,
+    allInstalled,
+    hasSufficientSpace,
+  };
 }

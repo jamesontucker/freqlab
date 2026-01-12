@@ -13,6 +13,25 @@ export interface PrerequisiteStatus {
   claude_auth: CheckResult;
 }
 
+export interface DiskSpaceBreakdown {
+  xcode_gb: number;
+  rust_gb: number;
+  claude_cli_gb: number;
+  total_required_gb: number;
+}
+
+export interface DiskSpaceInfo {
+  available_gb: number;
+  required_gb: number;
+  sufficient: boolean;
+  breakdown: DiskSpaceBreakdown;
+}
+
+export interface PermissionStatus {
+  accessibility: boolean;
+  admin_primed: boolean;
+}
+
 export interface DawPathConfig {
   vst3: string;
   clap: string;
