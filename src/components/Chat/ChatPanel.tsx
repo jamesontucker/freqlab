@@ -723,7 +723,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       </div>
 
       {/* Messages area */}
-      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 bg-black/[0.15]">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 bg-chat-inset">
         {messages.length === 0 && !isLoading && isHistoryLoaded ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center max-w-md">

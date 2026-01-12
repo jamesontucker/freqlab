@@ -23,6 +23,7 @@
   --color-border-subtle: var(--theme-border-subtle, #1f1f1f);
   --color-chat-user: var(--theme-chat-user, #3b82f6);
   --color-chat-user-hover: var(--theme-chat-user-hover, #2563eb);
+  --color-chat-inset: var(--theme-chat-inset, #131313);
 }
 
 /* Dark theme values */
@@ -42,6 +43,7 @@
   --theme-border-subtle: #1f1f1f;
   --theme-chat-user: #3b82f6;
   --theme-chat-user-hover: #2563eb;
+  --theme-chat-inset: #131313;
 }
 
 /* Light theme values */
@@ -60,6 +62,7 @@
   --theme-border-subtle: #f0f0f0;
   --theme-chat-user: #2563eb;
   --theme-chat-user-hover: #1d4ed8;
+  --theme-chat-inset: #efefef;
 }
 
 /* Custom theme - colors are set via JS */

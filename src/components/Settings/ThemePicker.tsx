@@ -52,6 +52,7 @@ export function applyTheme(theme: 'dark' | 'light' | 'custom', customColors?: Cu
     root.style.setProperty('--theme-border-subtle', isLight ? '#f0f0f0' : customColors.bgTertiary);
     root.style.setProperty('--theme-chat-user', customColors.chatUser);
     root.style.setProperty('--theme-chat-user-hover', adjustColor(customColors.chatUser, isLight ? -15 : -15));
+    root.style.setProperty('--theme-chat-inset', adjustColor(customColors.bgSecondary, isLight ? -3 : -5));
   } else {
     // Clear custom properties for non-custom themes
     const props = [
@@ -59,7 +60,7 @@ export function applyTheme(theme: 'dark' | 'light' | 'custom', customColors?: Cu
       '--theme-text-primary', '--theme-text-secondary', '--theme-text-muted',
       '--theme-accent', '--theme-accent-hover', '--theme-accent-subtle',
       '--theme-border', '--theme-border-subtle',
-      '--theme-chat-user', '--theme-chat-user-hover',
+      '--theme-chat-user', '--theme-chat-user-hover', '--theme-chat-inset',
     ];
     props.forEach((prop) => root.style.removeProperty(prop));
   }

@@ -15,19 +15,8 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-            name: macOS ARM64
-          - platform: macos-15
-            target: x86_64-apple-darwin
-            name: macOS Intel
-
-    runs-on: ${{ matrix.platform }}
-    name: Build (${{ matrix.name }})
+    runs-on: macos-latest
+    name: Build (macOS Universal)
 
     steps:
       - name: Checkout repository
@@ -42,7 +31,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
@@ -66,6 +55,19 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions build.keychain
           rm certificate.p12
 
+      - name: Build editor-host for both architectures
+        run: |
+          cd src-tauri
+          # Build editor-host binary for both architectures
+          cargo build --release --target aarch64-apple-darwin --bin freqlab-editor-host
+          cargo build --release --target x86_64-apple-darwin --bin freqlab-editor-host
+          # Create universal binary with lipo
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/freqlab-editor-host \
+            target/x86_64-apple-darwin/release/freqlab-editor-host \
+            -output target/universal-apple-darwin/release/freqlab-editor-host
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -84,11 +86,10 @@ jobs:
           releaseBody: |
             See the assets below to download freqlab for your platform.
 
-            **macOS ARM64 (Apple Silicon):** Download the `_aarch64.dmg` file
-            **macOS Intel:** Download the `_x64.dmg` file
+            **macOS:** Download the `_universal.dmg` file (works on both Intel and Apple Silicon)
 
             ## Installation
-            1. Download the `.dmg` file for your Mac
+            1. Download the `.dmg` file
             2. Open the DMG and drag freqlab to Applications
 
             ## What's Changed
@@ -96,4 +97,4 @@ jobs:
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
-          args: --target ${{ matrix.target }}
+          args: --target universal-apple-darwin
