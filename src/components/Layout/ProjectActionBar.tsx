@@ -67,6 +67,7 @@ export function ProjectActionBar({
     const publishButtonRef = useRef<HTMLButtonElement>(null)
     const projectActionsButtonRef = useRef<HTMLButtonElement>(null)
     const fixErrorButtonRef = useRef<HTMLButtonElement>(null)
+    const autoBuildToggleRef = useRef<HTMLButtonElement>(null)
 
     // Register tour refs
     useEffect(() => {
@@ -74,11 +75,13 @@ export function ProjectActionBar({
         registerTourRef('publish-button', publishButtonRef)
         registerTourRef('project-actions-button', projectActionsButtonRef)
         registerTourRef('fix-error-button', fixErrorButtonRef)
+        registerTourRef('auto-build-toggle', autoBuildToggleRef)
         return () => {
             unregisterTourRef('build-button')
             unregisterTourRef('publish-button')
             unregisterTourRef('project-actions-button')
             unregisterTourRef('fix-error-button')
+            unregisterTourRef('auto-build-toggle')
         }
     }, [])
 
@@ -405,6 +408,7 @@ export function ProjectActionBar({
 
             {/* Auto Build toggle */}
             <button
+                ref={autoBuildToggleRef}
                 onClick={() => !autoBuildBlocked && handleToggleAutoBuild()}
                 disabled={anyBuildInProgress || autoBuildBlocked}
                 className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg border transition-all duration-200 ${
