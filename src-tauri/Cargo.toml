@@ -1,6 +1,6 @@
 [package]
 name = "freqlab"
-version = "0.1.5"
+version = "0.1.6"
 description = "VST Plugin Development Workshop"
 authors = ["Jameson"]
 license = "GPL-3.0"
