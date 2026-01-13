@@ -1,15 +1,9 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
+import { usePreviewStore } from '../../stores/previewStore';
 
 interface SpectrumAnalyzerProps {
-  animatedSpectrum: number[];         // Post-FX output spectrum
-  animatedSpectrumInput: number[];    // Pre-FX input spectrum
-  peakSpectrum: number[];             // Peak hold values for output spectrum
-  showSpectrum: boolean;
-  showPrePost: boolean;               // Whether to show pre/post comparison (controlled by parent)
-  showPeaks: boolean;                 // Whether to show peak hold markers
-  onToggle: () => void;
-  onTogglePrePost: () => void;        // Toggle handler for pre/post (controlled by parent for perf)
-  onTogglePeaks: () => void;          // Toggle handler for peak hold
+  isOpen: boolean;
+  isVisible: boolean;
   hideInput?: boolean;                // Hide input-related features (for instruments)
 }
 
@@ -82,17 +76,15 @@ const FREQ_LABELS = [
 ];
 
 export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
-  animatedSpectrum,
-  animatedSpectrumInput,
-  peakSpectrum,
-  showSpectrum,
-  showPrePost,
-  showPeaks,
-  onToggle,
-  onTogglePrePost,
-  onTogglePeaks,
+  isOpen,
+  isVisible,
   hideInput = false,
 }: SpectrumAnalyzerProps) {
+  // Local UI toggle state
+  const [showSpectrum, setShowSpectrum] = useState(false);
+  const [showPrePost, setShowPrePost] = useState(false);
+  const [showPeaks, setShowPeaks] = useState(false);
+
   // Tilt/slope setting for spectrum display (default to 4.5 dB/oct like Pro-Q)
   const [tilt, setTilt] = useState<TiltOption>(4.5);
   const [showTiltMenu, setShowTiltMenu] = useState(false);
@@ -101,8 +93,129 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
   const [range, setRange] = useState<RangeOption>(60);
   const [showRangeMenu, setShowRangeMenu] = useState(false);
 
+  // Animation state
+  const [spectrumState, setSpectrumState] = useState({
+    spectrum: new Array(32).fill(0) as number[],
+    spectrumInput: new Array(32).fill(0) as number[],
+    peakSpectrum: new Array(32).fill(0) as number[],
+  });
+
+  // Refs for animation loop
+  const rafIdRef = useRef<number | null>(null);
+  const animatedSpectrumRef = useRef<number[]>(new Array(32).fill(0));
+  const animatedSpectrumInputRef = useRef<number[]>(new Array(32).fill(0));
+  const peakSpectrumRef = useRef<number[]>(new Array(32).fill(0));
+  const peakDecayCounterRef = useRef(0);
+  const showPrePostRef = useRef(showPrePost);
+  showPrePostRef.current = showPrePost;
+  const showPeaksRef = useRef(showPeaks);
+  showPeaksRef.current = showPeaks;
+
+  // Reset spectrum peaks when disabled
+  useEffect(() => {
+    if (!showPeaks) {
+      peakSpectrumRef.current = new Array(32).fill(0);
+    }
+  }, [showPeaks]);
+
+  // Animation loop - runs at 60fps when visible and spectrum is on
+  useEffect(() => {
+    if (!isOpen || !isVisible || !showSpectrum) return;
+
+    const smoothingFactor = 0.25;
+
+    const animate = () => {
+      const metering = usePreviewStore.getState().metering;
+
+      // Interpolate output spectrum (post-FX)
+      let spectrumChanged = false;
+      const targetSpectrum = metering.spectrum;
+      const currentSpectrum = animatedSpectrumRef.current;
+      const numBands = Math.min(currentSpectrum.length, targetSpectrum?.length || 0);
+      for (let i = 0; i < numBands; i++) {
+        const target = targetSpectrum[i] || 0;
+        const current = currentSpectrum[i];
+        const diff = target - current;
+        if (Math.abs(diff) > 0.0001) {
+          currentSpectrum[i] = current + diff * smoothingFactor;
+          spectrumChanged = true;
+        }
+      }
+
+      // Only interpolate input spectrum when pre/post comparison is active
+      let spectrumInputChanged = false;
+      if (showPrePostRef.current) {
+        const targetSpectrumInput = metering.spectrumInput;
+        const currentSpectrumInput = animatedSpectrumInputRef.current;
+        const numBandsInput = Math.min(currentSpectrumInput.length, targetSpectrumInput?.length || 0);
+        for (let i = 0; i < numBandsInput; i++) {
+          const target = targetSpectrumInput[i] || 0;
+          const current = currentSpectrumInput[i];
+          const diff = target - current;
+          if (Math.abs(diff) > 0.0001) {
+            currentSpectrumInput[i] = current + diff * smoothingFactor;
+            spectrumInputChanged = true;
+          }
+        }
+      }
+
+      // Track peaks when peak hold is enabled
+      let peaksChanged = false;
+      if (showPeaksRef.current) {
+        const peaks = peakSpectrumRef.current;
+
+        // Update peak hold values - capture new peaks
+        for (let i = 0; i < numBands; i++) {
+          const currentValue = currentSpectrum[i] || 0;
+          const currentPeak = peaks[i] || 0;
+
+          if (currentValue > currentPeak) {
+            peaks[i] = currentValue;
+            peaksChanged = true;
+          }
+        }
+
+        // Apply decay every ~30 frames (0.5 seconds at 60fps)
+        peakDecayCounterRef.current++;
+        if (peakDecayCounterRef.current >= 30) {
+          peakDecayCounterRef.current = 0;
+          const decayFactor = 0.85;
+          for (let i = 0; i < numBands; i++) {
+            const decayedPeak = peaks[i] * decayFactor;
+            if (decayedPeak > 0.001) {
+              peaks[i] = decayedPeak;
+              peaksChanged = true;
+            } else if (peaks[i] > 0) {
+              peaks[i] = 0;
+              peaksChanged = true;
+            }
+          }
+        }
+      }
+
+      // Only update if something changed
+      if (spectrumChanged || spectrumInputChanged || peaksChanged) {
+        setSpectrumState(prev => ({
+          spectrum: spectrumChanged ? [...animatedSpectrumRef.current] : prev.spectrum,
+          spectrumInput: spectrumInputChanged ? [...animatedSpectrumInputRef.current] : prev.spectrumInput,
+          peakSpectrum: peaksChanged ? [...peakSpectrumRef.current] : prev.peakSpectrum,
+        }));
+      }
+
+      rafIdRef.current = requestAnimationFrame(animate);
+    };
+
+    rafIdRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, [isOpen, isVisible, showSpectrum]);
+
   const currentTiltOption = TILT_OPTIONS.find(o => o.value === tilt) || TILT_OPTIONS[2];
-  const currentRangeConfig = RANGE_OPTIONS.find(o => o.value === range) || RANGE_OPTIONS[2];
+  const currentRangeConfig = RANGE_OPTIONS.find(o => o.value === range) || RANGE_OPTIONS[3];
 
   return (
     <div className="mt-3">
@@ -187,7 +300,7 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
               </div>
               {/* Peak hold toggle */}
               <button
-                onClick={onTogglePeaks}
+                onClick={() => setShowPeaks(!showPeaks)}
                 className={`text-xs px-2 py-0.5 rounded transition-colors ${
                   showPeaks
                     ? 'bg-yellow-500/20 text-yellow-400'
@@ -199,7 +312,7 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
               </button>
               {!hideInput && (
                 <button
-                  onClick={onTogglePrePost}
+                  onClick={() => setShowPrePost(!showPrePost)}
                   className={`text-xs px-2 py-0.5 rounded transition-colors ${
                     showPrePost
                       ? 'bg-blue-500/20 text-blue-400'
@@ -213,7 +326,7 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
             </>
           )}
           <button
-            onClick={onToggle}
+            onClick={() => setShowSpectrum(!showSpectrum)}
             className={`text-xs px-2 py-0.5 rounded transition-colors ${
               showSpectrum
                 ? 'bg-accent/20 text-accent'
@@ -299,13 +412,13 @@ export const SpectrumAnalyzer = memo(function SpectrumAnalyzer({
             {/* Spectrum curves clipped to chart area */}
             <g clipPath="url(#spectrumClip)">
               {/* Input spectrum curve (pre-FX) - rendered behind output */}
-              {showPrePost && renderSpectrumCurve(animatedSpectrumInput, 'input', tilt, currentRangeConfig)}
+              {showPrePost && renderSpectrumCurve(spectrumState.spectrumInput, 'input', tilt, currentRangeConfig)}
 
               {/* Output spectrum curve (post-FX) - rendered on top */}
-              {renderSpectrumCurve(animatedSpectrum, 'output', tilt, currentRangeConfig)}
+              {renderSpectrumCurve(spectrumState.spectrum, 'output', tilt, currentRangeConfig)}
 
               {/* Peak hold markers */}
-              {showPeaks && renderPeakMarkers(peakSpectrum, tilt, currentRangeConfig)}
+              {showPeaks && renderPeakMarkers(spectrumState.peakSpectrum, tilt, currentRangeConfig)}
             </g>
 
             {/* Right border of spectrum area */}
