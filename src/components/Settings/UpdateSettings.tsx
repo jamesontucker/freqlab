@@ -57,16 +57,25 @@ export function UpdateSettings() {
   };
 
   const handleDownloadAndInstall = async () => {
-    if (!updateHandle) return;
-
     setStatus('downloading');
     setDownloadProgress(0);
 
     try {
+      // If we don't have an update handle (e.g., update was detected on app startup),
+      // we need to check again to get the Update object for downloading
+      let update = updateHandle;
+      if (!update) {
+        update = await check();
+        if (!update) {
+          setError('Update no longer available. Please check again.');
+          return;
+        }
+        setUpdateHandle(update);
+      }
       let totalBytes = 0;
       let downloadedBytes = 0;
 
-      await updateHandle.downloadAndInstall((event) => {
+      await update.downloadAndInstall((event) => {
         if (event.event === 'Started') {
           totalBytes = event.data.contentLength ?? 0;
         } else if (event.event === 'Progress') {
