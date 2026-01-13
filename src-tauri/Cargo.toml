@@ -1,8 +1,8 @@
 [package]
 name = "freqlab"
-version = "0.1.6"
-description = "VST Plugin Development Workshop"
-authors = ["Jameson"]
+version = "0.1.7"
+description = "Audio Plugin Creation Engine"
+authors = ["nanoshrine interactive"]
 license = "GPL-3.0"
 repository = ""
 edition = "2021"

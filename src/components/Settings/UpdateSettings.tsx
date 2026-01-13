@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
+import { open } from '@tauri-apps/plugin-shell';
 import { useUpdateStore } from '../../stores/updateStore';
 import { useToastStore } from '../../stores/toastStore';
+
+const RELEASES_URL = 'https://github.com/jamesontucker/freqlab/releases/latest';
 
 export function UpdateSettings() {
   const {
@@ -75,30 +78,47 @@ export function UpdateSettings() {
       let totalBytes = 0;
       let downloadedBytes = 0;
 
+      console.log('[Updater] Starting download and install...');
+
       await update.downloadAndInstall((event) => {
         if (event.event === 'Started') {
           totalBytes = event.data.contentLength ?? 0;
+          console.log(`[Updater] Download started, size: ${totalBytes} bytes`);
         } else if (event.event === 'Progress') {
           downloadedBytes += event.data.chunkLength;
           if (totalBytes > 0) {
             setDownloadProgress(Math.round((downloadedBytes / totalBytes) * 100));
           }
         } else if (event.event === 'Finished') {
+          console.log(`[Updater] Download finished, total: ${downloadedBytes} bytes`);
           setDownloadProgress(100);
         }
       });
 
+      console.log('[Updater] Install complete, preparing to relaunch...');
       setStatus('ready');
       addToast({
         type: 'success',
-        message: 'Update downloaded. Restarting...',
+        message: 'Update installed! Restarting...',
       });
 
-      // Short delay before relaunch for UX
-      setTimeout(async () => {
+      // Brief delay for user to see the success message, then relaunch
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      console.log('[Updater] Calling relaunch()...');
+      try {
         await relaunch();
-      }, 1000);
+      } catch (relaunchErr) {
+        // relaunch() can fail on macOS - show manual instructions
+        console.error('[Updater] Relaunch failed:', relaunchErr);
+        addToast({
+          type: 'info',
+          message: 'Please quit and reopen the app to complete the update.',
+          duration: 10000,
+        });
+      }
     } catch (err) {
+      console.error('[Updater] Error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to download update';
       setError(errorMessage);
       addToast({
@@ -229,7 +249,7 @@ export function UpdateSettings() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
             <div>
-              <h4 className="font-medium text-text-primary">Update Ready</h4>
+              <h4 className="font-medium text-text-primary">Update Installed!</h4>
               <p className="text-sm text-text-muted">Restarting to apply update...</p>
             </div>
           </div>
@@ -284,6 +304,19 @@ export function UpdateSettings() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Manual download fallback */}
+      <div className="text-center pt-2">
+        <button
+          onClick={() => open(RELEASES_URL)}
+          className="text-xs text-text-muted hover:text-accent transition-colors"
+        >
+          Having trouble updating? Download the latest release manually →
+        </button>
+        <p className="text-[10px] text-text-muted/60 mt-1">
+          Your projects are stored separately and won't be affected.
+        </p>
       </div>
     </div>
   );

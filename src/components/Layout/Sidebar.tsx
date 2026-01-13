@@ -67,7 +67,15 @@ export function Sidebar({ onNewPlugin }: SidebarProps) {
                             ? 'bg-accent/50 text-white/50 cursor-not-allowed'
                             : 'bg-accent hover:bg-accent-hover text-white hover:shadow-lg hover:shadow-accent/25'
                     }`}
-                    title={newPluginBlocked ? 'Complete the current step first' : anyBuildInProgress ? 'Build in progress...' : sidebarCollapsed ? 'New Plugin' : undefined}
+                    title={
+                        newPluginBlocked
+                            ? 'Complete the current step first'
+                            : anyBuildInProgress
+                            ? 'Build in progress...'
+                            : sidebarCollapsed
+                            ? 'New Plugin'
+                            : undefined
+                    }
                 >
                     <svg
                         className="w-5 h-5 flex-shrink-0"
@@ -80,9 +88,7 @@ export function Sidebar({ onNewPlugin }: SidebarProps) {
                     </svg>
                     <span
                         className={`transition-all duration-300 ${
-                            sidebarCollapsed
-                                ? 'opacity-0 w-0 overflow-hidden'
-                                : 'opacity-100 w-auto delay-150'
+                            sidebarCollapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100 w-auto delay-150'
                         }`}
                     >
                         New Plugin
@@ -96,11 +102,18 @@ export function Sidebar({ onNewPlugin }: SidebarProps) {
                     sidebarCollapsed ? 'opacity-0 h-0 py-0' : 'opacity-100 h-auto delay-150'
                 }`}
             >
-                <span className="text-xs font-medium text-text-muted uppercase tracking-wider whitespace-nowrap">Projects</span>
+                <span className="text-xs font-medium text-text-muted uppercase tracking-wider whitespace-nowrap">
+                    Projects
+                </span>
             </div>
 
             {/* Project List */}
-            <div ref={projectsListRef} className={`flex-1 overflow-y-auto overflow-x-hidden transition-all duration-300 ${sidebarCollapsed ? 'px-1' : 'px-3'} pb-3`}>
+            <div
+                ref={projectsListRef}
+                className={`flex-1 overflow-y-auto overflow-x-hidden transition-all duration-300 ${
+                    sidebarCollapsed ? 'px-1' : 'px-3'
+                } pb-3`}
+            >
                 <ProjectList collapsed={sidebarCollapsed} />
             </div>
 
@@ -113,7 +126,9 @@ export function Sidebar({ onNewPlugin }: SidebarProps) {
                         }`}
                     >
                         <span className="text-text-muted whitespace-nowrap">freqlab</span>
-                        <span className="text-text-muted px-2 py-0.5 bg-bg-tertiary rounded whitespace-nowrap">v0.1.4</span>
+                        <span className="text-text-muted px-2 py-0.5 bg-bg-tertiary rounded whitespace-nowrap">
+                            v0.1.7
+                        </span>
                     </div>
                     <button
                         ref={collapseButtonRef}
