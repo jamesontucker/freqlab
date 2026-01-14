@@ -14,6 +14,9 @@
   <a href="https://github.com/jamesontucker/freqlab/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/jamesontucker/freqlab?style=flat-square&color=2DA86E" alt="License">
   </a>
+  <a href="https://freqlab.app/docs">
+    <img src="https://img.shields.io/badge/docs-freqlab.app-2DA86E?style=flat-square" alt="Documentation">
+  </a>
 </p>
 
 ---

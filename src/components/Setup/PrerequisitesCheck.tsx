@@ -750,8 +750,7 @@ interface PrerequisitesCheckProps {
   helpUrl?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function PrerequisitesCheck({ onComplete, helpUrl: _helpUrl = 'https://freqlab.app/help' }: PrerequisitesCheckProps) {
+export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/docs' }: PrerequisitesCheckProps) {
   const { status, diskSpace, permissions, loading, check, refreshPermissions, allInstalled, hasSufficientSpace } = usePrerequisites();
 
   // Installation state per step
@@ -1063,8 +1062,8 @@ export function PrerequisitesCheck({ onComplete, helpUrl: _helpUrl = 'https://fr
           ))}
         </div>
 
-        {/* Help Link - TODO: Re-enable when https://freqlab.app/help page is ready */}
-        {/* <div className="text-center pt-2">
+        {/* Help Link */}
+        <div className="text-center pt-2">
           <a
             href={helpUrl}
             target="_blank"
@@ -1076,7 +1075,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl: _helpUrl = 'https://fr
             </svg>
             <span>Having trouble?</span>
           </a>
-        </div> */}
+        </div>
 
         {/* Continue Button */}
         <button
