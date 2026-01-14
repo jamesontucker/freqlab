@@ -110,13 +110,15 @@ struct ParsedEvent {
     display_text: Option<String>,
     /// If this is an assistant message, the full text content (for final message extraction)
     assistant_content: Option<String>,
+    /// If this is an error event, the error message
+    error_content: Option<String>,
 }
 
 /// Parse a JSON event and return display text and assistant content
 fn parse_claude_event(json_str: &str) -> ParsedEvent {
     let event: ClaudeJsonEvent = match serde_json::from_str(json_str) {
         Ok(e) => e,
-        Err(_) => return ParsedEvent { display_text: None, assistant_content: None },
+        Err(_) => return ParsedEvent { display_text: None, assistant_content: None, error_content: None },
     };
 
     match event.event_type.as_str() {
@@ -150,10 +152,11 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                     return ParsedEvent {
                         display_text: text.clone(),
                         assistant_content: text,
+                        error_content: None,
                     };
                 }
             }
-            ParsedEvent { display_text: None, assistant_content: None }
+            ParsedEvent { display_text: None, assistant_content: None, error_content: None }
         }
         "tool_use" => {
             let tool = event.tool.as_deref().unwrap_or("unknown");
@@ -206,26 +209,28 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                 }
                 _ => format!("🔧 Using tool: {}", tool),
             };
-            ParsedEvent { display_text: Some(display), assistant_content: None }
+            ParsedEvent { display_text: Some(display), assistant_content: None, error_content: None }
         }
         "tool_result" => {
             // Tool completed - could show result summary
-            ParsedEvent { display_text: Some("   ✓ Done".to_string()), assistant_content: None }
+            ParsedEvent { display_text: Some("   ✓ Done".to_string()), assistant_content: None, error_content: None }
         }
         "result" => {
             // Final result - skip display as it duplicates the assistant message content
             // The "assistant" event already captures the response text
-            ParsedEvent { display_text: None, assistant_content: None }
+            ParsedEvent { display_text: None, assistant_content: None, error_content: None }
         }
         "error" => {
-            let display = if let Some(content) = &event.content {
+            // Capture the error message for proper error handling
+            let error_msg = event.content.clone();
+            let display = if let Some(ref content) = error_msg {
                 format!("❌ Error: {}", content)
             } else {
                 "❌ An error occurred".to_string()
             };
-            ParsedEvent { display_text: Some(display), assistant_content: None }
+            ParsedEvent { display_text: Some(display), assistant_content: None, error_content: error_msg }
         }
-        _ => ParsedEvent { display_text: None, assistant_content: None },
+        _ => ParsedEvent { display_text: None, assistant_content: None, error_content: None },
     }
 }
 
@@ -567,6 +572,7 @@ pub async fn send_to_claude(
 
     let mut full_output = String::new();
     let mut error_output = String::new();
+    let mut stream_error: Option<String> = None; // Errors from JSON stream (e.g., rate limits)
     let mut captured_session_id: Option<String> = None;
     // Track assistant messages for final content extraction
     // We prefer the last substantial message, but fall back to last non-empty if needed
@@ -612,6 +618,11 @@ pub async fn send_to_claude(
                                     last_substantial_content = Some(content.clone());
                                 }
                             }
+                        }
+
+                        // Capture error messages from the stream (e.g., rate limits, auth issues)
+                        if let Some(ref err) = parsed.error_content {
+                            stream_error = Some(err.clone());
                         }
 
                         // Display text during streaming (includes all thinking + tool use)
@@ -691,7 +702,7 @@ pub async fn send_to_claude(
     // Handle non-success exit
     if !status.success() {
         if !error_output.is_empty() {
-            // Process failed with error output
+            // Process failed with stderr output
             let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: error_output.clone(),
@@ -701,8 +712,15 @@ pub async fn send_to_claude(
             // Process was killed by user interrupt - don't emit another error (interrupt_claude already did)
             // Just return an error to prevent adding partial response as a message
             return Err("Session interrupted".to_string());
+        } else if let Some(err) = stream_error {
+            // Process failed with error from JSON stream (e.g., rate limits, auth issues)
+            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                project_path: project_path.clone(),
+                message: err.clone(),
+            });
+            return Err(format!("Claude CLI failed: {}", err));
         } else {
-            // Process failed without error output (unexpected termination)
+            // Process failed without any error output (truly unexpected termination)
             let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: "Claude CLI terminated unexpectedly".to_string(),

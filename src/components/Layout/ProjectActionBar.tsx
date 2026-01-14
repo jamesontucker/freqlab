@@ -8,6 +8,8 @@ import { useProjectBusyStore } from '../../stores/projectBusyStore'
 import { usePreviewStore } from '../../stores/previewStore'
 import { useProjectStore } from '../../stores/projectStore'
 import { useTourStore } from '../../stores/tourStore'
+import { useTipsStore } from '../../stores/tipsStore'
+import { Tip } from '../Common/Tip'
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs'
 import type { ProjectMeta } from '../../types'
 
@@ -110,6 +112,12 @@ export function ProjectActionBar({
     const queueMessage = useChatStore.getState().queueMessage
     const setBuildingPath = useProjectBusyStore.getState().setBuildingPath
     const clearBuildingIfMatch = useProjectBusyStore.getState().clearBuildingIfMatch
+    const incrementBuildCount = useTipsStore.getState().incrementBuildCount
+    const markAutoBuildUsed = useTipsStore.getState().markAutoBuildUsed
+
+    // Tips state for auto-build hint
+    const successfulBuildCount = useTipsStore((s) => s.successfulBuildCount)
+    const hasEverEnabledAutoBuild = useTipsStore((s) => s.hasEverEnabledAutoBuild)
 
     // Per-project output
     const { addLine, setActive, clear } = useProjectOutput(project.path)
@@ -207,6 +215,8 @@ export function ProjectActionBar({
                 }
                 // Clear pending build version since we just built
                 setPendingBuildVersion(null)
+                // Track successful builds for tips
+                incrementBuildCount()
                 onBuildComplete()
                 addToast({
                     type: 'success',
@@ -278,8 +288,13 @@ export function ProjectActionBar({
     }, [])
 
     const handleToggleAutoBuild = useCallback(() => {
-        setAutoBuild(project.path, !autoBuildEnabled)
-    }, [project.path, autoBuildEnabled, setAutoBuild])
+        const newState = !autoBuildEnabled
+        setAutoBuild(project.path, newState)
+        // Track that user has tried auto-build (for tips)
+        if (newState) {
+            markAutoBuildUsed()
+        }
+    }, [project.path, autoBuildEnabled, setAutoBuild, markAutoBuildUsed])
 
     // Auto-build effect: trigger build when needed and auto-build is enabled
     const handleBuildRef = useRef(handleBuild)
@@ -431,6 +446,17 @@ export function ProjectActionBar({
                 />
                 Auto Build
             </button>
+
+            {/* Tip for auto-build - shows after 5+ manual builds if never used auto-build */}
+            <Tip
+                tipId="auto-build-hint"
+                targetRef={autoBuildToggleRef}
+                message="Tired of clicking Build? Toggle Auto Build on and it will automatically build whenever a new version is ready."
+                position="bottom"
+                showCondition={successfulBuildCount >= 5 && !hasEverEnabledAutoBuild && !tourActive}
+                delayMs={2000}
+                icon="lightbulb"
+            />
 
             {/* Divider */}
             <div className="w-px h-6 bg-border" />

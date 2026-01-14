@@ -55,6 +55,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [activeVersion, setActiveVersion] = useState<number | null>(null);
   const [thinkingPhraseIndex, setThinkingPhraseIndex] = useState(0);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [droppedFiles, setDroppedFiles] = useState<string[]>([]);
   // Initialize elapsed time from store to prevent "0s flash" when switching to a loading project
   const [elapsedSeconds, setElapsedSeconds] = useState(() => {
     const store = useProjectBusyStore.getState();
@@ -149,6 +151,48 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       }
     }
   }, [clearTimeoutTimer, addLine, project.path]);
+
+  // Tauri drag and drop event listeners
+  useEffect(() => {
+    let mounted = true;
+    let unlistenEnter: (() => void) | undefined;
+    let unlistenLeave: (() => void) | undefined;
+    let unlistenDrop: (() => void) | undefined;
+
+    const setupListeners = async () => {
+      const { listen } = await import('@tauri-apps/api/event');
+      if (!mounted) return;
+
+      unlistenEnter = await listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-enter', () => {
+        if (mounted) setIsDraggingOver(true);
+      });
+
+      unlistenLeave = await listen('tauri://drag-leave', () => {
+        if (mounted) setIsDraggingOver(false);
+      });
+
+      unlistenDrop = await listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', (event) => {
+        if (!mounted) return;
+        setIsDraggingOver(false);
+        if (event.payload.paths && event.payload.paths.length > 0) {
+          setDroppedFiles(event.payload.paths);
+        }
+      });
+    };
+
+    setupListeners();
+
+    return () => {
+      mounted = false;
+      unlistenEnter?.();
+      unlistenLeave?.();
+      unlistenDrop?.();
+    };
+  }, []);
+
+  const handleDroppedFilesProcessed = useCallback(() => {
+    setDroppedFiles([]);
+  }, []);
 
   // Cleanup timeout on unmount (important when switching projects mid-session)
   useEffect(() => {
@@ -611,10 +655,11 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         }
       } else {
         // Add error message for actual errors
+        // Use streaming content if available (already contains the error), otherwise show generic message
         const errorMessage: ChatMessageType = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `Sorry, something went wrong: ${err}`,
+          content: streamingContentRef.current.trim() || `Sorry, something went wrong: ${err}`,
           timestamp: new Date().toISOString(),
           reverted: false,
         };
@@ -692,7 +737,28 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const effectiveActiveVersion = activeVersion ?? latestVersion;
 
   return (
-    <div ref={chatPanelRef} className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in">
+    <div
+      ref={chatPanelRef}
+      className="h-full flex flex-col bg-bg-secondary rounded-xl border border-border overflow-hidden animate-fade-in relative"
+    >
+      {/* Drag overlay */}
+      {isDraggingOver && (
+        <div className="absolute inset-0 z-50 bg-accent/10 backdrop-blur-sm border-2 border-dashed border-accent rounded-xl flex items-center justify-center pointer-events-none">
+          <div className="bg-bg-secondary/95 rounded-xl px-6 py-4 shadow-xl border border-accent/30">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">Drop files to attach</p>
+                <p className="text-xs text-text-muted">Files will be added to your message</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header with UI type and version */}
       <div className="px-4 py-2 border-b border-border flex items-center gap-2">
         {/* UI type with label */}
@@ -774,6 +840,24 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                     <div key={message.id} className={`flex justify-end animate-chat-bubble ${isInactiveVersion ? 'opacity-50' : ''}`}>
                       <div className="max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 bg-chat-user text-white">
                         <div className="text-sm whitespace-pre-wrap break-words">{message.content}</div>
+                        {/* Show attachments if any */}
+                        {message.attachments && message.attachments.length > 0 && (
+                          <div className="mt-2.5 bg-white/10 rounded-lg px-2.5 py-2">
+                            {message.attachments.map((attachment, idx) => (
+                              <div
+                                key={attachment.id}
+                                className={`flex items-center gap-2 ${idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/10' : ''}`}
+                              >
+                                <div className="w-6 h-6 rounded bg-white/10 flex items-center justify-center flex-shrink-0">
+                                  <svg className="w-3.5 h-3.5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                                  </svg>
+                                </div>
+                                <span className="text-xs text-white/80 truncate">{attachment.originalName}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="text-[10px] text-white/60 text-right mt-1">
                           {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
@@ -938,6 +1022,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         disabled={isLoading}
         showInterrupt={isLoading}
         placeholder={messages.length === 0 ? 'Describe what you want to build...' : 'Ask for changes...'}
+        droppedFiles={droppedFiles}
+        onDroppedFilesProcessed={handleDroppedFilesProcessed}
       />
     </div>
   );

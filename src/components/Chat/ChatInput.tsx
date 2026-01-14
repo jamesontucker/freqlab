@@ -3,6 +3,8 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import { useTourStore, TOUR_STEPS } from '../../stores/tourStore';
+import { useTipsStore } from '../../stores/tipsStore';
+import { Tip } from '../Common/Tip';
 
 interface PendingAttachment {
   id: string;
@@ -19,6 +21,8 @@ interface ChatInputProps {
   disabled?: boolean;
   showInterrupt?: boolean;
   placeholder?: string;
+  droppedFiles?: string[]; // File paths dropped from outside (e.g., drag onto chat panel)
+  onDroppedFilesProcessed?: () => void; // Called after dropped files are added to attachments
 }
 
 // Helper to get MIME type from file extension
@@ -75,17 +79,21 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt = false, placeholder = 'Describe what you want to build...' }: ChatInputProps) {
+export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt = false, placeholder = 'Describe what you want to build...', droppedFiles, onDroppedFilesProcessed }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewErrors, setPreviewErrors] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
+  const attachButtonRef = useRef<HTMLButtonElement>(null);
 
   // Tour state
   const tourActive = useTourStore((s) => s.isActive);
   const currentTourStep = useTourStore((s) => s.currentStep);
+
+  // Tips state
+  const successfulBuildCount = useTipsStore((s) => s.successfulBuildCount);
 
   // Get tour step config for suggested message
   const tourStepConfig = TOUR_STEPS.find(s => s.id === currentTourStep);
@@ -148,6 +156,28 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
       textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
     }
   }, [value]);
+
+  // Handle files dropped from outside (e.g., drag onto chat panel)
+  useEffect(() => {
+    if (droppedFiles && droppedFiles.length > 0) {
+      const newAttachments: PendingAttachment[] = droppedFiles.map((filePath) => {
+        const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+        const mimeType = getMimeType(fileName);
+        const isImage = isImageMime(mimeType);
+
+        return {
+          id: crypto.randomUUID(),
+          originalName: fileName,
+          sourcePath: filePath,
+          mimeType,
+          size: 0,
+          previewUrl: isImage ? convertFileSrc(filePath) : undefined,
+        };
+      });
+      setAttachments(prev => [...prev, ...newAttachments]);
+      onDroppedFilesProcessed?.();
+    }
+  }, [droppedFiles, onDroppedFilesProcessed]);
 
   const handleFileSelect = async () => {
     try {
@@ -250,6 +280,7 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
       <div className="flex items-center gap-2">
         {/* Attachment button */}
         <button
+          ref={attachButtonRef}
           onClick={handleFileSelect}
           disabled={disabled}
           className={`p-2.5 rounded-lg border transition-all duration-200 flex-shrink-0 flex items-center justify-center ${
@@ -263,6 +294,17 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
           </svg>
         </button>
+
+        {/* Tip for file attachments - shows while Claude is thinking after 3+ builds */}
+        <Tip
+          tipId="file-attachments"
+          targetRef={attachButtonRef}
+          message="Share files with chat! You can also drag and drop."
+          position="top"
+          showCondition={showInterrupt && !tourActive && successfulBuildCount >= 3}
+          delayMs={2000}
+          icon="lightbulb"
+        />
 
         {/* Input container */}
         <div className="flex-1 flex items-center gap-2 px-3 py-1.5 bg-bg-primary border border-border rounded-lg focus-within:border-accent/50 focus-within:ring-1 focus-within:ring-accent/20 transition-all">
