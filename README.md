@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/jamesontucker/freqlab/releases/latest">
-    <img src="https://img.shields.io/github/v/release/jamesontucker/freqlab?style=flat-square&color=2DA86E" alt="Latest Release">
+    <img src="https://img.shields.io/github/v/release/jamesontucker/freqlab?style=flat-square&color=2DA86E&cacheSeconds=300" alt="Latest Release">
   </a>
   <a href="https://github.com/jamesontucker/freqlab/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/jamesontucker/freqlab?style=flat-square&color=2DA86E" alt="License">
