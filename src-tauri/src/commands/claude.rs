@@ -70,6 +70,15 @@ struct ClaudeJsonEvent {
     content: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    /// For "result" events: "success" or "error"
+    #[serde(default)]
+    subtype: Option<String>,
+    /// For "result" events: whether it's an error
+    #[serde(default)]
+    is_error: Option<bool>,
+    /// For "result" events: the result text
+    #[serde(default)]
+    result: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -112,13 +121,25 @@ struct ParsedEvent {
     assistant_content: Option<String>,
     /// If this is an error event, the error message
     error_content: Option<String>,
+    /// If this is a "result" event, signals Claude is done (with optional error flag)
+    is_result_event: bool,
+    /// If result event, whether it was an error result
+    result_is_error: bool,
 }
 
 /// Parse a JSON event and return display text and assistant content
 fn parse_claude_event(json_str: &str) -> ParsedEvent {
+    let default_event = ParsedEvent {
+        display_text: None,
+        assistant_content: None,
+        error_content: None,
+        is_result_event: false,
+        result_is_error: false,
+    };
+
     let event: ClaudeJsonEvent = match serde_json::from_str(json_str) {
         Ok(e) => e,
-        Err(_) => return ParsedEvent { display_text: None, assistant_content: None, error_content: None },
+        Err(_) => return default_event,
     };
 
     match event.event_type.as_str() {
@@ -153,10 +174,12 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                         display_text: text.clone(),
                         assistant_content: text,
                         error_content: None,
+                        is_result_event: false,
+                        result_is_error: false,
                     };
                 }
             }
-            ParsedEvent { display_text: None, assistant_content: None, error_content: None }
+            default_event
         }
         "tool_use" => {
             let tool = event.tool.as_deref().unwrap_or("unknown");
@@ -209,16 +232,47 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                 }
                 _ => format!("🔧 Using tool: {}", tool),
             };
-            ParsedEvent { display_text: Some(display), assistant_content: None, error_content: None }
+            ParsedEvent {
+                display_text: Some(display),
+                assistant_content: None,
+                error_content: None,
+                is_result_event: false,
+                result_is_error: false,
+            }
         }
         "tool_result" => {
             // Tool completed - could show result summary
-            ParsedEvent { display_text: Some("   ✓ Done".to_string()), assistant_content: None, error_content: None }
+            ParsedEvent {
+                display_text: Some("   ✓ Done".to_string()),
+                assistant_content: None,
+                error_content: None,
+                is_result_event: false,
+                result_is_error: false,
+            }
         }
         "result" => {
-            // Final result - skip display as it duplicates the assistant message content
-            // The "assistant" event already captures the response text
-            ParsedEvent { display_text: None, assistant_content: None, error_content: None }
+            // FINAL result event - this is the definitive "done" signal from Claude CLI
+            // Check if it's an error result
+            let is_error = event.is_error.unwrap_or(false)
+                || event.subtype.as_deref() == Some("error");
+
+            // Extract result text if available (for error messages)
+            let error_content = if is_error {
+                event.result.clone().or_else(|| event.content.clone())
+            } else {
+                None
+            };
+
+            eprintln!("[DEBUG] Received 'result' event: subtype={:?}, is_error={}",
+                event.subtype, is_error);
+
+            ParsedEvent {
+                display_text: None,  // Don't display - duplicates assistant message
+                assistant_content: None,
+                error_content,
+                is_result_event: true,
+                result_is_error: is_error,
+            }
         }
         "error" => {
             // Capture the error message for proper error handling
@@ -228,9 +282,15 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
             } else {
                 "❌ An error occurred".to_string()
             };
-            ParsedEvent { display_text: Some(display), assistant_content: None, error_content: error_msg }
+            ParsedEvent {
+                display_text: Some(display),
+                assistant_content: None,
+                error_content: error_msg,
+                is_result_event: false,
+                result_is_error: false,
+            }
         }
-        _ => ParsedEvent { display_text: None, assistant_content: None, error_content: None },
+        _ => default_event,
     }
 }
 
@@ -579,14 +639,28 @@ pub async fn send_to_claude(
     let mut last_substantial_content: Option<String> = None;  // >10 chars, likely a real response
     let mut last_nonempty_content: Option<String> = None;     // Fallback for short but valid responses
 
-    // Timeout settings: if no output for 15 minutes, consider it potentially stalled
-    // This is a safety net for completely hung processes - the frontend has its own 30-min timeout
-    let read_timeout = Duration::from_secs(900); // 15 minutes
-    let mut consecutive_timeouts = 0;
-    let max_consecutive_timeouts = 2; // Kill after 30 minutes of no output
+    // Track when we receive the "result" event (definitive done signal)
+    let mut received_result_event = false;
+
+    // Track if we were interrupted (checked each iteration)
+    let mut was_interrupted_during_loop = false;
+
+    // Timeout settings for reading:
+    // - Short timeout (5s) allows us to check for interrupts frequently
+    // - We track total idle time to detect truly stalled processes
+    let read_timeout = Duration::from_secs(5); // Check for interrupts every 5 seconds
+    let mut total_idle_seconds: u64 = 0;
+    let max_idle_seconds: u64 = 1800; // Kill after 30 minutes of no output total
 
     // Read stdout and stderr concurrently with timeout protection
     loop {
+        // Check if we were interrupted before each read
+        if get_process_pid(&project_path).is_none() {
+            eprintln!("[DEBUG] Process was interrupted - breaking loop");
+            was_interrupted_during_loop = true;
+            break;
+        }
+
         let read_result = timeout(read_timeout, async {
             tokio::select! {
                 line = stdout_reader.next_line() => ("stdout", line),
@@ -596,7 +670,7 @@ pub async fn send_to_claude(
 
         match read_result {
             Ok(("stdout", line)) => {
-                consecutive_timeouts = 0; // Reset on any output
+                total_idle_seconds = 0; // Reset on any output
                 match line {
                     Ok(Some(json_line)) => {
                         // Try to extract session_id if present
@@ -606,6 +680,18 @@ pub async fn send_to_claude(
 
                         // Try to parse as JSON event for display
                         let parsed = parse_claude_event(&json_line);
+
+                        // Check for "result" event - the definitive "done" signal
+                        if parsed.is_result_event {
+                            eprintln!("[DEBUG] Received result event - Claude is done (is_error={})", parsed.result_is_error);
+                            received_result_event = true;
+                            // Capture any error content from the result
+                            if let Some(ref err) = parsed.error_content {
+                                stream_error = Some(err.clone());
+                            }
+                            // Break immediately - no need to wait for EOF
+                            break;
+                        }
 
                         // Track assistant messages for final content extraction
                         if let Some(ref content) = parsed.assistant_content {
@@ -635,7 +721,11 @@ pub async fn send_to_claude(
                             });
                         }
                     }
-                    Ok(None) => break,
+                    Ok(None) => {
+                        // EOF on stdout - fallback exit condition
+                        eprintln!("[DEBUG] Stdout EOF - breaking loop (result_event={})", received_result_event);
+                        break;
+                    }
                     Err(e) => {
                         let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
                             project_path: project_path.clone(),
@@ -646,7 +736,7 @@ pub async fn send_to_claude(
                 }
             }
             Ok(("stderr", line)) => {
-                consecutive_timeouts = 0; // Reset on any output
+                total_idle_seconds = 0; // Reset on any output
                 match line {
                     Ok(Some(text)) => {
                         error_output.push_str(&text);
@@ -657,23 +747,41 @@ pub async fn send_to_claude(
                             content: format!("[stderr] {}", text),
                         });
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        // Stderr EOF - this is fine, continue reading stdout
+                    }
                     Err(_) => {}
                 }
             }
             Ok(_) => {} // Shouldn't happen
             Err(_) => {
-                // Timeout occurred - no output for read_timeout duration
-                consecutive_timeouts += 1;
-                let timeout_mins = read_timeout.as_secs() / 60;
-                eprintln!("[WARN] Claude CLI read timeout ({}/{})", consecutive_timeouts, max_consecutive_timeouts);
+                // Timeout occurred - no output for read_timeout duration (5 seconds)
+                total_idle_seconds += read_timeout.as_secs();
 
-                let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
-                    project_path: project_path.clone(),
-                    content: format!("[Warning] No output for {} minutes...", timeout_mins),
-                });
+                // Check if we were interrupted during the timeout
+                if get_process_pid(&project_path).is_none() {
+                    eprintln!("[DEBUG] Process was interrupted during read timeout - breaking loop");
+                    was_interrupted_during_loop = true;
+                    break;
+                }
 
-                if consecutive_timeouts >= max_consecutive_timeouts {
+                // Only warn at 5 minutes, then every 5 minutes after
+                // (Coding tasks can legitimately take several minutes between outputs)
+                let warn_threshold_secs: u64 = 300; // 5 minutes before first warning
+                let warn_interval_secs: u64 = 300;  // Then every 5 minutes
+
+                if total_idle_seconds >= warn_threshold_secs &&
+                   (total_idle_seconds - warn_threshold_secs) % warn_interval_secs == 0 {
+                    let idle_mins = total_idle_seconds / 60;
+                    eprintln!("[WARN] Claude CLI idle for {} minute(s)", idle_mins);
+
+                    let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+                        project_path: project_path.clone(),
+                        content: format!("[Note] No output for {} minutes (still working)...", idle_mins),
+                    });
+                }
+
+                if total_idle_seconds >= max_idle_seconds {
                     eprintln!("[ERROR] Claude CLI appears stalled, terminating process");
                     let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
                         project_path: project_path.clone(),
@@ -687,31 +795,54 @@ pub async fn send_to_claude(
         }
     }
 
-    // Wait for process to complete
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Failed to wait for Claude CLI: {}", e))?;
+    // Wait for process to complete with a short timeout
+    // Timeout varies based on how we exited the loop:
+    // - Interrupt: 2 seconds (user wants it stopped NOW)
+    // - Result event: 5 seconds (process should exit quickly)
+    // - EOF/other: 10 seconds (might need cleanup time)
+    let wait_timeout = if was_interrupted_during_loop {
+        Duration::from_secs(2) // Very short - user requested stop
+    } else if received_result_event {
+        Duration::from_secs(5) // Short timeout after result event
+    } else {
+        Duration::from_secs(10) // Longer timeout for EOF-based exit
+    };
 
-    // Check if process was already unregistered (indicates it was interrupted)
-    let was_interrupted = get_process_pid(&project_path).is_none();
+    let status = match timeout(wait_timeout, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(e)) => {
+            return Err(format!("Failed to wait for Claude CLI: {}", e));
+        }
+        Err(_) => {
+            // Timeout waiting for process to exit - force kill it
+            eprintln!("[WARN] Claude CLI didn't exit within {:?} after completion signal, force killing", wait_timeout);
+            let _ = child.kill().await;
+            // Try to get the status after killing
+            child.wait().await.map_err(|e| format!("Failed to wait after kill: {}", e))?
+        }
+    };
+
+    // Check if process was interrupted (either detected in loop, or PID was unregistered)
+    let was_interrupted = was_interrupted_during_loop || get_process_pid(&project_path).is_none();
 
     // Unregister process now that it's complete (no-op if already unregistered by interrupt)
     unregister_process(&project_path);
 
     // Handle non-success exit
     if !status.success() {
-        if !error_output.is_empty() {
+        // Interrupted sessions take priority - don't report as error
+        if was_interrupted {
+            // Process was killed by user interrupt - don't emit another error (interrupt_claude already did)
+            // Just return an error to prevent adding partial response as a message
+            eprintln!("[DEBUG] Session was interrupted, returning early");
+            return Err("Session interrupted".to_string());
+        } else if !error_output.is_empty() {
             // Process failed with stderr output
             let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: error_output.clone(),
             });
             return Err(format!("Claude CLI failed: {}", error_output));
-        } else if was_interrupted {
-            // Process was killed by user interrupt - don't emit another error (interrupt_claude already did)
-            // Just return an error to prevent adding partial response as a message
-            return Err("Session interrupted".to_string());
         } else if let Some(err) = stream_error {
             // Process failed with error from JSON stream (e.g., rate limits, auth issues)
             let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
