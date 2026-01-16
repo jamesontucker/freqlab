@@ -496,6 +496,10 @@ pub async fn send_to_claude(
         eprintln!("[WARN] Failed to update gitignore: {}", e);
     }
 
+    // Record HEAD commit before Claude runs (to detect if Claude commits changes itself)
+    let head_before = super::git::get_head_commit(&project_path).await.ok();
+    eprintln!("[DEBUG] HEAD before Claude: {:?}", head_before);
+
     // Check for existing session to resume
     let existing_session = load_session_id(&project_path);
     let is_first_message = existing_session.is_none();
@@ -930,7 +934,49 @@ pub async fn send_to_claude(
     } else {
         message.clone()
     };
-    let commit_hash = super::git::commit_changes(&project_path, &commit_msg).await.ok();
+
+    // Small delay to ensure filesystem changes are flushed
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Check if HEAD changed during Claude's session (Claude may have committed changes itself)
+    let head_after = super::git::get_head_commit(&project_path).await.ok();
+    eprintln!("[DEBUG] HEAD after Claude: {:?}", head_after);
+
+    let claude_committed = match (&head_before, &head_after) {
+        (Some(before), Some(after)) if before != after => {
+            eprintln!("[DEBUG] Claude committed changes itself (HEAD changed from {} to {})", before, after);
+            true
+        }
+        _ => false,
+    };
+
+    // Try to commit any remaining uncommitted changes
+    let commit_result = super::git::commit_changes(&project_path, &commit_msg).await;
+    let commit_hash = match &commit_result {
+        Ok(hash) => {
+            eprintln!("[DEBUG] Commit succeeded: {}", hash);
+            Some(hash.clone())
+        }
+        Err(e) if e == "no_changes" => {
+            // No uncommitted changes - but check if Claude committed during the session
+            if claude_committed {
+                eprintln!("[DEBUG] No uncommitted changes, but Claude made commits - using HEAD");
+                head_after.clone()
+            } else {
+                eprintln!("[DEBUG] No changes to commit");
+                None
+            }
+        }
+        Err(e) => {
+            eprintln!("[WARN] Commit failed: {}", e);
+            // Still check if Claude committed
+            if claude_committed {
+                head_after.clone()
+            } else {
+                None
+            }
+        }
+    };
 
     Ok(ClaudeResponse {
         content: final_content,

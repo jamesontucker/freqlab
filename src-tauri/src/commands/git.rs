@@ -71,6 +71,8 @@ target/
 
 /// Stage all changes and commit with the given message (blocking - use commit_changes for async)
 fn commit_changes_sync(path: &str, message: &str) -> Result<String, String> {
+    eprintln!("[DEBUG] commit_changes_sync: path={}", path);
+
     // Stage all changes
     let add_output = git_command()
         .current_dir(path)
@@ -80,6 +82,7 @@ fn commit_changes_sync(path: &str, message: &str) -> Result<String, String> {
 
     if !add_output.status.success() {
         let stderr = String::from_utf8_lossy(&add_output.stderr);
+        eprintln!("[DEBUG] git add failed: {}", stderr);
         return Err(format!("git add failed: {}", stderr));
     }
 
@@ -91,8 +94,10 @@ fn commit_changes_sync(path: &str, message: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to run git status: {}", e))?;
 
     let status = String::from_utf8_lossy(&status_output.stdout);
+    eprintln!("[DEBUG] git status output: '{}'", status.trim());
     if status.trim().is_empty() {
         // Nothing to commit - return error so caller knows no new commit was made
+        eprintln!("[DEBUG] No changes detected by git status");
         return Err("no_changes".to_string());
     }
 
@@ -139,6 +144,14 @@ fn get_current_commit_sync(path: &str) -> Result<String, String> {
 
     let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(hash)
+}
+
+/// Get the current HEAD commit hash (async)
+pub async fn get_head_commit(path: &str) -> Result<String, String> {
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || get_current_commit_sync(&path))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
 }
 
 /// Revert files to a specific commit - blocking implementation
