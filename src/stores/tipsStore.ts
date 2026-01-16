@@ -9,7 +9,8 @@ export type TipId =
   | 'auto-build'            // Hint about auto-build feature (unused - covered by tour)
   | 'auto-build-hint'       // Hint to try auto-build after many manual builds
   | 'plugin-editor'         // Hint about opening plugin editor
-  | 'file-attachments';     // Hint about attaching files and drag-drop
+  | 'file-attachments'      // Hint about attaching files and drag-drop
+  | 'launch-plugin';        // Hint to launch and test plugin for first time
 
 interface TipsState {
   // Set of tip IDs that have been shown
