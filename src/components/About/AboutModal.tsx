@@ -73,7 +73,11 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                         className="flex items-center gap-2 px-4 py-2 bg-bg-tertiary hover:bg-bg-elevated text-text-primary rounded-lg transition-colors border border-border"
                     >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"
+                            />
                         </svg>
                         <span className="text-sm font-medium">Docs</span>
                     </a>
@@ -261,7 +265,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                 </div>
 
                 {/* Version */}
-                <p className="text-text-muted text-xs">Version 0.1.8</p>
+                <p className="text-text-muted text-xs">Version 0.1.9</p>
             </div>
         </Modal>
     )

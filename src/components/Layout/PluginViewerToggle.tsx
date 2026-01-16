@@ -6,6 +6,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useTourStore } from '../../stores/tourStore';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import * as previewApi from '../../api/preview';
+import { Tip } from '../Common/Tip';
 
 // Helper to extract folder name from project path
 function getFolderName(projectPath: string): string {
@@ -304,6 +305,17 @@ export function PluginViewerToggle() {
           Reopen
         </button>
       )}
+
+      {/* First-time launch plugin tip */}
+      <Tip
+        tipId="launch-plugin"
+        targetRef={toggleButtonRef}
+        message="Launch and test with the controls panel! If the plugin sounds awful or UI is broken, just ask chat to fix it."
+        position="bottom"
+        showCondition={pluginAvailable && !isActive && !isLoading && !tourActive && !isNative && !buildInProgress}
+        delayMs={1500}
+        icon="sparkle"
+      />
     </div>
   );
 }

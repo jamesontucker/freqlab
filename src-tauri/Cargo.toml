@@ -1,6 +1,6 @@
 [package]
 name = "freqlab"
-version = "0.1.8"
+version = "0.1.9"
 description = "Audio Plugin Creation Engine"
 authors = ["nanoshrine interactive"]
 license = "GPL-3.0"
