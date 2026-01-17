@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import type { ProjectMeta, CreateProjectInput } from '../types';
+import { useDraftStore } from './draftStore';
 
 interface ProjectState {
   projects: ProjectMeta[];
@@ -74,6 +75,8 @@ export const useProjectStore = create<ProjectState>()(
             // Also remove from auto-build paths
             autoBuildPaths: state.autoBuildPaths.filter((p) => p !== projectPath),
           }));
+          // Clean up draft for deleted project
+          useDraftStore.getState().removeDraft(projectPath);
         } catch (err) {
           set({ error: String(err), loading: false });
           throw err;

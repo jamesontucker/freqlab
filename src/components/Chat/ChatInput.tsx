@@ -4,6 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import { useTourStore, TOUR_STEPS } from '../../stores/tourStore';
 import { useTipsStore } from '../../stores/tipsStore';
+import { useDraftStore } from '../../stores/draftStore';
 import { Tip } from '../Common/Tip';
 
 interface PendingAttachment {
@@ -16,6 +17,7 @@ interface PendingAttachment {
 }
 
 interface ChatInputProps {
+  projectPath: string; // Required for draft persistence
   onSend: (message: string, attachments?: PendingAttachment[]) => void;
   onInterrupt?: () => void;
   disabled?: boolean;
@@ -79,14 +81,25 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt = false, placeholder = 'Describe what you want to build...', droppedFiles, onDroppedFilesProcessed }: ChatInputProps) {
-  const [value, setValue] = useState('');
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, showInterrupt = false, placeholder = 'Describe what you want to build...', droppedFiles, onDroppedFilesProcessed }: ChatInputProps) {
+  // Draft store for persistence across project switches
+  const getDraft = useDraftStore((s) => s.getDraft);
+  const setDraftMessage = useDraftStore((s) => s.setMessage);
+  const setDraftAttachments = useDraftStore((s) => s.setAttachments);
+  const clearDraft = useDraftStore((s) => s.clearDraft);
+
+  // Initialize from draft store
+  const draft = getDraft(projectPath);
+  const [value, setValue] = useState(draft.message);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>(draft.attachments);
   const [previewErrors, setPreviewErrors] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const attachButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Track previous project path to detect switches
+  const prevProjectPathRef = useRef(projectPath);
 
   // Tour state
   const tourActive = useTourStore((s) => s.isActive);
@@ -142,6 +155,35 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
       unregisterTourRef('chat-input-container');
     };
   }, []);
+
+  // Handle project switch - save current draft and restore new project's draft
+  useEffect(() => {
+    if (prevProjectPathRef.current !== projectPath) {
+      // Save current state to old project's draft before switching
+      // (This is a safety net - normally synced on every change)
+
+      // Restore new project's draft
+      const newDraft = getDraft(projectPath);
+      setValue(newDraft.message);
+      setAttachments(newDraft.attachments);
+      setPreviewErrors(new Set());
+
+      prevProjectPathRef.current = projectPath;
+    }
+  }, [projectPath, getDraft]);
+
+  // Sync message changes to draft store (debounced effect)
+  useEffect(() => {
+    // Don't save tour-suggested messages as drafts
+    if (isChatTourStep) return;
+
+    setDraftMessage(projectPath, value);
+  }, [value, projectPath, setDraftMessage, isChatTourStep]);
+
+  // Sync attachment changes to draft store
+  useEffect(() => {
+    setDraftAttachments(projectPath, attachments);
+  }, [attachments, projectPath, setDraftAttachments]);
 
   // Handle preview image load error - fall back to file icon
   const handlePreviewError = (id: string) => {
@@ -221,6 +263,8 @@ export function ChatInput({ onSend, onInterrupt, disabled = false, showInterrupt
       setValue('');
       setAttachments([]);
       setPreviewErrors(new Set());
+      // Clear draft in store (local state clears trigger sync, but be explicit)
+      clearDraft(projectPath);
     }
   };
 

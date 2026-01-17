@@ -1017,6 +1017,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
       {/* Input area */}
       <ChatInput
+        projectPath={project.path}
         onSend={handleSend}
         onInterrupt={handleInterrupt}
         disabled={isLoading}
