@@ -673,6 +673,17 @@ impl AudioEngineHandle {
         self.shared.plugin_instance.read().is_some()
     }
 
+    /// Check if the loaded plugin has crashed during audio processing
+    /// Returns false if no plugin is loaded
+    pub fn plugin_has_crashed(&self) -> bool {
+        self.shared
+            .plugin_instance
+            .read()
+            .as_ref()
+            .map(|p| p.has_crashed())
+            .unwrap_or(false)
+    }
+
     /// Check if the loaded plugin has a GUI
     pub fn plugin_has_editor(&self) -> bool {
         self.shared

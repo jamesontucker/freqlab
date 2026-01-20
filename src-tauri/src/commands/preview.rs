@@ -8,6 +8,51 @@ use tauri::{Emitter, Manager};
 /// Global flag to control the level meter thread
 static LEVEL_METER_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// Global flag to control the crash monitor thread
+static CRASH_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Tracks whether we've already emitted a plugin-crashed event (to avoid spam)
+static CRASH_EVENT_EMITTED: AtomicBool = AtomicBool::new(false);
+
+/// Start the crash monitor thread - runs independently of metering to detect crashes
+/// even when PreviewPanel is closed
+fn start_crash_monitor(app_handle: tauri::AppHandle) {
+    // Don't start if already running
+    if CRASH_MONITOR_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        log::info!("Crash monitor thread started");
+
+        while CRASH_MONITOR_RUNNING.load(Ordering::SeqCst) {
+            // Check for plugin crash
+            if let Some(handle) = get_engine_handle() {
+                let plugin_crashed = handle.plugin_has_crashed();
+
+                // Emit crash event once (not on every poll)
+                if plugin_crashed && !CRASH_EVENT_EMITTED.swap(true, Ordering::SeqCst) {
+                    log::error!("Crash monitor detected plugin crash - emitting event");
+                    let _ = app_handle.emit(
+                        "plugin-crashed",
+                        "Plugin crashed during audio processing. Reload to try again.",
+                    );
+                }
+            }
+
+            // Poll every 100ms - fast enough to catch crashes quickly
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        log::info!("Crash monitor thread stopped");
+    });
+}
+
+/// Stop the crash monitor thread
+fn stop_crash_monitor() {
+    CRASH_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+}
+
 use crate::audio::{
     device::{get_default_sample_rate, list_input_devices, list_output_devices, AudioConfig, AudioDeviceInfo},
     engine::{get_engine_handle, get_engine_sample_rate, init_engine, reinit_engine, shutdown_engine, EngineState, InputSource, PluginPerformance},
@@ -79,6 +124,10 @@ pub struct MeteringData {
     /// Plugin performance metrics (only present when monitoring is enabled)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_performance: Option<PluginPerformance>,
+    /// True if the plugin has crashed during audio processing
+    /// When true, the plugin outputs silence until reloaded
+    #[serde(default)]
+    pub plugin_crashed: bool,
 }
 
 /// Convert linear level to dB
@@ -477,6 +526,15 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                 // Get plugin performance metrics (only if monitoring is enabled)
                 let plugin_performance = handle.get_plugin_performance();
 
+                // Check if plugin has crashed
+                let plugin_crashed = handle.plugin_has_crashed();
+
+                // Emit crash event once (not on every metering update)
+                if plugin_crashed && !CRASH_EVENT_EMITTED.swap(true, Ordering::SeqCst) {
+                    log::error!("Plugin crash detected - emitting plugin-crashed event");
+                    let _ = app_handle.emit("plugin-crashed", "Plugin crashed during audio processing. Reload to try again.");
+                }
+
                 // Send combined metering data with dB values, waveform, and clipping indicators
                 let metering = MeteringData {
                     left,
@@ -504,6 +562,7 @@ pub fn start_level_meter(app_handle: tauri::AppHandle) -> Result<(), String> {
                     stereo_positions_input,
                     stereo_correlation_input,
                     plugin_performance,
+                    plugin_crashed,
                 };
                 let _ = app_handle.emit("preview-metering", &metering);
             } else {
@@ -558,6 +617,13 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
 
     match handle.load_plugin(std::path::Path::new(&path)) {
         Ok(()) => {
+            // Reset crash event flag AFTER successful load so we don't get a
+            // spurious toast from the old crashed plugin during reload
+            CRASH_EVENT_EMITTED.store(false, Ordering::SeqCst);
+
+            // Start crash monitor to detect crashes even when PreviewPanel is closed
+            start_crash_monitor(app_handle.clone());
+
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
             // Update MIDI queues for pattern playback and live input
@@ -578,6 +644,8 @@ pub fn plugin_load(path: String, app_handle: tauri::AppHandle) -> Result<(), Str
 #[tauri::command]
 pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     let handle = get_engine_handle().ok_or_else(|| "Audio engine not initialized".to_string())?;
+    // Stop crash monitor
+    stop_crash_monitor();
     // Clear MIDI queues before unloading
     clear_midi_player_queue();
     clear_midi_input_queue();
@@ -693,6 +761,13 @@ pub fn plugin_load_for_project(
 
     match handle.load_plugin(std::path::Path::new(&plugin_path)) {
         Ok(()) => {
+            // Reset crash event flag AFTER successful load so we don't get a
+            // spurious toast from the old crashed plugin during reload
+            CRASH_EVENT_EMITTED.store(false, Ordering::SeqCst);
+
+            // Start crash monitor to detect crashes even when PreviewPanel is closed
+            start_crash_monitor(app_handle.clone());
+
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
             // Update MIDI queues for pattern playback and live input
@@ -809,6 +884,12 @@ pub fn plugin_reload(
     // Reload
     match handle.load_plugin(std::path::Path::new(&plugin_path)) {
         Ok(()) => {
+            // Reset crash event flag AFTER successful load so we can detect crashes in the reloaded plugin
+            CRASH_EVENT_EMITTED.store(false, Ordering::SeqCst);
+
+            // Restart crash monitor for the reloaded plugin
+            start_crash_monitor(app_handle.clone());
+
             let state = handle.get_plugin_state();
             let _ = app_handle.emit("plugin-loaded", &state);
             // Update MIDI queues for pattern playback and live input

@@ -7,6 +7,7 @@
 
 pub mod clap_host;
 pub mod clap_sys;
+pub mod crash_guard;
 pub mod editor;
 pub mod file_watcher;
 

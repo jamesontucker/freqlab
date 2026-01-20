@@ -230,6 +230,8 @@ export interface MeteringData {
   stereo_correlation_input: number;
   /** Plugin performance metrics (only present when monitoring is enabled) */
   plugin_performance?: PluginPerformance;
+  /** True if the plugin has crashed during audio processing */
+  plugin_crashed?: boolean;
 }
 
 /**
@@ -362,6 +364,16 @@ export function onPluginError(callback: (error: string) => void): Promise<Unlist
 export function onPluginUnloaded(callback: () => void): Promise<UnlistenFn> {
   return listen('plugin-unloaded', () => {
     callback();
+  });
+}
+
+/**
+ * Subscribe to plugin crash events
+ * Emitted once when a plugin panics during audio processing
+ */
+export function onPluginCrashed(callback: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>('plugin-crashed', (event) => {
+    callback(event.payload);
   });
 }
 

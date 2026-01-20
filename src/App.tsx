@@ -4,6 +4,7 @@ import { check } from '@tauri-apps/plugin-updater';
 import { useSettingsStore } from './stores/settingsStore';
 import { useProjectStore } from './stores/projectStore';
 import { useToastStore } from './stores/toastStore';
+import { useChatStore } from './stores/chatStore';
 import { useUpdateStore } from './stores/updateStore';
 import { useNetworkStatusChange } from './hooks/useNetworkStatus';
 import { WelcomeWizard } from './components/Setup/WelcomeWizard';
@@ -12,6 +13,7 @@ import { GuidedTour } from './components/Tour';
 import { LicenseAcceptanceModal } from './components/License';
 import { applyTheme } from './components/Settings/ThemePicker';
 import { CURRENT_LICENSE_VERSION } from './constants/license';
+import { onPluginCrashed } from './api/preview';
 import type { PrerequisiteStatus } from './types';
 
 function App() {
@@ -87,6 +89,34 @@ function App() {
 
     checkPrereqs();
   }, [setupComplete, hasCheckedPrereqs, addToast]);
+
+  // Global plugin crash listener - always active so crashes are caught even when PreviewPanel is closed
+  useEffect(() => {
+    if (!setupComplete) return;
+
+    const unlistenPromise = onPluginCrashed((message) => {
+      const { addToast, clearErrorToasts } = useToastStore.getState();
+      const { queueMessage } = useChatStore.getState();
+
+      addToast({
+        type: 'error',
+        message: 'Plugin crashed during audio processing',
+        action: {
+          label: 'Fix It',
+          onClick: () => {
+            queueMessage(
+              `The plugin crashed during audio processing with this error:\n\n\`\`\`\n${message}\n\`\`\`\n\nThis is likely a bug in the plugin code. Common causes include:\n- Division by zero\n- Memory allocation in the audio thread (use pre-allocated buffers instead)\n- Unwrap/panic calls that can fail\n- Array index out of bounds\n\nPlease review the \`process()\` function in \`src/lib.rs\` and fix any bugs that could cause a panic.`
+            );
+            clearErrorToasts();
+          },
+        },
+      });
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [setupComplete]);
 
   // Silent update check on startup
   useEffect(() => {

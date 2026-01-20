@@ -94,6 +94,10 @@ pub struct PluginInstance {
     midi_context: MidiEventContext,
     /// Pre-allocated buffer for draining MIDI events (avoids allocation in audio thread)
     midi_drain_buffer: Vec<MidiEvent>,
+
+    // Safety
+    /// Set to true if the plugin panics during process - we'll output silence instead of crashing
+    crashed: bool,
 }
 
 // Host callback structure (renamed to avoid conflict with ClapHost struct)
@@ -389,6 +393,7 @@ impl PluginInstance {
             midi_context: MidiEventContext::new(),
             // Pre-allocate buffer for 256 events (covers typical usage without reallocation)
             midi_drain_buffer: Vec::with_capacity(256),
+            crashed: false,
         };
 
         // Activate the plugin
@@ -590,6 +595,12 @@ impl PluginInstance {
     /// Takes stereo input samples and returns stereo output samples.
     /// Input/output are interleaved: [L, R, L, R, ...]
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<(), String> {
+        // If plugin has crashed, output silence to prevent repeated crashes
+        if self.crashed {
+            output.fill(0.0);
+            return Ok(());
+        }
+
         if !self.is_active {
             return Err("Plugin not active".to_string());
         }
@@ -704,10 +715,42 @@ impl PluginInstance {
             out_events: &output_events,
         };
 
-        // Call plugin's process function
+        // Call plugin's process function with crash protection (signal-based)
         let plugin_ref = unsafe { &*self.plugin };
         let process_fn = plugin_ref.process.ok_or("Plugin has no process function")?;
-        let result = unsafe { process_fn(self.plugin, &process) };
+
+        // Use signal-based crash guard to catch crashes from dynamic libraries
+        // (catch_unwind doesn't work across FFI boundaries)
+        let plugin_ptr = self.plugin;
+        let process_ptr = &process as *const ClapProcess;
+        let guard_result = super::crash_guard::with_crash_guard(|| {
+            unsafe { process_fn(plugin_ptr, process_ptr) }
+        });
+
+        let result = match guard_result {
+            super::crash_guard::CrashGuardResult::Ok(r) => r,
+            super::crash_guard::CrashGuardResult::Crashed(signal) => {
+                // Plugin crashed - mark as crashed and output silence
+                self.crashed = true;
+
+                let signal_name = match signal {
+                    libc::SIGABRT => "SIGABRT (abort/panic)",
+                    libc::SIGSEGV => "SIGSEGV (segmentation fault)",
+                    libc::SIGBUS => "SIGBUS (bus error)",
+                    _ => "unknown signal",
+                };
+
+                log::error!(
+                    "Plugin '{}' crashed during process! Signal: {} ({}). Plugin has been disabled - reload to retry.",
+                    self.name,
+                    signal,
+                    signal_name
+                );
+                // Fill output with silence
+                output.fill(0.0);
+                return Ok(());
+            }
+        };
 
         // Log process result periodically (every ~1000 calls to avoid spam)
         static CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -731,6 +774,12 @@ impl PluginInstance {
         }
 
         Ok(())
+    }
+
+    /// Check if the plugin has crashed during processing
+    /// If true, the plugin will output silence until reloaded
+    pub fn has_crashed(&self) -> bool {
+        self.crashed
     }
 
     /// Check if the plugin has a GUI

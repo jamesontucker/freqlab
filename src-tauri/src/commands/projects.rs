@@ -925,8 +925,6 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{{AtomicBool, Ordering}};
 
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-
 /// Messages from the WebView UI
 #[derive(Deserialize)]
 #[serde(tag = "type")]
@@ -1264,8 +1262,6 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{{AtomicBool, Ordering}};
 
-/// Safety limiter - prevents output from exceeding 0dB (speaker protection)
-
 /// Messages from the WebView UI
 #[derive(Deserialize)]
 #[serde(tag = "type")]
@@ -1420,6 +1416,7 @@ impl Plugin for {pascal_name} {{
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {{
+        // Process MIDI events
         while let Some(event) = context.next_event() {{
             match event {{
                 NoteEvent::NoteOn {{ note, velocity, .. }} => {{
@@ -1436,6 +1433,7 @@ impl Plugin for {pascal_name} {{
             }}
         }}
 
+        // Generate audio
         let gain = self.params.gain.smoothed.next();
         let phase_delta = self.note_freq / self.sample_rate;
 
@@ -1615,6 +1613,7 @@ impl Plugin for {pascal_name} {{
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {{
+        // Process MIDI events
         while let Some(event) = context.next_event() {{
             match event {{
                 NoteEvent::NoteOn {{ note, velocity, .. }} => {{
@@ -1631,6 +1630,7 @@ impl Plugin for {pascal_name} {{
             }}
         }}
 
+        // Generate audio
         let gain = self.params.gain.smoothed.next();
         let phase_delta = self.note_freq / self.sample_rate;
 
