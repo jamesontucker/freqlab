@@ -11,6 +11,7 @@ import { useProjectBusyStore } from '../../stores/projectBusyStore';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
+import { isAppFocused } from '../../utils/focusTracker';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 import { markdownComponents } from './markdownUtils';
 
@@ -84,8 +85,6 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Flag to skip loadHistory when handleSend just completed (prevents race condition)
   const handleSendCompletedRef = useRef(false);
-  // Track if component is mounted (for notification safety)
-  const isMountedRef = useRef(true);
   const { addLine, clear } = useProjectOutput(project.path);
 
   // Use selector for pendingMessage (reactive), getState() for stable action references
@@ -195,14 +194,6 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
   const handleDroppedFilesProcessed = useCallback(() => {
     setDroppedFiles([]);
-  }, []);
-
-  // Track mounted state for notification safety
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
   }, []);
 
   // Cleanup timeout on unmount (important when switching projects mid-session)
@@ -695,34 +686,25 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       addLine('[Done]');
 
       // Send notification if enabled and app is not focused
-      // Read showNotifications from store at runtime to avoid stale closure issues
+      // Uses app-level focus tracking (initialized in main.tsx) - works even if component unmounted
       const currentShowNotifications = useSettingsStore.getState().showNotifications;
-      if (currentShowNotifications && isMountedRef.current) {
+
+      if (currentShowNotifications && !isAppFocused()) {
         (async () => {
           try {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
-            if (!isMountedRef.current) return; // Check after await
+            let granted = await isPermissionGranted();
 
-            const isFocused = await getCurrentWindow().isFocused();
-            if (!isMountedRef.current) return; // Check after await
+            // Request permission if not granted - this triggers the macOS prompt
+            if (!granted) {
+              const permission = await requestPermission();
+              granted = permission === 'granted';
+            }
 
-            if (!isFocused) {
-              let granted = await isPermissionGranted();
-              if (!isMountedRef.current) return; // Check after await
-
-              // Request permission if not granted - this triggers the macOS prompt
-              if (!granted) {
-                const permission = await requestPermission();
-                if (!isMountedRef.current) return; // Check after await
-                granted = permission === 'granted';
-              }
-
-              if (granted) {
-                await sendNotification({
-                  title: 'freqlab',
-                  body: `Claude finished working on ${project.name}`,
-                });
-              }
+            if (granted) {
+              await sendNotification({
+                title: 'freqlab',
+                body: `Claude finished working on ${project.name}`,
+              });
             }
           } catch (err) {
             console.warn('Failed to send notification:', err);
