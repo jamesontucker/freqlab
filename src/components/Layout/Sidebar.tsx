@@ -127,7 +127,7 @@ export function Sidebar({ onNewPlugin }: SidebarProps) {
                     >
                         <span className="text-text-muted whitespace-nowrap">freqlab</span>
                         <span className="text-text-muted px-2 py-0.5 bg-bg-tertiary rounded whitespace-nowrap">
-                            v0.2.7
+                            v0.2.8
                         </span>
                     </div>
                     <button

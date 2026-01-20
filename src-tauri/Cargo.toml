@@ -1,6 +1,6 @@
 [package]
 name = "freqlab"
-version = "0.2.7"
+version = "0.2.8"
 description = "Audio Plugin Creation Engine"
 authors = ["nanoshrine interactive"]
 license = "PolyForm-Shield-1.0.0"
