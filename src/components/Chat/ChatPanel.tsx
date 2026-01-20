@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { sendNotification, isPermissionGranted } from '@tauri-apps/plugin-notification';
+import { sendNotification, isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput, type PendingAttachment } from './ChatInput';
@@ -707,8 +707,15 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
             if (!isMountedRef.current) return; // Check after await
 
             if (!isFocused) {
-              const granted = await isPermissionGranted();
+              let granted = await isPermissionGranted();
               if (!isMountedRef.current) return; // Check after await
+
+              // Request permission if not granted - this triggers the macOS prompt
+              if (!granted) {
+                const permission = await requestPermission();
+                if (!isMountedRef.current) return; // Check after await
+                granted = permission === 'granted';
+              }
 
               if (granted) {
                 await sendNotification({

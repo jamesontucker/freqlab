@@ -73,7 +73,7 @@ export const useSettingsStore = create<SettingsState>()(
       outputPath: '~/VSTWorkshop/output',
       buildFormats: ['vst3', 'clap'],
       autoOpenOutput: true,
-      showNotifications: false,
+      showNotifications: true,
       theme: 'dark',
       customColors: defaultCustomColors,
       setupComplete: false,

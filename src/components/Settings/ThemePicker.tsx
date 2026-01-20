@@ -334,6 +334,30 @@ export function ThemePicker() {
           </p>
         )}
       </div>
+
+      {/* macOS Permissions Help */}
+      <div className="pt-6 border-t border-border">
+        <h3 className="text-lg font-medium text-text-primary mb-1">macOS Permissions</h3>
+        <p className="text-sm text-text-muted mb-4">Troubleshoot permission issues on macOS.</p>
+
+        <div className="space-y-3">
+          <div className="p-3 rounded-lg bg-bg-tertiary">
+            <p className="text-sm font-medium text-text-primary mb-1">"Access data from other apps" prompt</p>
+            <p className="text-xs text-text-muted">
+              If you see this repeatedly when Claude edits files, enable <span className="text-text-secondary">freqlab</span> in{' '}
+              <span className="text-text-secondary">System Settings → Privacy & Security → Full Disk Access</span>.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-lg bg-bg-tertiary">
+            <p className="text-sm font-medium text-text-primary mb-1">Notifications not working</p>
+            <p className="text-xs text-text-muted">
+              Check that freqlab is enabled in{' '}
+              <span className="text-text-secondary">System Settings → Notifications → freqlab</span>.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

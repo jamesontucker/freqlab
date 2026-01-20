@@ -4,7 +4,6 @@ import { DawSetup } from './DawSetup'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTourStore } from '../../stores/tourStore'
 import { Modal } from '../Common/Modal'
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification'
 import { CURRENT_LICENSE_VERSION } from '../../constants/license'
 
 type WizardStep = 'welcome' | 'prerequisites' | 'daw-setup' | 'complete'
@@ -55,41 +54,9 @@ export function WelcomeWizard() {
     const [step, setStep] = useState<WizardStep>('welcome')
     const [termsAccepted, setTermsAccepted] = useState(false)
     const [termsModalOpen, setTermsModalOpen] = useState(false)
-    const [notificationPermissionDenied, setNotificationPermissionDenied] = useState(false)
     const setSetupComplete = useSettingsStore((state) => state.setSetupComplete)
-    const setShowNotifications = useSettingsStore((state) => state.setShowNotifications)
-    const showNotifications = useSettingsStore((state) => state.showNotifications)
     const setAcceptedLicenseVersion = useSettingsStore((state) => state.setAcceptedLicenseVersion)
     const startTour = useTourStore((state) => state.startTour)
-
-    const handleNotificationToggle = async (enabled: boolean) => {
-        if (enabled) {
-            try {
-                // Check if already granted
-                let granted = await isPermissionGranted()
-                if (!granted) {
-                    const permission = await requestPermission()
-                    granted = permission === 'granted'
-                }
-                if (granted) {
-                    setShowNotifications(true)
-                    setNotificationPermissionDenied(false)
-                } else {
-                    // Permission denied - keep setting enabled so user knows to fix in System Settings
-                    setNotificationPermissionDenied(true)
-                    setShowNotifications(true)
-                }
-            } catch (err) {
-                console.error('Failed to request notification permission:', err)
-                // On error, show permission denied state so user knows there's an issue
-                setNotificationPermissionDenied(true)
-                setShowNotifications(false)
-            }
-        } else {
-            setShowNotifications(false)
-            setNotificationPermissionDenied(false)
-        }
-    }
 
     const handleComplete = () => {
         setAcceptedLicenseVersion(CURRENT_LICENSE_VERSION)
@@ -460,36 +427,17 @@ export function WelcomeWizard() {
                                 ))}
                             </div>
 
-                            {/* Notification preference */}
-                            <div className="p-3 rounded-lg bg-bg-tertiary/50 border border-border-subtle">
-                                <label className="flex items-center justify-between cursor-pointer">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-lg bg-accent-subtle flex items-center justify-center text-accent">
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-                                            </svg>
-                                        </div>
-                                        <div>
-                                            <span className="text-sm font-medium text-text-primary">Notify when chat finishes</span>
-                                            <p className="text-xs text-text-muted">Get notified when working in other apps</p>
-                                        </div>
-                                    </div>
-                                    <div className="relative">
-                                        <input
-                                            type="checkbox"
-                                            checked={showNotifications}
-                                            onChange={(e) => handleNotificationToggle(e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-9 h-5 bg-bg-tertiary border border-border rounded-full peer-checked:bg-accent peer-checked:border-accent transition-colors" />
-                                        <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-text-muted rounded-full peer-checked:translate-x-4 peer-checked:bg-white transition-all" />
-                                    </div>
-                                </label>
-                                {notificationPermissionDenied && (
-                                    <p className="text-xs text-warning mt-2">
-                                        Permission denied. Enable notifications in System Settings &gt; Notifications &gt; freqlab
+                            {/* macOS file access note */}
+                            <div className="p-3 rounded-lg bg-bg-tertiary/30 border border-border-subtle">
+                                <div className="flex items-start gap-2">
+                                    <svg className="w-4 h-4 text-text-muted flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                                    </svg>
+                                    <p className="text-xs text-text-muted leading-relaxed">
+                                        <span className="font-medium text-text-secondary">macOS permissions:</span> If you see repeated "access data from other apps" prompts, enable <span className="text-text-secondary">freqlab</span> in{' '}
+                                        <span className="text-text-secondary">System Settings → Privacy & Security → Full Disk Access</span>.
                                     </p>
-                                )}
+                                </div>
                             </div>
 
                             {/* CTAs */}
