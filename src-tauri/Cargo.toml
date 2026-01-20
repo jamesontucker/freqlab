@@ -1,6 +1,6 @@
 [package]
 name = "freqlab"
-version = "0.2.3"
+version = "0.2.4"
 description = "Audio Plugin Creation Engine"
 authors = ["nanoshrine interactive"]
 license = "PolyForm-Shield-1.0.0"
@@ -31,6 +31,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"

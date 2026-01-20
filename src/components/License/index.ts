@@ -1,0 +1,1 @@
+export { LicenseAcceptanceModal } from './LicenseAcceptanceModal';

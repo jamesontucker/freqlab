@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { sendNotification, isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { useTipsStore } from '../../stores/tipsStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -170,11 +172,68 @@ export function DevSettings() {
         </button>
       </div>
 
+      {/* Dev Only Tools */}
+      {import.meta.env.DEV && (
+        <div className="border border-purple-500/30 rounded-lg p-4 bg-purple-500/5 space-y-4">
+          <h4 className="font-medium text-text-primary flex items-center gap-2">
+            Dev Tools
+            <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">DEV ONLY</span>
+          </h4>
+
+          {/* Test Notification */}
+          <div>
+            <p className="text-sm text-text-muted mb-2">
+              Test system notifications (may need to grant permission in System Settings first).
+            </p>
+            <button
+              onClick={async () => {
+                try {
+                  let granted = await isPermissionGranted();
+                  if (!granted) {
+                    const permission = await requestPermission();
+                    granted = permission === 'granted';
+                  }
+                  if (granted) {
+                    await sendNotification({
+                      title: 'freqlab',
+                      body: 'Test notification - it works!',
+                    });
+                  } else {
+                    alert('Notification permission denied. Check System Settings > Notifications.');
+                  }
+                } catch (err) {
+                  alert(`Notification error: ${err}`);
+                }
+              }}
+              className="px-4 py-2 text-sm font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 rounded-lg border border-purple-500/30 transition-colors"
+            >
+              Test Notification
+            </button>
+          </div>
+
+          {/* Clear License Agreement */}
+          <div>
+            <p className="text-sm text-text-muted mb-2">
+              Reset license acceptance to show the license modal on next reload.
+            </p>
+            <button
+              onClick={() => {
+                useSettingsStore.getState().setAcceptedLicenseVersion(0);
+                window.location.reload();
+              }}
+              className="px-4 py-2 text-sm font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 rounded-lg border border-purple-500/30 transition-colors"
+            >
+              Clear License Agreement
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Reset App State Section */}
       <div className="border border-border rounded-lg p-4">
         <h4 className="font-medium text-text-primary mb-2">Reset App State</h4>
         <p className="text-sm text-text-muted mb-4">
-          Clears all settings and shows the first-run experience again. Projects are not deleted.
+          Clears all settings, license acceptance, and shows the first-run experience again. Projects are not deleted.
         </p>
 
         {!showConfirm ? (
@@ -210,7 +269,7 @@ export function DevSettings() {
           </svg>
           <div className="text-sm text-text-muted">
             <p>
-              Reset clears settings like theme, branding, and DAW paths. Your plugin projects in ~/VSTWorkshop/projects remain untouched.
+              Reset clears settings like theme, branding, DAW paths, and license acceptance. Your plugin projects in ~/VSTWorkshop/projects remain untouched.
             </p>
           </div>
         </div>

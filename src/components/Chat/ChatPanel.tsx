@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { sendNotification, isPermissionGranted } from '@tauri-apps/plugin-notification';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput, type PendingAttachment } from './ChatInput';
@@ -83,6 +84,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Flag to skip loadHistory when handleSend just completed (prevents race condition)
   const handleSendCompletedRef = useRef(false);
+  // Track if component is mounted (for notification safety)
+  const isMountedRef = useRef(true);
   const { addLine, clear } = useProjectOutput(project.path);
 
   // Use selector for pendingMessage (reactive), getState() for stable action references
@@ -192,6 +195,14 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
   const handleDroppedFilesProcessed = useCallback(() => {
     setDroppedFiles([]);
+  }, []);
+
+  // Track mounted state for notification safety
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   // Cleanup timeout on unmount (important when switching projects mid-session)
@@ -682,6 +693,35 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       streamingContentRef.current = '';
       addLine('');
       addLine('[Done]');
+
+      // Send notification if enabled and app is not focused
+      // Read showNotifications from store at runtime to avoid stale closure issues
+      const currentShowNotifications = useSettingsStore.getState().showNotifications;
+      if (currentShowNotifications && isMountedRef.current) {
+        (async () => {
+          try {
+            const { getCurrentWindow } = await import('@tauri-apps/api/window');
+            if (!isMountedRef.current) return; // Check after await
+
+            const isFocused = await getCurrentWindow().isFocused();
+            if (!isMountedRef.current) return; // Check after await
+
+            if (!isFocused) {
+              const granted = await isPermissionGranted();
+              if (!isMountedRef.current) return; // Check after await
+
+              if (granted) {
+                await sendNotification({
+                  title: 'freqlab',
+                  body: `Claude finished working on ${project.name}`,
+                });
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to send notification:', err);
+          }
+        })();
+      }
     }
   }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle]);
 

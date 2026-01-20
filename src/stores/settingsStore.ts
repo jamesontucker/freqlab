@@ -49,6 +49,9 @@ interface SettingsState extends AppConfig {
   setModel: (model: ClaudeModel) => void;
   setCustomInstructions: (instructions: string) => void;
   setAgentVerbosity: (verbosity: AgentVerbosity) => void;
+  // License versioning (tracks which license version user has accepted)
+  acceptedLicenseVersion: number;
+  setAcceptedLicenseVersion: (version: number) => void;
   // Other settings
   setSetupComplete: (complete: boolean) => void;
   setWorkspacePath: (path: string) => void;
@@ -60,6 +63,7 @@ interface SettingsState extends AppConfig {
   setVendorEmail: (email: string) => void;
   setDawPaths: (paths: DawPaths) => void;
   updateDawPath: (daw: keyof DawPaths, format: 'vst3' | 'clap', path: string) => void;
+  setShowNotifications: (show: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -69,7 +73,7 @@ export const useSettingsStore = create<SettingsState>()(
       outputPath: '~/VSTWorkshop/output',
       buildFormats: ['vst3', 'clap'],
       autoOpenOutput: true,
-      showNotifications: true,
+      showNotifications: false,
       theme: 'dark',
       customColors: defaultCustomColors,
       setupComplete: false,
@@ -84,6 +88,8 @@ export const useSettingsStore = create<SettingsState>()(
       appliedAudioSettings: null, // Set on first engine init
       // AI settings defaults
       aiSettings: defaultAISettings,
+      // License versioning (0 = never accepted, 1 = GPL-3.0, 2 = PolyForm Shield)
+      acceptedLicenseVersion: 0,
 
       // Audio settings setters
       setAudioSettings: (settings) => set({ audioSettings: settings }),
@@ -118,6 +124,9 @@ export const useSettingsStore = create<SettingsState>()(
           aiSettings: { ...state.aiSettings, agentVerbosity: verbosity },
         })),
 
+      // License versioning setter
+      setAcceptedLicenseVersion: (version) => set({ acceptedLicenseVersion: version }),
+
       setSetupComplete: (complete) => set({ setupComplete: complete }),
       setWorkspacePath: (path) => set({ workspacePath: path }),
       setTheme: (theme) => set({ theme }),
@@ -143,15 +152,22 @@ export const useSettingsStore = create<SettingsState>()(
             },
           },
         })),
+      setShowNotifications: (show) => set({ showNotifications: show }),
     }),
     {
       name: 'freqlab-settings',
       // Merge persisted state with defaults to handle new fields for existing users
       merge: (persistedState, currentState) => {
-        const persisted = persistedState as Partial<SettingsState>;
+        // Handle null/undefined persistedState (e.g., after localStorage.clear())
+        const persisted = (persistedState ?? {}) as Partial<SettingsState>;
         return {
           ...currentState,
           ...persisted,
+          // Ensure acceptedLicenseVersion is always a valid number (handles undefined, null, NaN)
+          acceptedLicenseVersion:
+            typeof persisted.acceptedLicenseVersion === 'number' && !isNaN(persisted.acceptedLicenseVersion)
+              ? persisted.acceptedLicenseVersion
+              : 0,
           // Deep merge aiSettings to pick up new fields (model, customInstructions)
           aiSettings: {
             ...currentState.aiSettings,

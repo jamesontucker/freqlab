@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { CustomThemeColors } from '../../types';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 
 // Helper to lighten/darken hex colors for hover states
 function adjustColor(hex: string, percent: number): string {
@@ -119,12 +120,41 @@ function ColorInput({ label, value, onChange }: ColorInputProps) {
 }
 
 export function ThemePicker() {
-  const { theme, setTheme, customColors, updateCustomColor } = useSettingsStore();
+  const { theme, setTheme, customColors, updateCustomColor, showNotifications, setShowNotifications } = useSettingsStore();
+  const [notificationPermissionDenied, setNotificationPermissionDenied] = useState(false);
 
   // Apply theme on mount and when it changes
   useEffect(() => {
     applyTheme(theme, customColors);
   }, [theme, customColors]);
+
+  const handleNotificationToggle = async (enabled: boolean) => {
+    if (enabled) {
+      try {
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const permission = await requestPermission();
+          granted = permission === 'granted';
+        }
+        if (granted) {
+          setShowNotifications(true);
+          setNotificationPermissionDenied(false);
+        } else {
+          // Permission denied - keep setting enabled so user knows to fix in System Settings
+          setNotificationPermissionDenied(true);
+          setShowNotifications(true);
+        }
+      } catch (err) {
+        console.error('Failed to request notification permission:', err);
+        // On error, show permission denied state so user knows there's an issue
+        setNotificationPermissionDenied(true);
+        setShowNotifications(false);
+      }
+    } else {
+      setShowNotifications(false);
+      setNotificationPermissionDenied(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -276,6 +306,34 @@ export function ThemePicker() {
           </p>
         </div>
       )}
+
+      {/* Notifications */}
+      <div className="pt-6 border-t border-border">
+        <h3 className="text-lg font-medium text-text-primary mb-1">Notifications</h3>
+        <p className="text-sm text-text-muted mb-4">Control when freqlab notifies you.</p>
+
+        <label className="flex items-center justify-between cursor-pointer p-3 rounded-lg bg-bg-tertiary hover:bg-bg-elevated transition-colors">
+          <div>
+            <span className="text-sm font-medium text-text-primary">Notify when chat finishes</span>
+            <p className="text-xs text-text-muted">Show a notification when a chat completes and the app isn&apos;t focused</p>
+          </div>
+          <div className="relative flex-shrink-0 ml-4">
+            <input
+              type="checkbox"
+              checked={showNotifications}
+              onChange={(e) => handleNotificationToggle(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-bg-primary border border-border rounded-full peer-checked:bg-accent peer-checked:border-accent transition-colors" />
+            <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-text-muted rounded-full peer-checked:translate-x-4 peer-checked:bg-white transition-all" />
+          </div>
+        </label>
+        {notificationPermissionDenied && (
+          <p className="text-xs text-warning mt-2 px-3">
+            Permission denied. Enable notifications in System Settings &gt; Notifications &gt; freqlab
+          </p>
+        )}
+      </div>
     </div>
   );
 }

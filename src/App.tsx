@@ -9,11 +9,14 @@ import { useNetworkStatusChange } from './hooks/useNetworkStatus';
 import { WelcomeWizard } from './components/Setup/WelcomeWizard';
 import { MainLayout } from './components/Layout/MainLayout';
 import { GuidedTour } from './components/Tour';
+import { LicenseAcceptanceModal } from './components/License';
 import { applyTheme } from './components/Settings/ThemePicker';
+import { CURRENT_LICENSE_VERSION } from './constants/license';
 import type { PrerequisiteStatus } from './types';
 
 function App() {
   const setupComplete = useSettingsStore((state) => state.setupComplete);
+  const acceptedLicenseVersion = useSettingsStore((state) => state.acceptedLicenseVersion);
   const theme = useSettingsStore((state) => state.theme);
   const customColors = useSettingsStore((state) => state.customColors);
   const loadProjects = useProjectStore((state) => state.loadProjects);
@@ -141,9 +144,20 @@ function App() {
     );
   }
 
+  // Check if user needs to accept updated license terms
+  // Defensive: treat invalid values (NaN, undefined) as 0 (unaccepted)
+  const validLicenseVersion = typeof acceptedLicenseVersion === 'number' && !isNaN(acceptedLicenseVersion)
+    ? acceptedLicenseVersion
+    : 0;
+  const needsLicenseAcceptance = validLicenseVersion < CURRENT_LICENSE_VERSION;
+
   return (
     <>
-      <MainLayout />
+      {needsLicenseAcceptance ? (
+        <LicenseAcceptanceModal isOpen={true} />
+      ) : (
+        <MainLayout />
+      )}
       <GuidedTour />
     </>
   );

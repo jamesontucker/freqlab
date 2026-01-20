@@ -225,13 +225,22 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                         </svg>
                     </button>
                     {termsOpen && (
-                        <div className="p-3 bg-bg-tertiary rounded-lg text-left space-y-3 max-h-36 overflow-y-auto">
+                        <div className="p-3 bg-bg-tertiary rounded-lg text-left space-y-3 max-h-48 overflow-y-auto">
                             <div>
                                 <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wide mb-0.5">
                                     License
                                 </h4>
                                 <p className="text-xs text-text-secondary">
-                                    freqlab is licensed under PolyForm Shield 1.0.0. Source available on{' '}
+                                    freqlab is licensed under{' '}
+                                    <a
+                                        href="https://polyformproject.org/licenses/shield/1.0.0/"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-accent hover:text-accent-hover"
+                                    >
+                                        PolyForm Shield 1.0.0
+                                    </a>
+                                    . Source available on{' '}
                                     <a
                                         href="https://github.com/jamesontucker/freqlab"
                                         target="_blank"
@@ -269,12 +278,22 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                                     included in your plugins (fonts, images, samples, etc.).
                                 </p>
                             </div>
+                            <div>
+                                <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wide mb-0.5">
+                                    AI-Generated Code
+                                </h4>
+                                <p className="text-xs text-text-secondary">
+                                    Claude generates the plugin code. While templates include safety measures, always
+                                    review generated code before distributing. You are responsible for understanding
+                                    and verifying the code in your plugins.
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>
 
                 {/* Version */}
-                <p className="text-text-muted text-xs">Version 0.2.3</p>
+                <p className="text-text-muted text-xs">Version 0.2.4</p>
             </div>
         </Modal>
     )
