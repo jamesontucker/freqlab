@@ -176,6 +176,16 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       unlistenDrop = await listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', (event) => {
         if (!mounted) return;
         setIsDraggingOver(false);
+
+        // Only handle drop if it's within this panel's bounds
+        const panel = chatPanelRef.current;
+        if (panel && event.payload.position) {
+          const rect = panel.getBoundingClientRect();
+          const { x, y } = event.payload.position;
+          const isInBounds = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+          if (!isInBounds) return;
+        }
+
         if (event.payload.paths && event.payload.paths.length > 0) {
           setDroppedFiles(event.payload.paths);
         }
