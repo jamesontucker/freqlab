@@ -11,6 +11,7 @@ export interface PrerequisiteStatus {
   rust: CheckResult;
   claude_cli: CheckResult;
   claude_auth: CheckResult;
+  codex_cli: CheckResult;
 }
 
 export interface DiskSpaceBreakdown {
@@ -75,10 +76,13 @@ export type ChatStyle = 'minimal' | 'conversational';
 
 export type ClaudeModel = 'haiku' | 'sonnet' | 'opus';
 
+export type AIProvider = 'claude' | 'codex';
+
 // Controls how verbose/detailed the agent is in responses
 export type AgentVerbosity = 'thorough' | 'balanced' | 'direct';
 
 export interface AISettings {
+  provider: AIProvider;
   chatStyle: ChatStyle;
   model: ClaudeModel;
   customInstructions: string;

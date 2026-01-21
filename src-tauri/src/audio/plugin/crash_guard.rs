@@ -8,6 +8,8 @@
 //! This module uses unsafe signal handling. It's designed specifically for the
 //! audio processing context where a crash would otherwise terminate the app.
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod imp {
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -229,6 +231,32 @@ fn signal_name(sig: i32) -> &'static str {
         _ => "unknown signal",
     }
 }
+
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+mod imp {
+    /// Result of running code with crash protection.
+    pub enum CrashGuardResult<T> {
+        Ok(T),
+        Crashed(i32),
+    }
+
+    impl<T> CrashGuardResult<T> {
+        pub fn is_crashed(&self) -> bool {
+            matches!(self, CrashGuardResult::Crashed(_))
+        }
+    }
+
+    pub fn with_crash_guard<F, T>(f: F) -> CrashGuardResult<T>
+    where
+        F: FnOnce() -> T,
+    {
+        CrashGuardResult::Ok(f())
+    }
+}
+
+pub use imp::*;
 
 #[cfg(test)]
 mod tests {

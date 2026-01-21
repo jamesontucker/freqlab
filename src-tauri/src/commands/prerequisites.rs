@@ -26,14 +26,29 @@ fn unregister_child_pid(pid: u32) {
 pub fn cleanup_child_processes() {
     if let Ok(pids) = ACTIVE_CHILD_PIDS.lock() {
         for &pid in pids.iter() {
-            // Send SIGTERM first, then SIGKILL
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+            #[cfg(target_os = "macos")]
+            {
+                // Send SIGTERM first, then SIGKILL
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
+                // Give it a moment then force kill
+                std::thread::sleep(Duration::from_millis(100));
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
             }
-            // Give it a moment then force kill
-            std::thread::sleep(Duration::from_millis(100));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .output();
+            }
+
+            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+            {
+                let _ = pid;
             }
         }
     }
@@ -62,6 +77,7 @@ pub struct PrerequisiteStatus {
     pub rust: CheckResult,
     pub claude_cli: CheckResult,
     pub claude_auth: CheckResult,
+    pub codex_cli: CheckResult,
 }
 
 #[derive(Serialize, Clone)]
@@ -99,6 +115,12 @@ pub struct DiskSpaceBreakdown {
     pub total_required_gb: f64,
 }
 
+fn user_home_dir() -> String {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default()
+}
+
 fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
     use std::process::Stdio;
 
@@ -132,18 +154,52 @@ fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Opti
     }
 }
 
+fn path_lookup_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    }
+}
+
+fn lookup_command_path(command: &str) -> Option<String> {
+    run_command_with_timeout(path_lookup_command(), &[command], 3).and_then(|output| {
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.lines().next().map(|line| line.trim().to_string()).filter(|p| !p.is_empty())
+    })
+}
+
+fn command_exists(command: &str) -> bool {
+    lookup_command_path(command).is_some()
+}
+
 fn check_xcode() -> CheckResult {
-    match run_command_with_timeout("xcode-select", &["-p"], 5) {
-        Some(output) if output.status.success() => CheckResult {
+    #[cfg(target_os = "macos")]
+    {
+        match run_command_with_timeout("xcode-select", &["-p"], 5) {
+            Some(output) if output.status.success() => CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("Installed".to_string()),
+                message: None,
+            },
+            _ => CheckResult {
+                status: CheckStatus::NotInstalled,
+                version: None,
+                message: Some("Run: xcode-select --install".to_string()),
+            },
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        CheckResult {
             status: CheckStatus::Installed,
-            version: Some("Installed".to_string()),
-            message: None,
-        },
-        _ => CheckResult {
-            status: CheckStatus::NotInstalled,
-            version: None,
-            message: Some("Run: xcode-select --install".to_string()),
-        },
+            version: Some("N/A".to_string()),
+            message: Some("Not required on this platform.".to_string()),
+        }
     }
 }
 
@@ -168,27 +224,61 @@ fn check_rust() -> CheckResult {
 }
 
 fn check_claude_cli() -> CheckResult {
-    // Check if claude binary exists in PATH
-    match run_command_with_timeout("which", &["claude"], 3) {
-        Some(output) if output.status.success() => {
-            CheckResult {
-                status: CheckStatus::Installed,
-                version: Some("Installed".to_string()),
-                message: None,
-            }
+    let install_hint = if cfg!(target_os = "windows") {
+        "Install from https://claude.ai/download"
+    } else {
+        "Run: curl -fsSL https://claude.ai/install.sh | bash"
+    };
+
+    if command_exists("claude") {
+        CheckResult {
+            status: CheckStatus::Installed,
+            version: Some("Installed".to_string()),
+            message: None,
         }
-        _ => CheckResult {
+    } else {
+        CheckResult {
             status: CheckStatus::NotInstalled,
             version: None,
-            message: Some("Run: curl -fsSL https://claude.ai/install.sh | bash".to_string()),
-        },
+            message: Some(install_hint.to_string()),
+        }
+    }
+}
+
+fn check_codex_cli() -> CheckResult {
+    let codex_path = lookup_command_path("codex")
+        .or_else(|| lookup_command_path("codex.cmd"))
+        .or_else(|| lookup_command_path("codex.exe"));
+
+    if codex_path.is_none() {
+        return CheckResult {
+            status: CheckStatus::NotInstalled,
+            version: None,
+            message: Some("Install Codex CLI from https://platform.openai.com/docs/codex/codex-cli".to_string()),
+        };
+    }
+
+    if let Some(output) = run_command_with_timeout("codex", &["--version"], 10) {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some(if version.is_empty() { "Installed".to_string() } else { version }),
+                message: None,
+            };
+        }
+    }
+
+    CheckResult {
+        status: CheckStatus::Installed,
+        version: Some("Installed".to_string()),
+        message: None,
     }
 }
 
 fn check_claude_auth() -> CheckResult {
-    // First check if claude is installed using 'which'
-    let cli_check = run_command_with_timeout("which", &["claude"], 3);
-    if cli_check.is_none() || !cli_check.as_ref().unwrap().status.success() {
+    // First check if claude is installed using path lookup
+    if !command_exists("claude") {
         return CheckResult {
             status: CheckStatus::NotInstalled,
             version: None,
@@ -196,21 +286,24 @@ fn check_claude_auth() -> CheckResult {
         };
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = user_home_dir();
 
     // Primary check: Look for Claude credentials in macOS keychain
     // This is the most reliable indicator since Claude stores OAuth tokens here
-    if let Some(output) = run_command_with_timeout(
-        "security",
-        &["find-generic-password", "-s", "Claude Code-credentials"],
-        3,
-    ) {
-        if output.status.success() {
-            return CheckResult {
-                status: CheckStatus::Installed,
-                version: None,
-                message: Some("Authenticated".to_string()),
-            };
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(output) = run_command_with_timeout(
+            "security",
+            &["find-generic-password", "-s", "Claude Code-credentials"],
+            3,
+        ) {
+            if output.status.success() {
+                return CheckResult {
+                    status: CheckStatus::Installed,
+                    version: None,
+                    message: Some("Authenticated".to_string()),
+                };
+            }
         }
     }
 
@@ -249,6 +342,7 @@ pub async fn check_prerequisites() -> PrerequisiteStatus {
             rust: check_rust(),
             claude_cli: check_claude_cli(),
             claude_auth: check_claude_auth(),
+            codex_cli: check_codex_cli(),
         }
     })
     .await
@@ -273,56 +367,90 @@ pub async fn check_prerequisites() -> PrerequisiteStatus {
             version: None,
             message: Some("Check failed".to_string()),
         },
+        codex_cli: CheckResult {
+            status: CheckStatus::NotInstalled,
+            version: None,
+            message: Some("Check failed".to_string()),
+        },
     })
 }
 
 /// Check available disk space and calculate requirements
 #[tauri::command]
 pub async fn check_disk_space() -> Result<DiskSpaceInfo, String> {
-    tokio::task::spawn_blocking(|| {
-        // Get available disk space using statvfs
-        let path = std::ffi::CString::new("/").unwrap();
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    #[cfg(target_os = "macos")]
+    {
+        return tokio::task::spawn_blocking(|| {
+            // Get available disk space using statvfs
+            let path = std::ffi::CString::new("/").unwrap();
+            let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
 
-        let result = unsafe { libc::statvfs(path.as_ptr(), &mut stat) };
-        if result != 0 {
-            return Err("Failed to check disk space".to_string());
-        }
+            let result = unsafe { libc::statvfs(path.as_ptr(), &mut stat) };
+            if result != 0 {
+                return Err("Failed to check disk space".to_string());
+            }
 
-        let available_bytes = stat.f_bavail as u64 * stat.f_frsize as u64;
-        let available_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let available_bytes = stat.f_bavail as u64 * stat.f_frsize as u64;
+            let available_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-        // Calculate requirements based on what's missing
+            // Calculate requirements based on what's missing
+            let xcode_needed = check_xcode().status != CheckStatus::Installed;
+            let rust_needed = check_rust().status != CheckStatus::Installed;
+            let claude_cli_needed = check_claude_cli().status != CheckStatus::Installed;
+
+            // Xcode CLI Tools: ~3-4 GB (not full Xcode which is 10-20 GB)
+            let xcode_gb = if xcode_needed { 4.0 } else { 0.0 };
+            // Rust toolchain: ~1.5 GB
+            let rust_gb = if rust_needed { 1.5 } else { 0.0 };
+            // Claude Code native binary: ~100 MB
+            let claude_cli_gb = if claude_cli_needed { 0.1 } else { 0.0 };
+
+            let total = xcode_gb + rust_gb + claude_cli_gb;
+
+            // Add 2GB buffer for safety
+            let required_with_buffer = total + 2.0;
+
+            Ok(DiskSpaceInfo {
+                available_gb,
+                required_gb: required_with_buffer,
+                sufficient: available_gb >= required_with_buffer,
+                breakdown: DiskSpaceBreakdown {
+                    xcode_gb,
+                    rust_gb,
+                    claude_cli_gb,
+                    total_required_gb: total,
+                },
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
         let xcode_needed = check_xcode().status != CheckStatus::Installed;
         let rust_needed = check_rust().status != CheckStatus::Installed;
         let claude_cli_needed = check_claude_cli().status != CheckStatus::Installed;
 
-        // Xcode CLI Tools: ~3-4 GB (not full Xcode which is 10-20 GB)
         let xcode_gb = if xcode_needed { 4.0 } else { 0.0 };
-        // Rust toolchain: ~1.5 GB
         let rust_gb = if rust_needed { 1.5 } else { 0.0 };
-        // Claude Code native binary: ~100 MB
         let claude_cli_gb = if claude_cli_needed { 0.1 } else { 0.0 };
 
         let total = xcode_gb + rust_gb + claude_cli_gb;
-
-        // Add 2GB buffer for safety
         let required_with_buffer = total + 2.0;
 
-        Ok(DiskSpaceInfo {
-            available_gb,
+        return Ok(DiskSpaceInfo {
+            available_gb: required_with_buffer + 1.0,
             required_gb: required_with_buffer,
-            sufficient: available_gb >= required_with_buffer,
+            sufficient: true,
             breakdown: DiskSpaceBreakdown {
                 xcode_gb,
                 rust_gb,
                 claude_cli_gb,
                 total_required_gb: total,
             },
-        })
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        });
+    }
 }
 
 // ============================================================================
@@ -332,6 +460,7 @@ pub async fn check_disk_space() -> Result<DiskSpaceInfo, String> {
 /// Install Xcode Command Line Tools silently via softwareupdate
 /// Uses the trigger file trick to make CLT appear in softwareupdate list
 /// Then installs with admin privileges - user only sees password prompt
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -585,7 +714,29 @@ async fn install_xcode_gui_fallback(window: tauri::Window) -> Result<bool, Strin
     Err("Installation timed out".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "xcode".to_string(),
+        },
+    );
+
+    let msg = "Xcode is macOS-only. Install Visual Studio Build Tools and the Windows SDK.";
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: msg.to_string(),
+        },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+    Err(msg.to_string())
+}
+
 /// Install Rust via rustup (non-interactive)
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -671,7 +822,27 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "rust".to_string(),
+        },
+    );
+
+    let msg = "Install Rust from https://rustup.rs (MSVC toolchain).";
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output { line: msg.to_string() },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+    Err(msg.to_string())
+}
+
 /// Install Claude CLI via native installer (no Node.js required!)
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -682,17 +853,15 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
     );
 
     // Check if already installed
-    if let Some(output) = run_command_with_timeout("which", &["claude"], 3) {
-        if output.status.success() {
-            let _ = window.emit(
-                "install-stream",
-                InstallEvent::Output {
-                    line: "Claude Code is already installed.".to_string(),
-                },
-            );
-            let _ = window.emit("install-stream", InstallEvent::Done { success: true });
-            return Ok(true);
-        }
+    if command_exists("claude") {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Claude Code is already installed.".to_string(),
+            },
+        );
+        let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+        return Ok(true);
     }
 
     let _ = window.emit(
@@ -722,7 +891,7 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Check both possible install locations
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = user_home_dir();
         let claude_paths = [
             format!("{}/.claude/bin/claude", home),
             format!("{}/.local/bin/claude", home),
@@ -738,20 +907,11 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
                 .map(|o| o.status.success())
                 .unwrap_or(false)
         } else {
-            // Fallback to which + version check
-            if let Some(which_output) = run_command_with_timeout("which", &["claude"], 3) {
-                if which_output.status.success() {
-                    let path = String::from_utf8_lossy(&which_output.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        run_command_with_timeout(&path, &["--version"], 5)
-                            .map(|o| o.status.success())
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+            // Fallback to PATH lookup + version check
+            if let Some(path) = lookup_command_path("claude") {
+                run_command_with_timeout(&path, &["--version"], 5)
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
             } else {
                 false
             }
@@ -759,7 +919,7 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
 
         if verified {
             // Pre-create config files to skip interactive onboarding wizard
-            let home = std::env::var("HOME").unwrap_or_default();
+            let home = user_home_dir();
             let claude_dir = std::path::Path::new(&home).join(".claude");
 
             if !claude_dir.exists() {
@@ -869,10 +1029,30 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "claude_cli".to_string(),
+        },
+    );
+
+    let msg = "Install Claude Code from https://claude.ai/download and ensure it's in PATH.";
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output { line: msg.to_string() },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+    Err(msg.to_string())
+}
+
 /// Start Claude authentication - opens Terminal with clear instructions
 /// Claude requires a real TTY for /login, so we use Terminal.app
 /// We try auto-typing first, fall back to manual instructions if blocked
 /// Auto-closes Terminal when auth completes successfully
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -897,7 +1077,7 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     };
 
     // Ensure config files exist (should already be created during install, but double-check)
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = user_home_dir();
     let claude_dir = std::path::Path::new(&home).join(".claude");
     let claude_json = std::path::Path::new(&home).join(".claude.json");
 
@@ -1173,14 +1353,39 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     Err("Sign-in timed out".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "claude_auth".to_string(),
+        },
+    );
+
+    let msg = "Claude auth automation is macOS-only. Run `claude /login` in a terminal.";
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output { line: msg.to_string() },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+    Err(msg.to_string())
+}
+
 /// Find the Claude binary in known locations and verify it works
 fn find_claude_binary() -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let possible_paths = [
+    let home = user_home_dir();
+    let mut possible_paths = vec![
         format!("{}/.claude/bin/claude", home),
         format!("{}/.local/bin/claude", home),
         "/usr/local/bin/claude".to_string(),
     ];
+
+    #[cfg(target_os = "windows")]
+    {
+        possible_paths.push(format!("{}\\.claude\\bin\\claude.exe", home));
+        possible_paths.push(format!("{}\\.local\\bin\\claude.exe", home));
+    }
 
     for path in possible_paths {
         if std::path::Path::new(&path).exists() {
@@ -1194,19 +1399,13 @@ fn find_claude_binary() -> Option<String> {
         }
     }
 
-    // Try which command as fallback
-    if let Some(output) = run_command_with_timeout("which", &["claude"], 3) {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                // Verify this binary works too
-                if run_command_with_timeout(&path, &["--version"], 5)
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-                {
-                    return Some(path);
-                }
-            }
+    // Try PATH lookup as fallback
+    if let Some(path) = lookup_command_path("claude") {
+        if run_command_with_timeout(&path, &["--version"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some(path);
         }
     }
 
@@ -1354,6 +1553,7 @@ pub struct PermissionStatus {
 
 /// Check if we have Accessibility permission
 /// Uses AXIsProcessTrusted via FFI
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn check_permissions() -> PermissionStatus {
     tokio::task::spawn_blocking(|| {
@@ -1377,9 +1577,19 @@ pub async fn check_permissions() -> PermissionStatus {
     })
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn check_permissions() -> PermissionStatus {
+    PermissionStatus {
+        accessibility: true,
+        admin_primed: false,
+    }
+}
+
 /// Request Accessibility permission using the proper macOS API
 /// This triggers the system dialog AND adds the app to the Accessibility list
 /// Returns true if permission was already granted, false if user needs to grant it
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn request_accessibility_permission() -> Result<bool, String> {
     tokio::task::spawn_blocking(|| {
@@ -1497,8 +1707,15 @@ pub async fn request_accessibility_permission() -> Result<bool, String> {
     .map_err(|e| format!("Failed to request accessibility: {}", e))
 }
 
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn request_accessibility_permission() -> Result<bool, String> {
+    Ok(true)
+}
+
 /// Prime admin privileges by running a simple command with admin rights
 /// This caches credentials for ~5 minutes, so subsequent admin operations won't prompt
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn prime_admin_privileges(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -1544,4 +1761,23 @@ pub async fn prime_admin_privileges(window: tauri::Window) -> Result<bool, Strin
         let _ = window.emit("install-stream", InstallEvent::Done { success: false });
         Ok(false)
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn prime_admin_privileges(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "admin_prime".to_string(),
+        },
+    );
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "Admin priming is not required on this platform.".to_string(),
+        },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+    Ok(true)
 }

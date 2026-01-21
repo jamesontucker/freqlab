@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { checkPrerequisites, checkDiskSpace, checkPermissions } from '../lib/tauri';
 import type { PrerequisiteStatus, DiskSpaceInfo, PermissionStatus } from '../types';
+import { useSettingsStore } from '../stores/settingsStore';
 
 export function usePrerequisites() {
   const [status, setStatus] = useState<PrerequisiteStatus | null>(null);
@@ -8,6 +9,7 @@ export function usePrerequisites() {
   const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const aiProvider = useSettingsStore((s) => s.aiSettings.provider);
 
   const check = useCallback(async () => {
     setLoading(true);
@@ -41,8 +43,9 @@ export function usePrerequisites() {
   const allInstalled = status
     ? status.xcode_cli.status === 'installed' &&
       status.rust.status === 'installed' &&
-      status.claude_cli.status === 'installed' &&
-      status.claude_auth.status === 'installed'
+      (aiProvider === 'claude'
+        ? status.claude_cli.status === 'installed' && status.claude_auth.status === 'installed'
+        : status.codex_cli.status === 'installed')
     : false;
 
   const hasSufficientSpace = diskSpace?.sufficient ?? false;

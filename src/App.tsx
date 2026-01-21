@@ -19,6 +19,7 @@ import type { PrerequisiteStatus } from './types';
 function App() {
   const setupComplete = useSettingsStore((state) => state.setupComplete);
   const acceptedLicenseVersion = useSettingsStore((state) => state.acceptedLicenseVersion);
+  const aiProvider = useSettingsStore((state) => state.aiSettings.provider);
   const theme = useSettingsStore((state) => state.theme);
   const customColors = useSettingsStore((state) => state.customColors);
   const loadProjects = useProjectStore((state) => state.loadProjects);
@@ -38,7 +39,7 @@ function App() {
   const handleOffline = useCallback(() => {
     addToast({
       type: 'warning',
-      message: 'No internet connection. Claude requests will fail.',
+      message: 'No internet connection. AI requests will fail.',
       duration: 10000, // Show longer since this is important
     });
   }, [addToast]);
@@ -66,20 +67,29 @@ function App() {
       try {
         const status = await invoke<PrerequisiteStatus>('check_prerequisites');
 
-        // Check if Claude CLI or auth have issues
-        const cliOk = status.claude_cli.status === 'installed';
-        const authOk = status.claude_auth.status === 'installed';
+        if (aiProvider === 'claude') {
+          const cliOk = status.claude_cli.status === 'installed';
+          const authOk = status.claude_auth.status === 'installed';
 
-        if (!cliOk) {
-          addToast({
-            type: 'warning',
-            message: 'Claude CLI not found. Install it to use Claude features.',
-          });
-        } else if (!authOk) {
-          addToast({
-            type: 'warning',
-            message: 'Claude CLI not authenticated. Run "claude login" in terminal.',
-          });
+          if (!cliOk) {
+            addToast({
+              type: 'warning',
+              message: 'Claude CLI not found. Install it to use Claude features.',
+            });
+          } else if (!authOk) {
+            addToast({
+              type: 'warning',
+              message: 'Claude CLI not authenticated. Run "claude login" in terminal.',
+            });
+          }
+        } else {
+          const codexOk = status.codex_cli.status === 'installed';
+          if (!codexOk) {
+            addToast({
+              type: 'warning',
+              message: 'Codex CLI not found. Install it to use Codex features.',
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to check prerequisites:', err);
@@ -88,7 +98,7 @@ function App() {
     }
 
     checkPrereqs();
-  }, [setupComplete, hasCheckedPrereqs, addToast]);
+  }, [setupComplete, hasCheckedPrereqs, addToast, aiProvider]);
 
   // Global plugin crash listener - always active so crashes are caught even when PreviewPanel is closed
   useEffect(() => {

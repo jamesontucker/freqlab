@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { usePrerequisites } from '../../hooks/usePrerequisites';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { Spinner } from '../Common/Spinner';
 import {
   installXcode,
@@ -25,7 +26,7 @@ interface InstallEvent {
   action?: string;
 }
 
-type InstallStep = 'xcode' | 'rust' | 'claude_cli' | 'claude_auth';
+type InstallStep = 'xcode' | 'rust' | 'claude_cli' | 'claude_auth' | 'codex_cli';
 type InstallStage = 'preparing' | 'downloading' | 'installing' | 'finishing' | 'done' | 'error';
 
 interface InstallState {
@@ -104,12 +105,22 @@ function parseStageFromOutput(step: InstallStep, output: string[], currentStage:
     }
   }
 
+  if (step === 'codex_cli') {
+    if (lastLines.includes('already installed')) {
+      return { stage: 'done', message: 'Already installed!' };
+    }
+    if (lastLines.includes('install')) {
+      return { stage: 'installing', message: 'Install Codex CLI, then recheck' };
+    }
+  }
+
   // Default based on current stage
   const defaults: Record<InstallStep, string> = {
     xcode: 'Setting up Apple Developer Tools...',
     rust: 'Setting up Rust...',
     claude_cli: 'Setting up Claude Code...',
     claude_auth: 'Setting up sign-in...',
+    codex_cli: 'Checking Codex CLI...',
   };
 
   return { stage: currentStage, message: defaults[step] };
@@ -752,6 +763,8 @@ interface PrerequisitesCheckProps {
 
 export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/docs' }: PrerequisitesCheckProps) {
   const { status, diskSpace, permissions, loading, check, refreshPermissions, allInstalled, hasSufficientSpace } = usePrerequisites();
+  const aiProvider = useSettingsStore((s) => s.aiSettings.provider);
+  const setAiProvider = useSettingsStore((s) => s.setProvider);
 
   // Installation state per step
   const [installStates, setInstallStates] = useState<Record<InstallStep, InstallState | null>>({
@@ -759,6 +772,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
     rust: null,
     claude_cli: null,
     claude_auth: null,
+    codex_cli: null,
   });
   const [installingStep, setInstallingStep] = useState<InstallStep | null>(null);
   const [adminPrimed, setAdminPrimed] = useState(false);
@@ -795,10 +809,10 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
 
   // Close terminal guide overlay when auth succeeds
   useEffect(() => {
-    if (status?.claude_auth.status === 'installed' && terminalGuideStage) {
+    if (aiProvider === 'claude' && status?.claude_auth.status === 'installed' && terminalGuideStage) {
       setTerminalGuideStage(null);
     }
-  }, [status?.claude_auth.status, terminalGuideStage]);
+  }, [aiProvider, status?.claude_auth.status, terminalGuideStage]);
 
   // Switch to timeout stage after waiting for a while
   useEffect(() => {
@@ -814,7 +828,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
 
   // Permission checks
   const needsXcode = status?.xcode_cli.status !== 'installed';
-  const needsClaudeAuth = status?.claude_auth.status !== 'installed';
+  const needsClaudeAuth = aiProvider === 'claude' && status?.claude_auth.status !== 'installed';
   const permissionsReady = (!needsXcode || adminPrimed) && (!needsClaudeAuth || permissions?.accessibility);
 
   // Can install checks
@@ -830,6 +844,8 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         return permissionsReady || allInstalled;
       case 'claude_auth':
         return status?.claude_cli.status === 'installed';
+      case 'codex_cli':
+        return installingStep === null;
     }
   }, [status, hasSufficientSpace, installingStep, adminPrimed, permissionsReady, allInstalled]);
 
@@ -847,6 +863,8 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         break;
       case 'claude_auth':
         if (status?.claude_cli.status !== 'installed') return 'Install Claude Code first';
+        break;
+      case 'codex_cli':
         break;
     }
     return undefined;
@@ -933,6 +951,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
   const handleInstallXcode = useCallback(() => runInstallStep('xcode', installXcode), [runInstallStep]);
   const handleInstallRust = useCallback(() => runInstallStep('rust', installRust), [runInstallStep]);
   const handleInstallClaudeCli = useCallback(() => runInstallStep('claude_cli', installClaudeCli), [runInstallStep]);
+  const handleCodexRecheck = useCallback(() => refreshChecks(), [refreshChecks]);
 
   const handleClaudeAuthStart = useCallback(() => {
     setTerminalGuideStage('intro');
@@ -966,37 +985,62 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
     result: CheckResult | undefined;
     onInstall: () => void;
     installLabel?: string;
-  }> = [
-    {
-      key: 'xcode',
-      label: 'Apple Developer Tools',
-      timeEstimate: 'Takes 5-10 minutes',
-      result: status?.xcode_cli,
-      onInstall: handleInstallXcode,
-    },
-    {
-      key: 'rust',
-      label: 'Rust',
-      timeEstimate: 'Takes 1-2 minutes',
-      result: status?.rust,
-      onInstall: handleInstallRust,
-    },
-    {
-      key: 'claude_cli',
-      label: 'Claude Code',
-      timeEstimate: 'Takes about 30 seconds',
-      result: status?.claude_cli,
-      onInstall: handleInstallClaudeCli,
-    },
-    {
-      key: 'claude_auth',
-      label: 'Claude Sign In',
-      timeEstimate: 'Opens your browser',
-      result: status?.claude_auth,
-      onInstall: handleClaudeAuthStart,
-      installLabel: 'Sign In',
-    },
-  ];
+  }> = aiProvider === 'codex'
+    ? [
+        {
+          key: 'xcode',
+          label: 'Apple Developer Tools',
+          timeEstimate: 'Takes 5-10 minutes',
+          result: status?.xcode_cli,
+          onInstall: handleInstallXcode,
+        },
+        {
+          key: 'rust',
+          label: 'Rust',
+          timeEstimate: 'Takes 1-2 minutes',
+          result: status?.rust,
+          onInstall: handleInstallRust,
+        },
+        {
+          key: 'codex_cli',
+          label: 'Codex CLI',
+          timeEstimate: 'Install Codex CLI, then click Recheck',
+          result: status?.codex_cli,
+          onInstall: handleCodexRecheck,
+          installLabel: 'Recheck',
+        },
+      ]
+    : [
+        {
+          key: 'xcode',
+          label: 'Apple Developer Tools',
+          timeEstimate: 'Takes 5-10 minutes',
+          result: status?.xcode_cli,
+          onInstall: handleInstallXcode,
+        },
+        {
+          key: 'rust',
+          label: 'Rust',
+          timeEstimate: 'Takes 1-2 minutes',
+          result: status?.rust,
+          onInstall: handleInstallRust,
+        },
+        {
+          key: 'claude_cli',
+          label: 'Claude Code',
+          timeEstimate: 'Takes about 30 seconds',
+          result: status?.claude_cli,
+          onInstall: handleInstallClaudeCli,
+        },
+        {
+          key: 'claude_auth',
+          label: 'Claude Sign In',
+          timeEstimate: 'Opens your browser',
+          result: status?.claude_auth,
+          onInstall: handleClaudeAuthStart,
+          installLabel: 'Sign In',
+        },
+      ];
 
   return (
     <>
@@ -1008,7 +1052,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         }} />
       )}
 
-      {terminalGuideStage && (
+      {aiProvider === 'claude' && terminalGuideStage && (
         <TerminalSignInGuide
           stage={terminalGuideStage}
           onContinue={handleClaudeAuthConfirm}
@@ -1030,6 +1074,46 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         </div>
 
         {/* Disk Space Check */}
+        <div className="p-4 rounded-lg bg-bg-elevated border border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-text-primary">AI Provider</p>
+              <p className="text-xs text-text-muted">
+                {aiProvider === 'claude'
+                  ? 'Uses Claude Code CLI with account login'
+                  : 'Uses Codex CLI from your local install'}
+              </p>
+            </div>
+            <div className="flex rounded-lg border border-border overflow-hidden">
+              <button
+                onClick={() => setAiProvider('claude')}
+                className={`px-3 py-1.5 text-sm transition-colors ${
+                  aiProvider === 'claude'
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-primary text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                Claude
+              </button>
+              <button
+                onClick={() => setAiProvider('codex')}
+                className={`px-3 py-1.5 text-sm transition-colors border-l border-border ${
+                  aiProvider === 'codex'
+                    ? 'bg-accent text-white'
+                    : 'bg-bg-primary text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                Codex
+              </button>
+            </div>
+          </div>
+          {aiProvider === 'codex' && (
+            <div className="mt-3 text-xs text-text-muted">
+              Install Codex CLI, run <span className="font-mono text-text-secondary">codex login</span>, then click Recheck.
+            </div>
+          )}
+        </div>
+
         <DiskSpaceSection diskSpace={diskSpace} />
 
         {/* Permission Section */}

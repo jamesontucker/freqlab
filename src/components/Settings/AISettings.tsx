@@ -1,5 +1,5 @@
 import { useSettingsStore } from '../../stores/settingsStore';
-import type { ClaudeModel, AgentVerbosity } from '../../types';
+import type { ClaudeModel, AgentVerbosity, AIProvider } from '../../types';
 
 interface ModelOption {
   id: ClaudeModel;
@@ -25,14 +25,47 @@ const verbosityOptions: VerbosityOption[] = [
   { id: 'thorough', label: 'Thorough', description: 'Detailed exploration before implementing' },
 ];
 
+const providerOptions: Array<{ id: AIProvider; label: string; description: string }> = [
+  { id: 'claude', label: 'Claude', description: 'Uses Claude Code CLI with account login' },
+  { id: 'codex', label: 'Codex', description: 'Uses Codex CLI with local config' },
+];
+
 export function AISettings() {
-  const { aiSettings, setChatStyle, setModel, setCustomInstructions, setAgentVerbosity } = useSettingsStore();
+  const { aiSettings, setProvider, setChatStyle, setModel, setCustomInstructions, setAgentVerbosity } = useSettingsStore();
+  const provider = aiSettings.provider;
 
   return (
     <div className="space-y-5">
       <div>
         <h3 className="text-lg font-medium text-text-primary mb-1">Chat Settings</h3>
-        <p className="text-sm text-text-muted">Configure how Claude interacts with you</p>
+        <p className="text-sm text-text-muted">Configure how your AI assistant interacts with you</p>
+      </div>
+
+      {/* Provider Selection */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="block text-sm font-medium text-text-primary">AI Provider</label>
+          <p className="text-xs text-text-muted">
+            {providerOptions.find(p => p.id === provider)?.description}
+          </p>
+        </div>
+        <div className="flex rounded-lg border border-border overflow-hidden">
+          {providerOptions.map((option, index) => (
+            <button
+              key={option.id}
+              onClick={() => setProvider(option.id)}
+              className={`px-3 py-1.5 text-sm transition-colors ${
+                index > 0 ? 'border-l border-border' : ''
+              } ${
+                provider === option.id
+                  ? 'bg-accent text-white'
+                  : 'bg-bg-primary text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Chat Style - inline toggle */}
@@ -97,7 +130,9 @@ export function AISettings() {
         <div>
           <label className="block text-sm font-medium text-text-primary">Model</label>
           <p className="text-xs text-text-muted">
-            {modelOptions.find(m => m.id === aiSettings.model)?.description}
+            {provider === 'claude'
+              ? modelOptions.find(m => m.id === aiSettings.model)?.description
+              : 'Model selection is managed by Codex CLI'}
           </p>
         </div>
         <div className="flex rounded-lg border border-border overflow-hidden">
@@ -105,13 +140,14 @@ export function AISettings() {
             <button
               key={option.id}
               onClick={() => setModel(option.id)}
+              disabled={provider !== 'claude'}
               className={`px-3 py-1.5 text-sm transition-colors ${
                 index > 0 ? 'border-l border-border' : ''
               } ${
                 aiSettings.model === option.id
                   ? 'bg-accent text-white'
                   : 'bg-bg-primary text-text-secondary hover:text-text-primary'
-              }`}
+              } ${provider !== 'claude' ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {option.label}
             </button>
