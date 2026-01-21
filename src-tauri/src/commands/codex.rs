@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::Emitter;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -135,6 +136,99 @@ fn get_session_file(project_path: &str) -> PathBuf {
         .join("codex_session.txt")
 }
 
+fn path_lookup_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    }
+}
+
+fn lookup_command_path(command: &str) -> Option<String> {
+    let output = StdCommand::new(path_lookup_command())
+        .args([command])
+        .env("PATH", super::get_extended_path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .next()
+        .map(|line| line.trim().to_string())
+        .filter(|p| !p.is_empty())
+}
+
+fn resolve_codex_command() -> Result<String, String> {
+    if let Ok(path) = std::env::var("CODEX_CLI_PATH") {
+        if !path.trim().is_empty() && Path::new(&path).exists() {
+            return Ok(path);
+        }
+    }
+
+    if cfg!(target_os = "windows") {
+        if let Some(path) = lookup_command_path("codex.cmd")
+            .or_else(|| lookup_command_path("codex.ps1"))
+            .or_else(|| lookup_command_path("codex.exe"))
+            .or_else(|| lookup_command_path("codex"))
+        {
+            return Ok(path);
+        }
+    } else if let Some(path) = lookup_command_path("codex") {
+        return Ok(path);
+    }
+
+    if cfg!(target_os = "windows") {
+        let home = std::env::var("USERPROFILE").unwrap_or_default();
+        if !home.is_empty() {
+            let candidates = [
+                format!("{}\\AppData\\Roaming\\npm\\codex.cmd", home),
+                format!("{}\\AppData\\Local\\npm\\codex.cmd", home),
+                format!("{}\\AppData\\Roaming\\npm\\codex.exe", home),
+                format!("{}\\AppData\\Local\\npm\\codex.exe", home),
+                format!("{}\\AppData\\Roaming\\npm\\codex.ps1", home),
+                format!("{}\\AppData\\Local\\npm\\codex.ps1", home),
+            ];
+            for candidate in candidates {
+                if Path::new(&candidate).exists() {
+                    return Ok(candidate);
+                }
+            }
+        }
+    }
+
+    Err("Codex CLI not found. Ensure codex is on PATH or set CODEX_CLI_PATH to the full executable path.".to_string())
+}
+
+fn is_cmd_script(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".cmd") || lower.ends_with(".bat")
+}
+
+fn is_ps_script(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".ps1")
+}
+
+fn build_codex_command(codex_cmd: &str) -> Command {
+    if is_cmd_script(codex_cmd) {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(codex_cmd);
+        cmd
+    } else if is_ps_script(codex_cmd) {
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", codex_cmd]);
+        cmd
+    } else {
+        Command::new(codex_cmd)
+    }
+}
+
 fn load_session_id(project_path: &str) -> Option<String> {
     let session_file = get_session_file(project_path);
     fs::read_to_string(session_file).ok().map(|s| s.trim().to_string())
@@ -255,7 +349,7 @@ pub async fn send_to_codex(
         args.push("--output-last-message".to_string());
         args.push(last_message_path.to_string_lossy().to_string());
         args.push(session_id.clone());
-        args.push(prompt.clone());
+        args.push("-".to_string());
         eprintln!("[DEBUG] Resuming Codex session: {}", session_id);
     } else {
         args.push("exec".to_string());
@@ -265,16 +359,32 @@ pub async fn send_to_codex(
         args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
         args.push("--output-last-message".to_string());
         args.push(last_message_path.to_string_lossy().to_string());
-        args.push(prompt.clone());
+        args.push("-".to_string());
         eprintln!("[DEBUG] Starting new Codex session");
     }
 
+    let codex_cmd = resolve_codex_command()?;
+
+    eprintln!("[DEBUG] Codex command: {}", codex_cmd);
+    eprintln!(
+        "[DEBUG] Codex launcher: {}",
+        if is_cmd_script(&codex_cmd) {
+            "cmd"
+        } else if is_ps_script(&codex_cmd) {
+            "powershell"
+        } else {
+            "direct"
+        }
+    );
+
+    let mut command = build_codex_command(&codex_cmd);
+
     // Spawn Codex CLI process with JSON output
-    let mut child = Command::new("codex")
+    let mut child = command
         .current_dir(&project_path)
         .args(&args)
         .env("PATH", super::get_extended_path())
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -282,6 +392,14 @@ pub async fn send_to_codex(
 
     if let Some(pid) = child.id() {
         register_process(&project_path, pid);
+    }
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let prompt_clone = prompt.clone();
+        tokio::spawn(async move {
+            let _ = stdin.write_all(prompt_clone.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        });
     }
 
     let _ = window.emit("ai-stream", AiStreamEvent::Start {
@@ -541,7 +659,22 @@ pub async fn interrupt_codex(project_path: String, window: tauri::Window) -> Res
 
 #[tauri::command]
 pub async fn test_codex_cli() -> Result<String, String> {
-    let output = Command::new("codex")
+    let codex_cmd = resolve_codex_command()?;
+    eprintln!("[DEBUG] Codex command: {}", codex_cmd);
+    eprintln!(
+        "[DEBUG] Codex launcher: {}",
+        if is_cmd_script(&codex_cmd) {
+            "cmd"
+        } else if is_ps_script(&codex_cmd) {
+            "powershell"
+        } else {
+            "direct"
+        }
+    );
+
+    let mut command = build_codex_command(&codex_cmd);
+
+    let output = command
         .args(["--version"])
         .env("PATH", super::get_extended_path())
         .output()

@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -122,8 +123,6 @@ fn user_home_dir() -> String {
 }
 
 fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
-    use std::process::Stdio;
-
     let mut child = Command::new(cmd)
         .args(args)
         .env("PATH", super::get_extended_path())
@@ -246,6 +245,16 @@ fn check_claude_cli() -> CheckResult {
 }
 
 fn check_codex_cli() -> CheckResult {
+    if let Ok(path) = std::env::var("CODEX_CLI_PATH") {
+        if !path.trim().is_empty() && Path::new(&path).exists() {
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("Installed".to_string()),
+                message: None,
+            };
+        }
+    }
+
     let codex_path = lookup_command_path("codex")
         .or_else(|| lookup_command_path("codex.cmd"))
         .or_else(|| lookup_command_path("codex.exe"));

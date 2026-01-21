@@ -23,12 +23,20 @@ pub fn get_extended_path() -> String {
     let home = std::env::var("USERPROFILE").unwrap_or_default();
     let appdata = std::env::var("APPDATA").unwrap_or_default();
     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let pnpm_home = std::env::var("PNPM_HOME").unwrap_or_default();
+    let yarn_home = std::env::var("YARN_HOME").unwrap_or_default();
+    let bun_install = std::env::var("BUN_INSTALL").unwrap_or_default();
     let current_path = std::env::var("PATH").unwrap_or_default();
 
     // Add common tool installation paths that bundled apps don't see
     let mut extra_paths = vec![
         format!("{}\\.claude\\bin", home), // Claude CLI (native installer)
         format!("{}\\.cargo\\bin", home),  // Rust/Cargo
+        format!("{}\\.codex\\bin", home),  // Codex CLI (if installed here)
+        format!("{}\\AppData\\Roaming\\npm", home),
+        format!("{}\\AppData\\Local\\npm", home),
+        format!("{}\\AppData\\Roaming\\pnpm", home),
+        format!("{}\\AppData\\Local\\Yarn\\bin", home),
         format!("{}\\AppData\\Local\\Microsoft\\WindowsApps", home),
         "C:\\Program Files\\nodejs".to_string(),
         "C:\\Program Files\\Git\\bin".to_string(),
@@ -36,10 +44,24 @@ pub fn get_extended_path() -> String {
 
     if !appdata.is_empty() {
         extra_paths.push(format!("{}\\npm", appdata));
+        extra_paths.push(format!("{}\\pnpm", appdata));
     }
 
     if !local_appdata.is_empty() {
         extra_paths.push(format!("{}\\npm", local_appdata));
+        extra_paths.push(format!("{}\\Yarn\\bin", local_appdata));
+    }
+
+    if !pnpm_home.is_empty() {
+        extra_paths.push(pnpm_home);
+    }
+
+    if !yarn_home.is_empty() {
+        extra_paths.push(yarn_home);
+    }
+
+    if !bun_install.is_empty() {
+        extra_paths.push(format!("{}\\bin", bun_install));
     }
 
     format!("{};{}", extra_paths.join(";"), current_path)
