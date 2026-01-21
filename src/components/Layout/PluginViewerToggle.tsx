@@ -10,7 +10,7 @@ import { Tip } from '../Common/Tip';
 
 // Helper to extract folder name from project path
 function getFolderName(projectPath: string): string {
-  return projectPath.split('/').pop() || '';
+  return projectPath.split(/[\\/]/).pop() || '';
 }
 
 export function PluginViewerToggle() {

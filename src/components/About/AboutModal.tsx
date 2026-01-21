@@ -283,7 +283,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                                     AI-Generated Code
                                 </h4>
                                 <p className="text-xs text-text-secondary">
-                                    Claude generates the plugin code. While templates include safety measures, always
+                                    The AI assistant generates the plugin code. While templates include safety measures, always
                                     review generated code before distributing. You are responsible for understanding
                                     and verifying the code in your plugins.
                                 </p>

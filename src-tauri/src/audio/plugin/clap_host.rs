@@ -143,7 +143,12 @@ pub fn cleanup_temp_bundles() {
             let path = entry.path();
             if path.extension().map(|e| e == "clap").unwrap_or(false) {
                 log::info!("Removing stale temp bundle: {:?}", path);
-                if let Err(e) = std::fs::remove_dir_all(&path) {
+                let result = if path.is_dir() {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
+                if let Err(e) = result {
                     log::warn!("Failed to remove temp bundle {:?}: {}", path, e);
                 }
             }
@@ -438,7 +443,11 @@ impl PluginInstance {
         }
 
         // Create unique temp bundle name
-        let temp_bundle_name = format!("{}_{}.clap", bundle_name, timestamp);
+        let extension = bundle_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("clap");
+        let temp_bundle_name = format!("{}_{}.{}", bundle_name, timestamp, extension);
         let temp_bundle_path = temp_dir.join(&temp_bundle_name);
 
         log::info!(
@@ -447,8 +456,13 @@ impl PluginInstance {
             temp_bundle_path
         );
 
-        // Copy the entire bundle directory
-        Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
+        if bundle_path.is_file() {
+            std::fs::copy(bundle_path, &temp_bundle_path)
+                .map_err(|e| format!("Failed to copy {:?}: {}", bundle_path, e))?;
+        } else {
+            // Copy the entire bundle directory
+            Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
+        }
 
         Ok((temp_bundle_path.clone(), Some(temp_bundle_path)))
     }
@@ -481,49 +495,82 @@ impl PluginInstance {
 
     /// Resolve the dylib path inside a .clap bundle
     fn resolve_dylib_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
-        // On macOS, .clap bundles are like .app bundles:
-        // MyPlugin.clap/Contents/MacOS/MyPlugin
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, .clap bundles are like .app bundles:
+            // MyPlugin.clap/Contents/MacOS/MyPlugin
 
-        let macos_dir = bundle_path.join("Contents").join("MacOS");
+            let macos_dir = bundle_path.join("Contents").join("MacOS");
 
-        // First try: use the bundle name (standard case)
-        let bundle_name = bundle_path
-            .file_stem()
-            .ok_or("Invalid bundle path")?
-            .to_string_lossy();
+            // First try: use the bundle name (standard case)
+            let bundle_name = bundle_path
+                .file_stem()
+                .ok_or("Invalid bundle path")?
+                .to_string_lossy();
 
-        let dylib_path = macos_dir.join(bundle_name.as_ref());
-        if dylib_path.exists() {
-            return Ok(dylib_path);
-        }
+            let dylib_path = macos_dir.join(bundle_name.as_ref());
+            if dylib_path.exists() {
+                return Ok(dylib_path);
+            }
 
-        // Second try: scan the MacOS directory for any executable
-        // This handles temp bundles where the bundle name differs from the dylib name
-        if macos_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&macos_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    // Skip obvious non-executables
-                    if path.extension().is_some() {
-                        continue; // executables typically have no extension on macOS
-                    }
-                    if path.is_file() {
-                        log::info!("Found dylib via scan: {:?}", path);
-                        return Ok(path);
+            // Second try: scan the MacOS directory for any executable
+            // This handles temp bundles where the bundle name differs from the dylib name
+            if macos_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&macos_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        // Skip obvious non-executables
+                        if path.extension().is_some() {
+                            continue; // executables typically have no extension on macOS
+                        }
+                        if path.is_file() {
+                            log::info!("Found dylib via scan: {:?}", path);
+                            return Ok(path);
+                        }
                     }
                 }
             }
+
+            // Fallback: try the bundle path directly (for non-bundle dylibs)
+            if bundle_path.is_file() {
+                return Ok(bundle_path.to_path_buf());
+            }
+
+            return Err(format!(
+                "Could not find plugin binary in bundle: {:?}",
+                bundle_path
+            ));
         }
 
-        // Fallback: try the bundle path directly (for non-bundle dylibs)
-        if bundle_path.is_file() {
-            return Ok(bundle_path.to_path_buf());
-        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if bundle_path.is_file() {
+                return Ok(bundle_path.to_path_buf());
+            }
 
-        Err(format!(
-            "Could not find plugin binary in bundle: {:?}",
-            bundle_path
-        ))
+            if bundle_path.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(bundle_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if !path.is_file() {
+                            continue;
+                        }
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            let ext = ext.to_ascii_lowercase();
+                            if ext == "clap" || ext == "dll" {
+                                log::info!("Found plugin binary via scan: {:?}", path);
+                                return Ok(path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Err(format!(
+                "Could not find plugin binary in bundle: {:?}",
+                bundle_path
+            ))
+        }
     }
 
     /// Activate the plugin for audio processing
@@ -736,6 +783,7 @@ impl PluginInstance {
                 let signal_name = match signal {
                     libc::SIGABRT => "SIGABRT (abort/panic)",
                     libc::SIGSEGV => "SIGSEGV (segmentation fault)",
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
                     libc::SIGBUS => "SIGBUS (bus error)",
                     _ => "unknown signal",
                 };

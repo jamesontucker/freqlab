@@ -581,6 +581,20 @@ pub async fn open_project_folder(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
     Ok(())
 }
 
@@ -588,10 +602,34 @@ pub async fn open_project_folder(path: String) -> Result<(), String> {
 pub async fn open_in_editor(path: String, editor: Option<String>) -> Result<(), String> {
     let editor_cmd = editor.unwrap_or_else(|| "code".to_string());
 
-    std::process::Command::new(&editor_cmd)
-        .arg(&path)
-        .spawn()
-        .map_err(|e| format!("Failed to open in {}: {}. Make sure it's installed and in your PATH.", editor_cmd, e))?;
+    #[cfg(target_os = "windows")]
+    {
+        let command_line = format!("\"{}\" \"{}\"", editor_cmd, path);
+        std::process::Command::new("cmd")
+            .args(["/C", &command_line])
+            .env("PATH", super::get_extended_path())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to open in {}: {}. Make sure it's installed and in your PATH.",
+                    editor_cmd, e
+                )
+            })?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new(&editor_cmd)
+            .arg(&path)
+            .env("PATH", super::get_extended_path())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to open in {}: {}. Make sure it's installed and in your PATH.",
+                    editor_cmd, e
+                )
+            })?;
+    }
 
     Ok(())
 }

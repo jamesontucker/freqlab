@@ -53,7 +53,7 @@ const DAW_LABELS: Record<keyof DawPaths, string> = {
 // Helper to extract folder name from project path
 // e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
 function getFolderName(projectPath: string): string {
-  return projectPath.split('/').pop() || '';
+  return projectPath.split(/[\\/]/).pop() || '';
 }
 
 export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishModalProps) {

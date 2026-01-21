@@ -81,7 +81,7 @@ export function LicenseAcceptanceModal({ isOpen }: LicenseAcceptanceModalProps) 
             <div>
               <h4 className="text-sm font-semibold text-text-primary mb-1">AI-Generated Code</h4>
               <p className="text-sm text-text-secondary">
-                Claude generates the plugin code. While templates include safety measures, always review generated code before distributing. You are responsible for understanding and verifying the code in your plugins.
+                The AI assistant generates the plugin code. While templates include safety measures, always review generated code before distributing. You are responsible for understanding and verifying the code in your plugins.
               </p>
             </div>
           </div>

@@ -152,10 +152,10 @@ export function WelcomeWizard() {
                                 />
                             </div>
 
-                            {/* Subscription notice */}
+                            {/* Provider notice */}
                             <div className="px-3 py-2 rounded-lg bg-warning/10 border border-warning/20 text-center">
                                 <p className="text-xs text-text-secondary">
-                                    <span className="font-medium text-warning">Claude Pro or Max required</span>
+                                    <span className="font-medium text-warning">Claude Pro/Max or Codex CLI required</span>
                                     {' - '}
                                     <a
                                         href="https://claude.ai/login"
@@ -163,7 +163,16 @@ export function WelcomeWizard() {
                                         rel="noopener noreferrer"
                                         className="text-accent hover:underline"
                                     >
-                                        Login now
+                                        Claude login
+                                    </a>
+                                    {' | '}
+                                    <a
+                                        href="https://platform.openai.com/docs/codex/codex-cli"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-accent hover:underline"
+                                    >
+                                        Codex CLI
                                     </a>
                                 </p>
                             </div>
@@ -271,7 +280,7 @@ export function WelcomeWizard() {
                             <div>
                                 <h4 className="text-sm font-semibold text-text-primary mb-1">AI-Generated Code</h4>
                                 <p className="text-sm text-text-secondary">
-                                    Claude generates the plugin code. While templates include safety measures, always
+                                    The AI assistant generates the plugin code. While templates include safety measures, always
                                     review generated code before distributing. You are responsible for understanding
                                     and verifying the code in your plugins.
                                 </p>

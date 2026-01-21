@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -9,6 +9,7 @@ use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
+
 
 // Track active Claude processes by project path so we can interrupt them
 static ACTIVE_PROCESSES: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
@@ -189,9 +190,9 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        format!("📖 Reading: {}", file)
+                        format!("ðŸ“– Reading: {}", file)
                     } else {
-                        "📖 Reading file...".to_string()
+                        "ðŸ“– Reading file...".to_string()
                     }
                 }
                 "Edit" => {
@@ -199,9 +200,9 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        format!("✏️  Editing: {}", file)
+                        format!("âœï¸  Editing: {}", file)
                     } else {
-                        "✏️  Editing file...".to_string()
+                        "âœï¸  Editing file...".to_string()
                     }
                 }
                 "Write" => {
@@ -209,9 +210,9 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                         let file = input.get("file_path")
                             .and_then(|v| v.as_str())
                             .unwrap_or("file");
-                        format!("📝 Writing: {}", file)
+                        format!("ðŸ“ Writing: {}", file)
                     } else {
-                        "📝 Writing file...".to_string()
+                        "ðŸ“ Writing file...".to_string()
                     }
                 }
                 "Bash" => {
@@ -225,12 +226,12 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
                         } else {
                             cmd.to_string()
                         };
-                        format!("💻 Running: {}", display_cmd)
+                        format!("ðŸ’» Running: {}", display_cmd)
                     } else {
-                        "💻 Running command...".to_string()
+                        "ðŸ’» Running command...".to_string()
                     }
                 }
-                _ => format!("🔧 Using tool: {}", tool),
+                _ => format!("ðŸ”§ Using tool: {}", tool),
             };
             ParsedEvent {
                 display_text: Some(display),
@@ -243,7 +244,7 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
         "tool_result" => {
             // Tool completed - could show result summary
             ParsedEvent {
-                display_text: Some("   ✓ Done".to_string()),
+                display_text: Some("   âœ“ Done".to_string()),
                 assistant_content: None,
                 error_content: None,
                 is_result_event: false,
@@ -278,9 +279,9 @@ fn parse_claude_event(json_str: &str) -> ParsedEvent {
             // Capture the error message for proper error handling
             let error_msg = event.content.clone();
             let display = if let Some(ref content) = error_msg {
-                format!("❌ Error: {}", content)
+                format!("âŒ Error: {}", content)
             } else {
-                "❌ An error occurred".to_string()
+                "âŒ An error occurred".to_string()
             };
             ParsedEvent {
                 display_text: Some(display),
@@ -323,6 +324,7 @@ fn build_context(
     components: Option<&Vec<String>>,
     is_first_message: bool,
     ui_framework: Option<&str>,
+    user_mode: Option<&str>,
 ) -> String {
     // Get path to local nih-plug repo for documentation
     let nih_plug_docs_path = super::projects::get_nih_plug_docs_path();
@@ -338,7 +340,7 @@ fn build_context(
     if is_first_message {
         if let Some(comps) = components {
             if !comps.is_empty() {
-                context.push_str("# ⚠️ STOP - READ THIS FIRST ⚠️\n\n");
+                context.push_str("# âš ï¸ STOP - READ THIS FIRST âš ï¸\n\n");
                 context.push_str("## YOU MUST IMPLEMENT THESE STARTER COMPONENTS\n\n");
                 context.push_str("The user selected these components when creating the plugin. ");
                 context.push_str("**You MUST implement ALL of them on the first feature request.**\n\n");
@@ -381,28 +383,29 @@ Description: {description}
         description = description,
     ));
 
-    context.push_str(r#"
+    if user_mode != Some("developer") {
+        context.push_str(r#"
 
 ## 1. NEVER SAY "BUILD"
 The app has a Build button. Using "build" confuses users into thinking you're doing their build.
-- ❌ "Let me build..." / "I'll build..." / "Building..." → ✅ "Let me implement..."
-- ❌ "Build successful" / "Build complete" → ✅ "Done!" or "Ready for you to try"
-- ❌ "The build passed" → ✅ "The code compiles" (only if user asks)
+- âŒ "Let me build..." / "I'll build..." / "Building..." â†’ âœ… "Let me implement..."
+- âŒ "Build successful" / "Build complete" â†’ âœ… "Done!" or "Ready for you to try"
+- âŒ "The build passed" â†’ âœ… "The code compiles" (only if user asks)
 You are implementing code. The USER clicks Build. NEVER say "build" in any form.
 
 ## 2. TALK ABOUT FEATURES, NOT CODE (unless they specifically ask)
 The user is a producer/sound designer, not a programmer.
-- ❌ "I modified the Params struct..." → ✅ "I added a new control for..."
-- ❌ "The process() function now..." → ✅ "The audio processing now..."
-- ❌ "I added a UIMessage variant..." → ✅ "The knob is connected."
-- ❌ "Let me rewrite lib.rs..." → Just do it silently, then say what feature changed
+- âŒ "I modified the Params struct..." â†’ âœ… "I added a new control for..."
+- âŒ "The process() function now..." â†’ âœ… "The audio processing now..."
+- âŒ "I added a UIMessage variant..." â†’ âœ… "The knob is connected."
+- âŒ "Let me rewrite lib.rs..." â†’ Just do it silently, then say what feature changed
 Talk about SOUND, not code. filters/oscillators/gain/etc = good. structs/functions/Rust = bad.
-If user asks "how does this work" or "show me the code" → then explain code. Otherwise, features only.
+If user asks "how does this work" or "show me the code" â†’ then explain code. Otherwise, features only.
 
 ## 3. BE CONCISE
 Say what you did in 1-2 sentences max. Don't narrate your process.
-- ❌ "First let me read the file... now I'll add... now let me check..."
-- ✅ [Do the work silently, then] "Added the filter with cutoff and resonance controls."
+- âŒ "First let me read the file... now I'll add... now let me check..."
+- âœ… [Do the work silently, then] "Added the filter with cutoff and resonance controls."
 
 ## 4. INTERNAL FILES ARE SECRET
 Never mention CLAUDE.md, .vstworkshop/, or metadata files to the user. Update them silently.
@@ -411,23 +414,73 @@ Never mention CLAUDE.md, .vstworkshop/, or metadata files to the user. Update th
 Before implementing ANY audio feature, you MUST check if a relevant skill exists in `.claude/commands/`.
 
 **Skill check is MANDATORY for:**
-- DSP/audio processing → invoke `/dsp-safety` first
-- Filters, EQ, dynamics → `/dsp-safety` has anti-hallucination rules
-- Effects (reverb, delay, chorus, etc.) → `/effect-patterns`
-- Instruments (synths, samplers) → `/instrument-patterns`
-- UI work → `/webview-ui` or `/egui-ui` (whichever this project uses)
-- Presets → `/preset-system`
-- Polyphony → `/polyphony`
-- Envelopes → `/adsr-envelope`
-- LFOs → `/lfo`
-- Oversampling → `/oversampling`
-- Sidechain → `/sidechain-input`
+- DSP/audio processing â†’ invoke `/dsp-safety` first
+- Filters, EQ, dynamics â†’ `/dsp-safety` has anti-hallucination rules
+- Effects (reverb, delay, chorus, etc.) â†’ `/effect-patterns`
+- Instruments (synths, samplers) â†’ `/instrument-patterns`
+- UI work â†’ `/webview-ui` or `/egui-ui` (whichever this project uses)
+- Presets â†’ `/preset-system`
+- Polyphony â†’ `/polyphony`
+- Envelopes â†’ `/adsr-envelope`
+- LFOs â†’ `/lfo`
+- Oversampling â†’ `/oversampling`
+- Sidechain â†’ `/sidechain-input`
 
 **The skill contains patterns that prevent common mistakes.** Skipping skills = bugs.
 
 ---
 
 "#);
+    } else {
+        context.push_str(r#"
+
+## 1. NEVER SAY "BUILD"
+The app has a Build button. Using "build" confuses users into thinking you're doing their build.
+- DO NOT: "Let me build..." / "I'll build..." / "Building..."
+- DO: "Let me implement..."
+- DO NOT: "Build successful" / "Build complete"
+- DO: "Done!" or "Ready for you to try"
+- DO NOT: "The build passed"
+- DO: "The code compiles" (only if user asks)
+You are implementing code. The USER clicks Build. NEVER say "build" in any form.
+
+## 2. BALANCE FEATURES AND TECHNICAL DETAIL
+The user is a programmer/audio engineer. You may discuss code, DSP, and architecture when helpful.
+- Include file/function names or brief code snippets when they clarify a change
+- Keep explanations concise and avoid unnecessary jargon
+- If the user asks for sound/design implications, explain those too
+- Do not over-explain basics unless asked
+
+## 3. BE CONCISE
+Say what you did in 1-2 sentences max. Don't narrate your process.
+- DO NOT: "First let me read the file... now I'll add... now let me check..."
+- DO: [Do the work silently, then] "Added the filter with cutoff and resonance controls."
+
+## 4. INTERNAL FILES ARE SECRET
+Never mention CLAUDE.md, .vstworkshop/, or metadata files to the user. Update them silently.
+
+## 5. ALWAYS CHECK YOUR SKILLS
+Before implementing ANY audio feature, you MUST check if a relevant skill exists in `.claude/commands/`.
+
+**Skill check is MANDATORY for:**
+- DSP/audio processing -> invoke `/dsp-safety` first
+- Filters, EQ, dynamics -> `/dsp-safety` has anti-hallucination rules
+- Effects (reverb, delay, chorus, etc.) -> `/effect-patterns`
+- Instruments (synths, samplers) -> `/instrument-patterns`
+- UI work -> `/webview-ui` or `/egui-ui` (whichever this project uses)
+- Presets -> `/preset-system`
+- Polyphony -> `/polyphony`
+- Envelopes -> `/adsr-envelope`
+- LFOs -> `/lfo`
+- Oversampling -> `/oversampling`
+- Sidechain -> `/sidechain-input`
+
+**The skill contains patterns that prevent common mistakes.** Skipping skills = bugs.
+
+---
+
+"#);
+    }
 
     context.push_str(&format!(r#"## nih-plug Documentation
 
@@ -481,6 +534,7 @@ pub async fn send_to_claude(
     model: Option<String>,
     custom_instructions: Option<String>,
     agent_verbosity: Option<String>,
+    user_mode: Option<String>,
     window: tauri::Window,
 ) -> Result<ClaudeResponse, String> {
     // Ensure git is initialized for this project (handles existing projects)
@@ -510,16 +564,38 @@ pub async fn send_to_claude(
     let ui_framework = metadata.as_ref().and_then(|m| m.ui_framework.as_deref());
 
     // Build context with components info and project-specific CLAUDE.md
-    let context = build_context(&project_name, &description, &project_path, components, is_first_message, ui_framework);
+    let context = build_context(
+        &project_name,
+        &description,
+        &project_path,
+        components,
+        is_first_message,
+        ui_framework,
+        user_mode.as_deref(),
+    );
 
     // Get verbosity style (default to balanced)
     let verbosity = agent_verbosity.as_deref().unwrap_or("balanced");
 
+    let user_mode_hint = match user_mode.as_deref() {
+        Some("developer") => "[User Mode: Developer - share code and DSP details when helpful; keep it concise]",
+        _ => "[User Mode: Producer - keep explanations high-level unless asked for code details]",
+    };
+
     // Prepend style hint to message (reinforces on every turn, even resumed sessions)
     let styled_message = match verbosity {
-        "direct" => format!("[Response Style: Direct - minimal questions, implement immediately, 1-3 sentences max]\n\n{}", message),
-        "thorough" => format!("[Response Style: Thorough - ask clarifying questions, explore options before implementing]\n\n{}", message),
-        _ => format!("[Response Style: Balanced - ask 1-2 key questions if needed, then implement]\n\n{}", message),
+        "direct" => format!(
+            "{}\n[Response Style: Direct - minimal questions, implement immediately, 1-3 sentences max]\n\n{}",
+            user_mode_hint, message
+        ),
+        "thorough" => format!(
+            "{}\n[Response Style: Thorough - ask clarifying questions, explore options before implementing]\n\n{}",
+            user_mode_hint, message
+        ),
+        _ => format!(
+            "{}\n[Response Style: Balanced - ask 1-2 key questions if needed, then implement]\n\n{}",
+            user_mode_hint, message
+        ),
     };
 
     // Build args - include --resume if we have an existing session
@@ -554,7 +630,7 @@ pub async fn send_to_claude(
 - Do NOT ask clarifying questions unless you truly cannot proceed
 - Make sensible default choices and implement immediately
 - Keep responses to 1-3 sentences max
-- User says "add X" → just implement X, don't ask what kind or explore options
+- User says "add X" â†’ just implement X, don't ask what kind or explore options
 - If you need to make assumptions, make them and briefly mention what you chose
 "#,
             "thorough" => r#"
@@ -573,7 +649,7 @@ pub async fn send_to_claude(
 - **DO NOT USE THE BRAINSTORMING SKILL** - the user wants you to implement, not explore
 - Make reasonable default choices, mention what you chose briefly
 - Keep responses concise - focus on what you're doing, not lengthy explanations
-- If user says "add X" → just add X, don't ask what kind or explore options
+- If user says "add X" â†’ just add X, don't ask what kind or explore options
 "#,
         };
 
@@ -617,7 +693,7 @@ pub async fn send_to_claude(
     }
 
     // Emit start event
-    let _ = window.emit("claude-stream", ClaudeStreamEvent::Start {
+    let _ = window.emit("ai-stream", ClaudeStreamEvent::Start {
         project_path: project_path.clone()
     });
 
@@ -719,7 +795,7 @@ pub async fn send_to_claude(
                         if let Some(display_text) = parsed.display_text {
                             full_output.push_str(&display_text);
                             full_output.push('\n');
-                            let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+                            let _ = window.emit("ai-stream", ClaudeStreamEvent::Text {
                                 project_path: project_path.clone(),
                                 content: display_text,
                             });
@@ -731,7 +807,7 @@ pub async fn send_to_claude(
                         break;
                     }
                     Err(e) => {
-                        let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                        let _ = window.emit("ai-stream", ClaudeStreamEvent::Error {
                             project_path: project_path.clone(),
                             message: e.to_string(),
                         });
@@ -746,7 +822,7 @@ pub async fn send_to_claude(
                         error_output.push_str(&text);
                         error_output.push('\n');
                         // Also emit stderr as it may contain useful info
-                        let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+                        let _ = window.emit("ai-stream", ClaudeStreamEvent::Text {
                             project_path: project_path.clone(),
                             content: format!("[stderr] {}", text),
                         });
@@ -779,7 +855,7 @@ pub async fn send_to_claude(
                     let idle_mins = total_idle_seconds / 60;
                     eprintln!("[WARN] Claude CLI idle for {} minute(s)", idle_mins);
 
-                    let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+                    let _ = window.emit("ai-stream", ClaudeStreamEvent::Text {
                         project_path: project_path.clone(),
                         content: format!("[Note] No output for {} minutes (still working)...", idle_mins),
                     });
@@ -787,7 +863,7 @@ pub async fn send_to_claude(
 
                 if total_idle_seconds >= max_idle_seconds {
                     eprintln!("[ERROR] Claude CLI appears stalled, terminating process");
-                    let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+                    let _ = window.emit("ai-stream", ClaudeStreamEvent::Error {
                         project_path: project_path.clone(),
                         message: "Claude CLI stalled (no output for 30 minutes). Session terminated.".to_string(),
                     });
@@ -842,21 +918,21 @@ pub async fn send_to_claude(
             return Err("Session interrupted".to_string());
         } else if !error_output.is_empty() {
             // Process failed with stderr output
-            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+            let _ = window.emit("ai-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: error_output.clone(),
             });
             return Err(format!("Claude CLI failed: {}", error_output));
         } else if let Some(err) = stream_error {
             // Process failed with error from JSON stream (e.g., rate limits, auth issues)
-            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+            let _ = window.emit("ai-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: err.clone(),
             });
             return Err(format!("Claude CLI failed: {}", err));
         } else {
             // Process failed without any error output (truly unexpected termination)
-            let _ = window.emit("claude-stream", ClaudeStreamEvent::Error {
+            let _ = window.emit("ai-stream", ClaudeStreamEvent::Error {
                 project_path: project_path.clone(),
                 message: "Claude CLI terminated unexpectedly".to_string(),
             });
@@ -878,8 +954,8 @@ pub async fn send_to_claude(
             trimmed.starts_with("all done") ||
             trimmed.starts_with("that's it") ||
             trimmed.starts_with("thats it") ||
-            trimmed.contains("✓ done") ||
-            trimmed.contains("✓done") ||
+            trimmed.contains("âœ“ done") ||
+            trimmed.contains("âœ“done") ||
             // Catch variations like "Done!", "I'm done", etc.
             (trimmed.len() < 15 && trimmed.contains("done"))
         )
@@ -914,7 +990,7 @@ pub async fn send_to_claude(
     };
 
     // Emit done event
-    let _ = window.emit("claude-stream", ClaudeStreamEvent::Done {
+    let _ = window.emit("ai-stream", ClaudeStreamEvent::Done {
         project_path: project_path.clone(),
         content: final_content.clone(),
     });
@@ -1030,7 +1106,7 @@ pub async fn interrupt_claude(project_path: String, window: tauri::Window) -> Re
         unregister_process(&project_path);
 
         // Emit a text event (not error) so the frontend shows a friendly message
-        let _ = window.emit("claude-stream", ClaudeStreamEvent::Text {
+        let _ = window.emit("ai-stream", ClaudeStreamEvent::Text {
             project_path: project_path.clone(),
             content: "Session stopped. Ready for your next message.".to_string(),
         });

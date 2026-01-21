@@ -15,7 +15,7 @@ import { isAppFocused } from '../../utils/focusTracker';
 import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
 import { markdownComponents } from './markdownUtils';
 
-// 30 minute timeout for Claude sessions (in milliseconds)
+// 30 minute timeout for AI sessions (in milliseconds)
 const CLAUDE_TIMEOUT_MS = 30 * 60 * 1000;
 
 interface AttachmentInput {
@@ -33,7 +33,7 @@ interface StoredAttachment {
   size: number;
 }
 
-interface ClaudeStreamEvent {
+interface AiStreamEvent {
   type: 'start' | 'text' | 'error' | 'done';
   project_path: string;
   content?: string;
@@ -109,6 +109,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const getClaudeStartTime = useProjectBusyStore.getState().getClaudeStartTime;
 
   const aiSettings = useSettingsStore((s) => s.aiSettings);
+  const aiProvider = aiSettings.provider;
+  const providerLabel = aiProvider === 'codex' ? 'Codex' : 'Claude';
   const chatStyle = aiSettings.chatStyle;
   // Track chat style for current processing session (initialized from setting, captured when chat starts)
   const activeChatStyleRef = useRef(chatStyle);
@@ -125,34 +127,34 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const resetTimeout = useCallback(() => {
     clearTimeoutTimer();
     timeoutRef.current = setTimeout(async () => {
-      // Timeout reached - interrupt Claude
-      console.warn('[ChatPanel] Claude session timed out after 30 minutes');
+      // Timeout reached - interrupt AI session
+      console.warn('[ChatPanel] AI session timed out after 30 minutes');
       addLine('[WARNING] Session timed out after 30 minutes of no activity');
       try {
-        await invoke('interrupt_claude', { projectPath: project.path });
+        await invoke(aiProvider === 'codex' ? 'interrupt_codex' : 'interrupt_claude', { projectPath: project.path });
       } catch (err) {
-        console.error('Failed to interrupt Claude:', err);
+        console.error('Failed to interrupt AI session:', err);
       }
     }, CLAUDE_TIMEOUT_MS);
-  }, [clearTimeoutTimer, addLine, project.path]);
+  }, [clearTimeoutTimer, addLine, project.path, aiProvider]);
 
   // Interrupt handler
   const handleInterrupt = useCallback(async () => {
     clearTimeoutTimer();
     addLine('[Interrupting...]');
     try {
-      await invoke('interrupt_claude', { projectPath: project.path });
+      await invoke(aiProvider === 'codex' ? 'interrupt_codex' : 'interrupt_claude', { projectPath: project.path });
     } catch (err) {
       // If there's no active session, it might have just finished - that's fine
       const errorStr = String(err);
-      if (errorStr.includes('No active Claude session')) {
+      if (errorStr.includes('No active') && errorStr.includes('session')) {
         addLine('[Session already finished]');
       } else {
-        console.error('Failed to interrupt Claude:', err);
+        console.error('Failed to interrupt AI session:', err);
         addLine(`[ERROR] Failed to interrupt: ${err}`);
       }
     }
-  }, [clearTimeoutTimer, addLine, project.path]);
+  }, [clearTimeoutTimer, addLine, project.path, aiProvider]);
 
   // Tauri drag and drop event listeners
   useEffect(() => {
@@ -529,7 +531,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     resetTimeout();
 
     // Listen for streaming events - filter by project path to prevent cross-talk
-    const unlisten = await listen<ClaudeStreamEvent>('claude-stream', (event) => {
+    const unlisten = await listen<AiStreamEvent>('ai-stream', (event) => {
       const data = event.payload;
       // Only process events for THIS project
       if (data.project_path !== project.path) return;
@@ -551,24 +553,26 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       }
     });
 
-    // Build message with file context for Claude
-    let messageForClaude = content;
+    // Build message with file context for the AI provider
+    let messageForAi = content;
     if (storedAttachments && storedAttachments.length > 0) {
       const fileContext = storedAttachments
         .map((a) => `[Attached file: ${a.originalName} at ${a.path}]`)
         .join('\n');
-      messageForClaude = `${fileContext}\n\n${content}`;
+      messageForAi = `${fileContext}\n\n${content}`;
     }
 
     try {
-      const response = await invoke<{ content: string; commit_hash?: string }>('send_to_claude', {
+      const command = aiProvider === 'codex' ? 'send_to_codex' : 'send_to_claude';
+      const response = await invoke<{ content: string; commit_hash?: string }>(command, {
         projectPath: project.path,
         projectName: project.name,
         description: project.description,
-        message: messageForClaude,
+        message: messageForAi,
         model: aiSettings.model,
         customInstructions: aiSettings.customInstructions,
         agentVerbosity: aiSettings.agentVerbosity,
+        userMode: aiSettings.userMode,
       });
 
       // Calculate next version number if this response has a commit (files were changed)
@@ -713,7 +717,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
             if (granted) {
               await sendNotification({
                 title: 'freqlab',
-                body: `Claude finished working on ${project.name}`,
+                body: `${providerLabel} finished working on ${project.name}`,
               });
             }
           } catch (err) {
@@ -722,7 +726,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         })();
       }
     }
-  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle]);
+  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle, aiProvider, providerLabel]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {

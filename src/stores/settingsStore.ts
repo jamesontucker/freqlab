@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings, AISettings, ChatStyle, ClaudeModel, AgentVerbosity } from '../types';
+import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings, AISettings, ChatStyle, ClaudeModel, AgentVerbosity, AIProvider, UserMode } from '../types';
 
 const defaultDawPaths: DawPaths = {
   reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
@@ -27,6 +27,8 @@ const defaultAudioSettings: AudioSettings = {
 };
 
 const defaultAISettings: AISettings = {
+  provider: 'claude',
+  userMode: 'producer',
   chatStyle: 'conversational',
   model: 'opus',
   customInstructions: '',
@@ -45,6 +47,8 @@ interface SettingsState extends AppConfig {
   // AI settings
   aiSettings: AISettings;
   setAISettings: (settings: AISettings) => void;
+  setProvider: (provider: AIProvider) => void;
+  setUserMode: (mode: UserMode) => void;
   setChatStyle: (style: ChatStyle) => void;
   setModel: (model: ClaudeModel) => void;
   setCustomInstructions: (instructions: string) => void;
@@ -107,6 +111,14 @@ export const useSettingsStore = create<SettingsState>()(
 
       // AI settings setters
       setAISettings: (settings) => set({ aiSettings: settings }),
+      setProvider: (provider) =>
+        set((state) => ({
+          aiSettings: { ...state.aiSettings, provider },
+        })),
+      setUserMode: (mode) =>
+        set((state) => ({
+          aiSettings: { ...state.aiSettings, userMode: mode },
+        })),
       setChatStyle: (style) =>
         set((state) => ({
           aiSettings: { ...state.aiSettings, chatStyle: style },

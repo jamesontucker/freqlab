@@ -251,7 +251,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
 
   // Get existing project names for duplicate checking
   const projects = useProjectStore((s) => s.projects);
-  const existingFolderNames = projects.map(p => p.path.split('/').pop() || '');
+  const existingFolderNames = projects.map(p => p.path.split(/[\\/]/).pop() || '');
 
   // Convert display name to folder-safe name (used when creating project)
   const toFolderName = (displayName: string): string => {

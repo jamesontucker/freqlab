@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::Path;
 use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -58,8 +59,12 @@ pub async fn build_project(
     // Emit start event
     let _ = window.emit("build-stream", BuildStreamEvent::Start);
 
-    // Convert project name to Cargo package name (hyphens -> underscores)
-    let package_name = to_package_name(&project_name);
+    // Convert project name (or path) to Cargo package name (hyphens -> underscores)
+    let name_hint = Path::new(&project_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&project_name);
+    let package_name = to_package_name(name_hint);
 
     // Generate unique build suffix for wry class names (enables webview plugin hot reload)
     let build_suffix = std::time::SystemTime::now()
@@ -228,6 +233,20 @@ pub async fn open_output_folder() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        std::process::Command::new("xdg-open")
             .arg(&output_path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
