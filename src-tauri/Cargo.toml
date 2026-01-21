@@ -2,7 +2,7 @@
 name = "freqlab"
 version = "0.2.8"
 description = "Audio Plugin Creation Engine"
-authors = ["nanoshrine interactive"]
+authors = ["Nanoshrine Interactive LLC"]
 license = "PolyForm-Shield-1.0.0"
 repository = ""
 edition = "2021"
