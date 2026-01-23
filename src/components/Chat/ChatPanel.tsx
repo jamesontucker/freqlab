@@ -370,21 +370,36 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   }, [messages]);
 
   // Auto-scroll to bottom when messages change
-  // Use instant scroll until history is loaded (no visible animation), smooth scroll for chat updates after
+  // Use scrollTop for more predictable behavior than scrollIntoView
   useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const scrollToBottom = (smooth: boolean) => {
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        if (smooth) {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'smooth',
+          });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+        isAtBottomRef.current = true;
+      });
+    };
+
     if (!isHistoryLoaded) {
       // Still loading - use instant scroll (will be hidden during fade anyway)
-      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
-      isAtBottomRef.current = true;
+      scrollToBottom(false);
     } else if (isInitialMount.current) {
       // History just loaded - instant scroll then mark mount complete
-      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+      scrollToBottom(false);
       isInitialMount.current = false;
-      isAtBottomRef.current = true;
     } else {
       // Normal chat flow - smooth scroll for new messages
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-      isAtBottomRef.current = true;
+      scrollToBottom(true);
     }
   }, [messages, streamingContent, isHistoryLoaded]);
 
@@ -411,8 +426,11 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
 
     const resizeObserver = new ResizeObserver(() => {
       // If user was at bottom before resize, scroll back to bottom
+      // Use scrollTop for precise positioning (avoids gap issues with scrollIntoView)
       if (isAtBottomRef.current) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+        requestAnimationFrame(() => {
+          container.scrollTop = container.scrollHeight - container.clientHeight;
+        });
       }
     });
 
