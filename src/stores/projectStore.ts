@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import type { ProjectMeta, CreateProjectInput } from '../types';
 import { useDraftStore } from './draftStore';
+import { useChatStore } from './chatStore';
 
 interface ProjectState {
   projects: ProjectMeta[];
@@ -77,6 +78,8 @@ export const useProjectStore = create<ProjectState>()(
           }));
           // Clean up draft for deleted project
           useDraftStore.getState().removeDraft(projectPath);
+          // Clean up chat state (streaming content, context cleared, token usage)
+          useChatStore.getState().cleanupProject(projectPath);
         } catch (err) {
           set({ error: String(err), loading: false });
           throw err;

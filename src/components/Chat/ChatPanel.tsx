@@ -12,7 +12,7 @@ import { usePreviewStore } from '../../stores/previewStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
 import { isAppFocused } from '../../utils/focusTracker';
-import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment } from '../../types';
+import type { ChatMessage as ChatMessageType, ChatState, ProjectMeta, FileAttachment, TokenUsage } from '../../types';
 import { markdownComponents } from './markdownUtils';
 
 // 30 minute timeout for Claude sessions (in milliseconds)
@@ -96,6 +96,14 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
   const setStreamingContent = useChatStore.getState().setStreamingContent;
   const clearStreamingContent = useChatStore.getState().clearStreamingContent;
 
+  // Context cleared state stored in Zustand (per-project, survives unmount)
+  const contextCleared = useChatStore((s) => s.contextCleared[project.path] ?? false);
+  const setContextCleared = useChatStore.getState().setContextCleared;
+
+  // Token usage stored in Zustand (per-project, survives unmount)
+  const tokenUsage = useChatStore((s) => s.tokenUsage[project.path]);
+  const setTokenUsage = useChatStore.getState().setTokenUsage;
+
   // Subscribe to derived busy state booleans (triggers re-render when they change)
   // Using selectors ensures component re-renders when Claude busy state changes
   const isLoading = useProjectBusyStore((s) => s.claudeBusyPaths.has(project.path));
@@ -153,6 +161,21 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       }
     }
   }, [clearTimeoutTimer, addLine, project.path]);
+
+  // Clear context handler - resets Claude session but keeps chat history
+  const handleClearContext = useCallback(async () => {
+    try {
+      await invoke('clear_claude_session', { projectPath: project.path });
+      setContextCleared(project.path, true);
+      // Clear cached token usage - the session file is gone so get_project_usage would fail
+      // New session will start fresh at ~16% baseline when user sends next message
+      useChatStore.getState().clearTokenUsage(project.path);
+      addLine('[Context cleared - next message will include conversation summary]');
+    } catch (err) {
+      console.error('Failed to clear context:', err);
+      addLine(`[ERROR] Failed to clear context: ${err}`);
+    }
+  }, [project.path, addLine, setContextCleared]);
 
   // Tauri drag and drop event listeners
   useEffect(() => {
@@ -283,6 +306,29 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     setIsHistoryLoaded(false);
     loadHistory();
   }, [project.path, loadHistory, isLoading]);
+
+  // Fetch token usage from Claude's logs
+  // Update after each Claude response completes and periodically
+  useEffect(() => {
+    const fetchUsage = async () => {
+      try {
+        const usage = await invoke<TokenUsage>('get_project_usage', {
+          projectPath: project.path,
+        });
+        setTokenUsage(project.path, usage);
+      } catch {
+        // No session yet or logs not found - that's okay
+        // Don't clear existing usage - it may just be a transient error
+      }
+    };
+
+    // Fetch immediately
+    fetchUsage();
+
+    // Also refetch when Claude finishes (isLoading changes from true to false)
+    // The dependency on messages.length ensures we update after new messages
+    // Note: setTokenUsage is from getState() so it's stable and not needed in deps
+  }, [project.path, isLoading, messages.length]);
 
   // Re-sync from disk when window regains focus or becomes visible
   // This fixes state sync issues when the app is minimized or in background
@@ -578,6 +624,16 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       messageForClaude = `${fileContext}\n\n${content}`;
     }
 
+    // Collect previous user messages if context was cleared
+    let previousUserMessages: string[] | undefined;
+    if (contextCleared) {
+      previousUserMessages = messagesWithUser
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content);
+      // Reset cleared flag since we're about to send with the history
+      setContextCleared(project.path, false);
+    }
+
     try {
       const response = await invoke<{ content: string; commit_hash?: string }>('send_to_claude', {
         projectPath: project.path,
@@ -587,6 +643,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         model: aiSettings.model,
         customInstructions: aiSettings.customInstructions,
         agentVerbosity: aiSettings.agentVerbosity,
+        previousUserMessages,
       });
 
       // Calculate next version number if this response has a commit (files were changed)
@@ -740,7 +797,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
         })();
       }
     }
-  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle]);
+  }, [project, addLine, clear, setClaudeBusy, clearClaudeBusy, clearStreamingContent, resetTimeout, clearTimeoutTimer, chatStyle, contextCleared, aiSettings]);
 
   // Watch for pending messages (e.g., from "Fix with Claude" button)
   useEffect(() => {
@@ -826,6 +883,48 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
               {project.uiFramework === 'webview' ? 'WebView' : project.uiFramework === 'egui' ? 'egui' : 'Native'}
             </span>
           </>
+        )}
+        {/* Context usage indicator */}
+        {(tokenUsage || contextCleared) && (
+          <div
+            className="flex items-center gap-1.5"
+            title={tokenUsage ? `${Math.round(tokenUsage.context_percent)}% of context used | ${tokenUsage.message_count} messages` : 'Context cleared - ready to send'}
+          >
+            <span className="text-[10px] text-text-muted">Context:</span>
+            {contextCleared ? (
+              <span className="text-[10px] text-success" title="Next message will include conversation summary">
+                ✓ Cleared
+              </span>
+            ) : tokenUsage && (
+              <>
+                <span
+                  className={`text-[10px] font-medium ${
+                    tokenUsage.context_percent < 50
+                      ? 'text-success'
+                      : tokenUsage.context_percent < 80
+                        ? 'text-warning'
+                        : 'text-error'
+                  }`}
+                >
+                  {tokenUsage.context_percent < 50
+                    ? 'Good'
+                    : tokenUsage.context_percent < 80
+                      ? 'Fair'
+                      : 'Low'}
+                </span>
+                {/* Clear context button - shows when context is Fair or Low */}
+                {tokenUsage.context_percent >= 50 && !isLoading && (
+                  <button
+                    onClick={handleClearContext}
+                    className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary hover:bg-warning/20 text-text-muted hover:text-warning transition-colors"
+                    title="Clear context to free up space (chat history will be preserved)"
+                  >
+                    Clear
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         )}
         {/* Spacer */}
         <div className="flex-1" />

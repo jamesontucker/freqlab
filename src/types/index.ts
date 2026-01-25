@@ -71,6 +71,17 @@ export interface PluginPerformance {
   per_sample_ns: number;        // Cost per sample in nanoseconds
 }
 
+// Token usage from Claude Code session logs
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  context_percent: number;      // Percentage of 200K context window used
+  message_count: number;
+}
+
 export type ChatStyle = 'minimal' | 'conversational';
 
 export type ClaudeModel = 'haiku' | 'sonnet' | 'opus';

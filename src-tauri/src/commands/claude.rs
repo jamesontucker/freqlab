@@ -448,7 +448,19 @@ When the user requests a feature:
 4. Protect against NaN/Inf: `if !sample.is_finite() {{ *sample = 0.0; }}`
 5. Briefly summarize what you added (feature terms, not code terms)
 
-The user will describe what they want. Make the changes directly to the code."#,
+**After completing a feature** (not during implementation):
+- Update the Parameters section in CLAUDE.md with any new parameters added
+- Update the Features section in CLAUDE.md with what you implemented
+- This preserves state across sessions - do it once per feature, not every turn
+
+**Maintain "User Notes" in CLAUDE.md** (like a therapist's evolving case notes):
+- **Explicit preferences**: When they say "always", "never", "I prefer" - save it
+- **Observed patterns**: Notice what they like/dislike, their comfort level with complexity, aesthetic taste, communication style
+- **Revise as you learn**: Update or correct earlier observations when you learn more. Don't just add - refine your understanding.
+  - Bad: "Prefers simple" + later "Actually likes complex" (contradictory)
+  - Good: "Prefers simple UI but enjoys complex DSP under the hood"
+- Keep notes concise and current - this is a living profile, not a log
+- These notes help you work better with this user across sessions"#,
         docs_path_str,
         NIH_PLUG_REFERENCE
     ));
@@ -481,6 +493,7 @@ pub async fn send_to_claude(
     model: Option<String>,
     custom_instructions: Option<String>,
     agent_verbosity: Option<String>,
+    previous_user_messages: Option<Vec<String>>,
     window: tauri::Window,
 ) -> Result<ClaudeResponse, String> {
     // Ensure git is initialized for this project (handles existing projects)
@@ -515,11 +528,37 @@ pub async fn send_to_claude(
     // Get verbosity style (default to balanced)
     let verbosity = agent_verbosity.as_deref().unwrap_or("balanced");
 
+    // Build the message, including previous user messages if context was cleared
+    let mut full_message = String::new();
+
+    // If this is a fresh session AND we have previous messages, prepend them as context
+    // This happens after a "clear context" - we restore conversation history
+    if is_first_message {
+        if let Some(ref prev_msgs) = previous_user_messages {
+            if !prev_msgs.is_empty() {
+                full_message.push_str("## Previous Conversation (for context)\n\n");
+                full_message.push_str("The user cleared the context to free up space. Here's what we discussed:\n\n");
+                for (i, msg) in prev_msgs.iter().enumerate() {
+                    // Truncate very long messages to save context
+                    let display_msg = if msg.len() > 500 {
+                        format!("{}...", &msg[..497])
+                    } else {
+                        msg.clone()
+                    };
+                    full_message.push_str(&format!("{}. {}\n", i + 1, display_msg));
+                }
+                full_message.push_str("\n---\n\n## Current Request\n\n");
+            }
+        }
+    }
+
+    full_message.push_str(&message);
+
     // Prepend style hint to message (reinforces on every turn, even resumed sessions)
     let styled_message = match verbosity {
-        "direct" => format!("[Response Style: Direct - minimal questions, implement immediately, 1-3 sentences max]\n\n{}", message),
-        "thorough" => format!("[Response Style: Thorough - ask clarifying questions, explore options before implementing]\n\n{}", message),
-        _ => format!("[Response Style: Balanced - ask 1-2 key questions if needed, then implement]\n\n{}", message),
+        "direct" => format!("[Response Style: Direct - minimal questions, implement immediately, 1-3 sentences max]\n\n{}", full_message),
+        "thorough" => format!("[Response Style: Thorough - ask clarifying questions, explore options before implementing]\n\n{}", full_message),
+        _ => format!("[Response Style: Balanced - ask 1-2 key questions if needed, then implement]\n\n{}", full_message),
     };
 
     // Build args - include --resume if we have an existing session
@@ -1001,6 +1040,21 @@ pub async fn test_claude_cli() -> Result<String, String> {
     } else {
         Err("Claude CLI not available".to_string())
     }
+}
+
+/// Clear the Claude session for a project (resets context but keeps chat history)
+/// This deletes the session file so the next message starts a fresh context
+#[tauri::command]
+pub async fn clear_claude_session(project_path: String) -> Result<(), String> {
+    let session_file = get_session_file(&project_path);
+
+    if session_file.exists() {
+        fs::remove_file(&session_file)
+            .map_err(|e| format!("Failed to clear session: {}", e))?;
+        eprintln!("[DEBUG] Cleared Claude session for: {}", project_path);
+    }
+
+    Ok(())
 }
 
 /// Interrupt a running Claude session for a specific project

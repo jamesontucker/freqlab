@@ -59,16 +59,26 @@ fn generate_header(
 
 ## Current Implementation
 
-<!-- Update this section as you implement features -->
+Update this section **once per completed feature** (not every turn). This is your memory across sessions.
 
 ### Parameters
-- (List parameters as you add them)
+<!-- - `param_name`: description (range) -->
 
 ### Features
-- (List implemented features)
+<!-- - Feature name: brief description -->
 
-### Architecture Notes
-- (Any important design decisions)
+### Notes
+<!-- Key decisions: filter topology, voice count, etc. -->
+
+## User Notes
+
+Your private observations about working with this user. Update as you notice patterns.
+
+### Explicit Preferences
+<!-- Rules they've stated: "always X", "never Y", "I prefer Z" -->
+
+### Observed Patterns
+<!-- Things you've noticed: their aesthetic taste, complexity comfort level, communication style, what makes them happy/frustrated -->
 
 "#
     )

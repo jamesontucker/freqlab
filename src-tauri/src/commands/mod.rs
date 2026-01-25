@@ -12,6 +12,7 @@ pub mod logging;
 pub mod files;
 pub mod share;
 pub mod preview;
+pub mod usage;
 
 /// Get an extended PATH that includes common tool installation directories.
 /// Bundled macOS apps don't inherit the user's shell PATH, so we need to

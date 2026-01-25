@@ -520,6 +520,9 @@ pub async fn delete_project(name: String) -> Result<(), String> {
         return Err(format!("Project '{}' not found", name));
     }
 
+    // Get the full path string before deletion (for Claude log cleanup)
+    let project_path_str = project_path.to_string_lossy().to_string();
+
     // Delete the project source folder
     fs::remove_dir_all(&project_path)
         .map_err(|e| format!("Failed to delete project: {}", e))?;
@@ -529,6 +532,12 @@ pub async fn delete_project(name: String) -> Result<(), String> {
     if output_folder.exists() {
         // Don't fail if output cleanup fails - project is already deleted
         let _ = fs::remove_dir_all(&output_folder);
+    }
+
+    // Clean up Claude Code's log folder for this project
+    // Don't fail if this doesn't work - project is already deleted
+    if let Err(e) = super::usage::delete_claude_logs(&project_path_str) {
+        eprintln!("[WARN] Failed to delete Claude logs: {}", e);
     }
 
     Ok(())

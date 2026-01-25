@@ -50,6 +50,7 @@ pub fn run() {
             commands::claude::send_to_claude,
             commands::claude::test_claude_cli,
             commands::claude::interrupt_claude,
+            commands::claude::clear_claude_session,
             commands::build::build_project,
             commands::build::open_output_folder,
             commands::git::revert_to_commit,
@@ -69,6 +70,12 @@ pub fn run() {
             commands::share::export_project,
             commands::share::import_project,
             commands::share::check_import_conflict,
+            // Usage tracking commands
+            commands::usage::get_session_usage,
+            commands::usage::get_project_usage,
+            commands::usage::get_project_total_usage,
+            commands::usage::list_orphaned_claude_logs,
+            commands::usage::cleanup_orphaned_claude_logs,
             // Preview/Audio commands
             commands::preview::init_audio_engine,
             commands::preview::shutdown_audio_engine,
