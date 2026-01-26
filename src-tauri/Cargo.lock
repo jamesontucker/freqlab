@@ -1436,6 +1436,7 @@ dependencies = [
  "cpal",
  "dirs 5.0.1",
  "env_logger",
+ "glob",
  "libc",
  "libloading 0.8.9",
  "log",

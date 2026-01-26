@@ -386,9 +386,18 @@ export async function getProjectPluginPath(projectName: string, version: number)
 
 /**
  * Load the plugin for the current project (auto-detect from output folder)
+ * @param projectName - Name of the project
+ * @param version - Plugin version number
+ * @param frameworkId - Framework ID (e.g., 'nih-plug', 'iplug2') for framework-specific behavior
+ * @param uiFramework - UI framework (e.g., 'webview', 'egui', 'native') for framework-specific behavior
  */
-export async function pluginLoadForProject(projectName: string, version: number): Promise<void> {
-  await invoke('plugin_load_for_project', { projectName, version });
+export async function pluginLoadForProject(
+  projectName: string,
+  version: number,
+  frameworkId?: string,
+  uiFramework?: string
+): Promise<void> {
+  await invoke('plugin_load_for_project', { projectName, version, frameworkId, uiFramework });
 }
 
 /**
@@ -444,9 +453,18 @@ export async function pluginIdle(): Promise<void> {
 /**
  * Reload the current plugin (for hot reload)
  * If projectName and version are provided, reload from that project's output folder
+ * @param projectName - Name of the project (optional)
+ * @param version - Plugin version number (optional)
+ * @param frameworkId - Framework ID for framework-specific behavior (optional)
+ * @param uiFramework - UI framework for framework-specific behavior (optional)
  */
-export async function pluginReload(projectName?: string, version?: number): Promise<void> {
-  await invoke('plugin_reload', { projectName, version });
+export async function pluginReload(
+  projectName?: string,
+  version?: number,
+  frameworkId?: string,
+  uiFramework?: string
+): Promise<void> {
+  await invoke('plugin_reload', { projectName, version, frameworkId, uiFramework });
 }
 
 /**

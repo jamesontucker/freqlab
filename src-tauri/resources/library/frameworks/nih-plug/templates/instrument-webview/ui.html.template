@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{pascal_name}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            user-select: none;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #fff;
+        }
+        .control {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+        .control label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+        }
+        .control input[type="range"] {
+            width: 200px;
+            height: 6px;
+            -webkit-appearance: none;
+            background: #333;
+            border-radius: 3px;
+            outline: none;
+        }
+        .control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #ff6b6b;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        .value-display {
+            font-size: 14px;
+            font-weight: 500;
+            color: #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <h1>{{pascal_name}}</h1>
+    <div class="control">
+        <label>Gain</label>
+        <input type="range" id="gain" min="0" max="1" step="0.001" value="0.5">
+        <span class="value-display" id="gain-value">-6.0 dB</span>
+    </div>
+
+    <script>
+        const gainSlider = document.getElementById('gain');
+        const gainValue = document.getElementById('gain-value');
+
+        function sendToPlugin(msg) {
+            window.ipc.postMessage(JSON.stringify(msg));
+        }
+
+        window.onPluginMessage = function(msg) {
+            if (msg.type === 'param_change') {
+                if (msg.param === 'gain') {
+                    gainSlider.value = msg.value;
+                    gainValue.textContent = msg.text;
+                }
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            sendToPlugin({ type: 'Init' });
+        });
+
+        gainSlider.addEventListener('input', (e) => {
+            sendToPlugin({ type: 'SetGain', value: parseFloat(e.target.value) });
+        });
+    </script>
+</body>
+</html>

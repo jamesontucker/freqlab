@@ -3,7 +3,7 @@ pub use prerequisites::cleanup_child_processes;
 pub mod projects;
 pub mod claude;
 pub mod claude_md;
-pub mod claude_skills;
+pub mod library;
 pub mod build;
 pub mod git;
 pub mod chat;
@@ -29,6 +29,7 @@ pub fn get_extended_path() -> String {
         "/opt/homebrew/bin".to_string(),          // Homebrew (Apple Silicon)
         "/usr/local/bin".to_string(),             // Homebrew (Intel) / general
         "/opt/local/bin".to_string(),             // MacPorts
+        "/Applications/CMake.app/Contents/bin".to_string(), // CMake.app (official installer)
         "/usr/bin".to_string(),                   // System binaries
         "/bin".to_string(),                       // Core binaries
     ];

@@ -88,7 +88,12 @@ export function PluginViewerToggle() {
         }
 
         const folderName = getFolderName(activeProject.path);
-        await previewApi.pluginLoadForProject(folderName, currentPluginVersion);
+        await previewApi.pluginLoadForProject(
+          folderName,
+          currentPluginVersion,
+          activeProject.frameworkId,
+          activeProject.uiFramework
+        );
         await previewApi.setPluginIsInstrument(activeProject.template === 'instrument');
 
         // Get the actual plugin state after loading and update store

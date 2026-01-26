@@ -33,6 +33,12 @@ interface StoredAttachment {
   size: number;
 }
 
+interface EnsuredLibraryItem {
+  id: string;
+  name: string;
+  was_copied: boolean;
+}
+
 interface ClaudeStreamEvent {
   type: 'start' | 'text' | 'error' | 'done';
   project_path: string;
@@ -524,11 +530,15 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     // Use ref for current messages (avoids stale closure issues)
     const currentMessages = messagesRef.current;
 
-    // Store attachments if any
+    // Separate library items from file attachments
+    const libraryItems = attachments?.filter(a => a.libraryType && a.libraryItemId) || [];
+    const fileAttachments = attachments?.filter(a => !a.libraryType && a.sourcePath) || [];
+
+    // Store file attachments
     let storedAttachments: FileAttachment[] | undefined;
-    if (attachments && attachments.length > 0) {
+    if (fileAttachments.length > 0) {
       try {
-        const attachmentInputs: AttachmentInput[] = attachments.map((a) => ({
+        const attachmentInputs: AttachmentInput[] = fileAttachments.map((a) => ({
           originalName: a.originalName,
           sourcePath: a.sourcePath,
           mimeType: a.mimeType,
@@ -548,10 +558,50 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       } catch (err) {
         console.error('Failed to store attachments:', err);
         // Notify user but continue without attachments
-        addLine(`[Warning] Could not store ${attachments.length} attachment(s): ${err}`);
-        addLine('Message will be sent without attachments.');
+        addLine(`[Warning] Could not store ${fileAttachments.length} attachment(s): ${err}`);
+        addLine('Message will be sent without file attachments.');
       }
     }
+
+    // Ensure library items are copied to project's .claude/commands/ directory
+    // This uses reference-based attachment - Claude reads the skill via slash command
+    const ensuredLibraryItems: EnsuredLibraryItem[] = [];
+    for (const item of libraryItems) {
+      // Validate required fields (filter ensures these exist, but be defensive)
+      if (!item.libraryType || !item.libraryItemId) {
+        console.error('Library item missing required fields:', item);
+        addLine(`[Warning] Skipping invalid library attachment: ${item.originalName}`);
+        continue;
+      }
+
+      try {
+        const ensured = await invoke<EnsuredLibraryItem>('ensure_library_item_in_project', {
+          projectPath: project.path,
+          itemType: item.libraryType,
+          itemId: item.libraryItemId,
+        });
+        ensuredLibraryItems.push(ensured);
+        if (ensured.was_copied) {
+          addLine(`[Copied ${item.libraryType}: ${ensured.name} to project]`);
+        }
+      } catch (err) {
+        console.error(`Failed to ensure library item ${item.libraryItemId}:`, err);
+        addLine(`[Warning] Could not attach ${item.originalName}: ${err}`);
+      }
+    }
+
+    // Create display attachments for library items (stored in chat history for display)
+    const libraryAttachments: FileAttachment[] = ensuredLibraryItems.map((item) => ({
+      id: crypto.randomUUID(),
+      originalName: `${item.name}.md`,
+      path: `library://skill/${item.id}`, // Pseudo-path for display (skill or algorithm)
+      mimeType: 'text/markdown',
+      size: 0,
+    }));
+
+    // Combine all attachments for display in chat history
+    const allDisplayAttachments = [...(storedAttachments || []), ...libraryAttachments];
+    const finalAttachments = allDisplayAttachments.length > 0 ? allDisplayAttachments : undefined;
 
     // Add user message
     const userMessage: ChatMessageType = {
@@ -560,7 +610,7 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       content,
       timestamp: new Date().toISOString(),
       reverted: false,
-      attachments: storedAttachments,
+      attachments: finalAttachments,
     };
     const messagesWithUser = [...currentMessages, userMessage];
     setMessages(messagesWithUser);
@@ -584,8 +634,8 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
     // Show appropriate message based on content
     if (content) {
       addLine(`> Processing: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`);
-    } else if (storedAttachments && storedAttachments.length > 0) {
-      addLine(`> Processing ${storedAttachments.length} attachment(s)...`);
+    } else if (finalAttachments && finalAttachments.length > 0) {
+      addLine(`> Processing ${finalAttachments.length} attachment(s)...`);
     }
     addLine('');
 
@@ -615,13 +665,28 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
       }
     });
 
-    // Build message with file context for Claude
+    // Build message with context for Claude
     let messageForClaude = content;
+    const contextParts: string[] = [];
+
+    // Add file attachment references (Claude will read from paths)
     if (storedAttachments && storedAttachments.length > 0) {
       const fileContext = storedAttachments
         .map((a) => `[Attached file: ${a.originalName} at ${a.path}]`)
         .join('\n');
-      messageForClaude = `${fileContext}\n\n${content}`;
+      contextParts.push(fileContext);
+    }
+
+    // Add library item references (skills/algorithms copied to .claude/commands/)
+    // Claude reads the content on-demand via slash command - lean context usage
+    if (ensuredLibraryItems.length > 0) {
+      const skillRefs = ensuredLibraryItems.map((item) => `/${item.id}`).join(', ');
+      contextParts.push(`Reference these skills for this task: ${skillRefs}`);
+    }
+
+    // Prepend context to message
+    if (contextParts.length > 0) {
+      messageForClaude = `${contextParts.join('\n\n')}\n\n${content}`;
     }
 
     // Collect previous user messages if context was cleared
@@ -880,7 +945,13 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
           <>
             <span className="text-[10px] text-text-muted">UI Type:</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-bg-tertiary text-text-secondary font-medium">
-              {project.uiFramework === 'webview' ? 'WebView' : project.uiFramework === 'egui' ? 'egui' : 'Native'}
+              {{
+                webview: 'WebView',
+                egui: 'egui',
+                native: 'Native',
+                igraphics: 'IGraphics',
+                juce: 'JUCE UI',
+              }[project.uiFramework] || project.uiFramework}
             </span>
           </>
         )}
@@ -999,19 +1070,38 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
                         {/* Show attachments if any */}
                         {message.attachments && message.attachments.length > 0 && (
                           <div className="mt-2.5 bg-white/10 rounded-lg px-2.5 py-2">
-                            {message.attachments.map((attachment, idx) => (
-                              <div
-                                key={attachment.id}
-                                className={`flex items-center gap-2 ${idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/10' : ''}`}
-                              >
-                                <div className="w-6 h-6 rounded bg-white/10 flex items-center justify-center flex-shrink-0">
-                                  <svg className="w-3.5 h-3.5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                                  </svg>
+                            {message.attachments.map((attachment, idx) => {
+                              const isLibraryItem = attachment.path.startsWith('library://');
+                              const isSkill = attachment.path.startsWith('library://skill');
+                              return (
+                                <div
+                                  key={attachment.id}
+                                  className={`flex items-center gap-2 ${idx > 0 ? 'mt-1.5 pt-1.5 border-t border-white/10' : ''}`}
+                                >
+                                  <div className="w-6 h-6 rounded bg-white/10 flex items-center justify-center flex-shrink-0">
+                                    {isLibraryItem ? (
+                                      isSkill ? (
+                                        // Skill icon (lightbulb)
+                                        <svg className="w-3.5 h-3.5 text-yellow-300/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+                                        </svg>
+                                      ) : (
+                                        // Algorithm icon (code brackets)
+                                        <svg className="w-3.5 h-3.5 text-blue-300/80" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+                                        </svg>
+                                      )
+                                    ) : (
+                                      // File attachment icon
+                                      <svg className="w-3.5 h-3.5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-white/80 truncate">{attachment.originalName}</span>
                                 </div>
-                                <span className="text-xs text-white/80 truncate">{attachment.originalName}</span>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                         <div className="text-[10px] text-white/60 text-right mt-1">

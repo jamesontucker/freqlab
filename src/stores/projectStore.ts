@@ -59,8 +59,19 @@ export const useProjectStore = create<ProjectState>()(
         }
       },
 
-      selectProject: (project) => {
+      selectProject: async (project) => {
         set({ activeProject: project });
+
+        // Refresh the glossary when switching to a project
+        // This ensures user-added library content is available
+        if (project) {
+          try {
+            await invoke('refresh_project_glossary', { projectPath: project.path });
+          } catch (err) {
+            // Log but don't fail - glossary refresh is non-critical
+            console.warn('Failed to refresh glossary:', err);
+          }
+        }
       },
 
       deleteProject: async (folderName: string, projectPath: string) => {

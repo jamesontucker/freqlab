@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{pascal_name}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 100%);
+            color: white;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            overflow: hidden;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #ffffff;
+        }
+
+        .control {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .knob-container {
+            position: relative;
+            width: 120px;
+            height: 120px;
+        }
+
+        .knob {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #2b2b3d, #1a1a2e);
+            box-shadow:
+                0 8px 16px rgba(0, 0, 0, 0.4),
+                inset 0 1px 1px rgba(255, 255, 255, 0.1);
+            position: relative;
+            cursor: pointer;
+        }
+
+        .knob::before {
+            content: '';
+            position: absolute;
+            top: 10%;
+            left: 50%;
+            width: 4px;
+            height: 30%;
+            background: #6c9ced;
+            border-radius: 2px;
+            transform: translateX(-50%);
+            transform-origin: center 200%;
+        }
+
+        .knob-track {
+            position: absolute;
+            top: -4px;
+            left: -4px;
+            right: -4px;
+            bottom: -4px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-top-color: #4a4a5a;
+            border-right-color: #4a4a5a;
+            border-bottom-color: #4a4a5a;
+            transform: rotate(-135deg);
+        }
+
+        .knob-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            font-weight: 600;
+            color: #ffffff;
+            pointer-events: none;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #a0a0b0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <h1>{{pascal_name}}</h1>
+
+    <div class="control">
+        <label>Gain</label>
+        <div class="knob-container">
+            <div class="knob-track"></div>
+            <div class="knob" id="gainKnob" data-param="gain" data-min="-30" data-max="30" data-value="0">
+                <div class="knob-value" id="gainValue">0 dB</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Knob interaction state
+        let activeKnob = null;
+        let startY = 0;
+        let startValue = 0;
+
+        // Initialize knobs
+        document.querySelectorAll('.knob').forEach(knob => {
+            updateKnobVisual(knob);
+
+            knob.addEventListener('mousedown', e => {
+                activeKnob = knob;
+                startY = e.clientY;
+                startValue = parseFloat(knob.dataset.value);
+                document.body.style.cursor = 'ns-resize';
+                e.preventDefault();
+            });
+        });
+
+        document.addEventListener('mousemove', e => {
+            if (!activeKnob) return;
+
+            const min = parseFloat(activeKnob.dataset.min);
+            const max = parseFloat(activeKnob.dataset.max);
+            const range = max - min;
+
+            // 200px drag = full range
+            const delta = (startY - e.clientY) / 200 * range;
+            let newValue = Math.max(min, Math.min(max, startValue + delta));
+
+            // Snap to 0.1 increments
+            newValue = Math.round(newValue * 10) / 10;
+
+            activeKnob.dataset.value = newValue;
+            updateKnobVisual(activeKnob);
+
+            // Send to JUCE
+            const paramId = activeKnob.dataset.param;
+            if (window.__JUCE__ && window.__JUCE__.backend) {
+                window.__JUCE__.backend.setParameter(paramId, newValue);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            activeKnob = null;
+            document.body.style.cursor = 'default';
+        });
+
+        function updateKnobVisual(knob) {
+            const min = parseFloat(knob.dataset.min);
+            const max = parseFloat(knob.dataset.max);
+            const value = parseFloat(knob.dataset.value);
+
+            // Rotate from -135deg to 135deg (270deg range)
+            const normalized = (value - min) / (max - min);
+            const angle = -135 + normalized * 270;
+
+            knob.style.setProperty('--rotation', angle + 'deg');
+            knob.querySelector('::before')?.style.setProperty('transform', `translateX(-50%) rotate(${angle}deg)`);
+
+            // Update display
+            const valueDisplay = knob.querySelector('.knob-value');
+            if (valueDisplay) {
+                const displayValue = value >= 0 ? '+' + value.toFixed(1) : value.toFixed(1);
+                valueDisplay.textContent = displayValue + ' dB';
+            }
+
+            // Update knob pointer rotation
+            const pointer = knob.querySelector('::before');
+            if (pointer) {
+                pointer.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+            }
+
+            // Apply rotation via CSS variable
+            knob.style.transform = `rotate(${angle}deg)`;
+        }
+
+        // Receive parameter updates from JUCE
+        window.onParamChange = function(paramId, value) {
+            const knob = document.querySelector(`[data-param="${paramId}"]`);
+            if (knob) {
+                knob.dataset.value = value;
+                updateKnobVisual(knob);
+            }
+        };
+
+        // Request initial values on load
+        window.addEventListener('load', () => {
+            if (window.__JUCE__ && window.__JUCE__.backend) {
+                window.__JUCE__.backend.requestInit();
+            }
+        });
+    </script>
+</body>
+</html>

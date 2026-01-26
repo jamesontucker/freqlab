@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{pascal_name}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            overflow: hidden;
+        }
+
+        .plugin-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #ffffff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .knob-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .knob {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #2a2a4a, #1a1a2e);
+            box-shadow:
+                8px 8px 16px rgba(0, 0, 0, 0.4),
+                -4px -4px 12px rgba(255, 255, 255, 0.05),
+                inset 0 0 20px rgba(0, 0, 0, 0.3);
+            position: relative;
+            cursor: pointer;
+        }
+
+        .knob::before {
+            content: '';
+            position: absolute;
+            width: 4px;
+            height: 30px;
+            background: linear-gradient(to bottom, #6c63ff, #4a42d4);
+            border-radius: 2px;
+            top: 10px;
+            left: 50%;
+            transform-origin: bottom center;
+            transform: translateX(-50%) rotate(var(--rotation, 0deg));
+            box-shadow: 0 0 10px rgba(108, 99, 255, 0.5);
+        }
+
+        .knob-label {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .knob-value {
+            margin-top: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #6c63ff;
+        }
+
+        .meter-container {
+            display: flex;
+            gap: 8px;
+            margin-top: 20px;
+        }
+
+        .meter {
+            width: 20px;
+            height: 80px;
+            background: #1a1a2e;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .meter-fill {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            background: linear-gradient(to top, #4ade80, #fbbf24, #ef4444);
+            transition: height 0.05s ease-out;
+        }
+
+        .meter-label {
+            font-size: 10px;
+            color: #666;
+            text-align: center;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="plugin-title">{{pascal_name}}</div>
+
+    <div class="controls">
+        <div class="knob-container">
+            <div class="knob" id="gainKnob" data-param="0"></div>
+            <div class="knob-label">Gain</div>
+            <div class="knob-value" id="gainValue">0.0 dB</div>
+        </div>
+
+        <div class="meter-container">
+            <div>
+                <div class="meter">
+                    <div class="meter-fill" id="meterL" style="height: 0%"></div>
+                </div>
+                <div class="meter-label">L</div>
+            </div>
+            <div>
+                <div class="meter">
+                    <div class="meter-fill" id="meterR" style="height: 0%"></div>
+                </div>
+                <div class="meter-label">R</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // iPlug2 WebView Bridge Functions
+        // ============================================================
+        // These functions are injected by iPlug2's WebView system.
+        // IPlugSendMsg() is available when running inside iPlug2.
+        // The functions below are defined by script.js in iPlug2 examples.
+
+        // Send message to plugin (JSON-based protocol)
+        function IPlugSendMsg(message) {
+            if (typeof webkit !== 'undefined' && webkit.messageHandlers && webkit.messageHandlers.callback) {
+                webkit.messageHandlers.callback.postMessage(message);
+            } else {
+                console.log('IPlugSendMsg (stub):', message);
+            }
+        }
+
+        // Set Parameter Value From UI
+        function SPVFUI(paramIdx, value) {
+            IPlugSendMsg({ msg: "SPVFUI", paramIdx: parseInt(paramIdx), value: value });
+        }
+
+        // Begin Parameter Change From UI (for automation recording)
+        function BPCFUI(paramIdx) {
+            IPlugSendMsg({ msg: "BPCFUI", paramIdx: parseInt(paramIdx) });
+        }
+
+        // End Parameter Change From UI (for automation recording)
+        function EPCFUI(paramIdx) {
+            IPlugSendMsg({ msg: "EPCFUI", paramIdx: parseInt(paramIdx) });
+        }
+
+        // Send Arbitrary Message From UI (for custom messages)
+        function SAMFUI(msgTag, ctrlTag = -1, data = 0) {
+            IPlugSendMsg({ msg: "SAMFUI", msgTag: msgTag, ctrlTag: ctrlTag, data: data });
+        }
+
+        // Send MIDI Message From UI
+        function SMMFUI(statusByte, dataByte1, dataByte2) {
+            IPlugSendMsg({ msg: "SMMFUI", statusByte: statusByte, dataByte1: dataByte1, dataByte2: dataByte2 });
+        }
+
+        // ============================================================
+        // Callbacks from Plugin (C++ → JavaScript)
+        // ============================================================
+        // These are called by iPlug2 when parameters change from the host.
+
+        // Set Parameter Value From Delegate
+        function SPVFD(paramIdx, val) {
+            console.log("SPVFD: paramIdx=" + paramIdx + " value=" + val);
+            OnParamChange(paramIdx, val);
+        }
+
+        // Set Control Value From Delegate
+        function SCVFD(ctrlTag, val) {
+            console.log("SCVFD: ctrlTag=" + ctrlTag + " value=" + val);
+        }
+
+        // Send Arbitrary Message From Delegate
+        function SAMFD(msgTag, dataSize, msg) {
+            console.log("SAMFD: msgTag=" + msgTag + " dataSize=" + dataSize);
+            OnMessage(msgTag, dataSize, msg);
+        }
+
+        // Send MIDI Message From Delegate
+        function SMMFD(statusByte, dataByte1, dataByte2) {
+            console.log("SMMFD: " + statusByte + ":" + dataByte1 + ":" + dataByte2);
+        }
+
+        // ============================================================
+        // UI Logic
+        // ============================================================
+
+        // Parameter info (min, max, default for display formatting)
+        const paramInfo = {
+            0: { name: 'Gain', min: -70, max: 12, unit: 'dB' }
+        };
+
+        // Handle parameter changes from plugin
+        function OnParamChange(paramIdx, normalizedValue) {
+            const knob = knobs[paramIdx];
+            if (knob) {
+                knob.setValue(normalizedValue);
+            }
+        }
+
+        // Handle arbitrary messages from plugin
+        function OnMessage(msgTag, dataSize, msg) {
+            // Handle custom messages here
+        }
+
+        // Knob interaction
+        class KnobController {
+            constructor(element, paramIdx) {
+                this.element = element;
+                this.paramIdx = paramIdx;
+                this.value = 0.5; // Normalized 0-1
+                this.dragging = false;
+                this.startY = 0;
+                this.startValue = 0;
+
+                element.addEventListener('mousedown', this.onMouseDown.bind(this));
+                document.addEventListener('mousemove', this.onMouseMove.bind(this));
+                document.addEventListener('mouseup', this.onMouseUp.bind(this));
+
+                this.updateVisual();
+            }
+
+            onMouseDown(e) {
+                this.dragging = true;
+                this.startY = e.clientY;
+                this.startValue = this.value;
+                e.preventDefault();
+
+                // Notify host that parameter editing has begun
+                BPCFUI(this.paramIdx);
+            }
+
+            onMouseMove(e) {
+                if (!this.dragging) return;
+
+                const deltaY = this.startY - e.clientY;
+                const sensitivity = 0.005;
+                let newValue = this.startValue + deltaY * sensitivity;
+                newValue = Math.max(0, Math.min(1, newValue));
+
+                if (newValue !== this.value) {
+                    this.value = newValue;
+                    this.updateVisual();
+                    SPVFUI(this.paramIdx, this.value);
+                }
+            }
+
+            onMouseUp() {
+                if (this.dragging) {
+                    this.dragging = false;
+                    // Notify host that parameter editing has ended
+                    EPCFUI(this.paramIdx);
+                }
+            }
+
+            setValue(normalized) {
+                this.value = normalized;
+                this.updateVisual();
+            }
+
+            updateVisual() {
+                // Convert 0-1 to rotation (-135 to 135 degrees)
+                const rotation = (this.value - 0.5) * 270;
+                this.element.style.setProperty('--rotation', `${rotation}deg`);
+
+                // Update value display
+                const info = paramInfo[this.paramIdx];
+                if (info) {
+                    const displayValue = info.min + this.value * (info.max - info.min);
+                    const valueEl = document.getElementById(this.element.id.replace('Knob', 'Value'));
+                    if (valueEl) {
+                        valueEl.textContent = displayValue.toFixed(1) + ' ' + info.unit;
+                    }
+                }
+            }
+        }
+
+        // Initialize knobs
+        const knobs = {};
+        document.querySelectorAll('.knob').forEach(el => {
+            const paramIdx = parseInt(el.dataset.param);
+            knobs[paramIdx] = new KnobController(el, paramIdx);
+        });
+    </script>
+</body>
+</html>

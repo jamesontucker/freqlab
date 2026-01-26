@@ -19,6 +19,30 @@ use std::sync::{Arc, Mutex};
 /// The event loop should check this and call on_main_thread() if set
 static CALLBACK_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// Counter for tracking how many plugins have been loaded in this session
+/// Each load with iPlug2 WebView registers NEW Objective-C classes that are never unloaded
+/// After N loads, the accumulated classes may cause issues
+static PLUGIN_LOAD_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Options for loading a plugin
+/// These control behavior that differs between frameworks (e.g., nih-plug vs iPlug2)
+#[derive(Debug, Clone, Default)]
+pub struct PluginLoadOptions {
+    /// If true, don't call dlclose() on drop - keeps code in memory for async callbacks
+    /// Required for iPlug2 WebView plugins which have async Objective-C callbacks
+    pub should_leak_library: bool,
+
+    /// If true, use a fixed temp path (overwrite each time) instead of unique paths
+    /// Required for iPlug2 due to NSBundle caching issues
+    pub use_fixed_temp_path: bool,
+
+    /// Framework identifier for logging purposes
+    pub framework_id: Option<String>,
+
+    /// UI framework for logging purposes
+    pub ui_framework: Option<String>,
+}
+
 /// Check if a callback was requested and clear the flag
 pub fn take_callback_request() -> bool {
     CALLBACK_REQUESTED.swap(false, Ordering::SeqCst)
@@ -98,6 +122,10 @@ pub struct PluginInstance {
     // Safety
     /// Set to true if the plugin panics during process - we'll output silence instead of crashing
     crashed: bool,
+
+    // Load options (affects unload behavior)
+    /// Options that control framework-specific behavior
+    load_options: PluginLoadOptions,
 }
 
 // Host callback structure (renamed to avoid conflict with ClapHost struct)
@@ -152,25 +180,59 @@ pub fn cleanup_temp_bundles() {
 }
 
 impl PluginInstance {
-    /// Load a CLAP plugin from a .clap bundle path
+    /// Load a CLAP plugin from a .clap bundle path with default options
     pub fn load(bundle_path: &Path, sample_rate: f64, max_frames: u32) -> Result<Self, String> {
+        Self::load_with_options(bundle_path, sample_rate, max_frames, PluginLoadOptions::default())
+    }
+
+    /// Load a CLAP plugin from a .clap bundle path with specific options
+    pub fn load_with_options(
+        bundle_path: &Path,
+        sample_rate: f64,
+        max_frames: u32,
+        options: PluginLoadOptions,
+    ) -> Result<Self, String> {
+        // Increment and get load count
+        let load_num = PLUGIN_LOAD_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+
+        log::info!("╔══════════════════════════════════════════════════════════════╗");
+        log::info!("║              PLUGIN LOAD #{:<5}                              ║", load_num);
+        log::info!("╚══════════════════════════════════════════════════════════════╝");
         log::info!("Loading CLAP plugin from: {:?}", bundle_path);
+        log::info!("Sample rate: {}, max_frames: {}", sample_rate, max_frames);
+        log::info!(
+            "Options: framework={:?}, ui={:?}, leak_lib={}, fixed_temp={}",
+            options.framework_id,
+            options.ui_framework,
+            options.should_leak_library,
+            options.use_fixed_temp_path
+        );
+        if load_num > 1 && options.should_leak_library {
+            log::warn!("⚠️  This is hot reload #{} - previous library was leaked (iPlug2 Obj-C mode)",
+                load_num);
+        }
 
         // Copy the bundle to a temp location to avoid macOS dylib caching
         // This ensures hot reload always loads the fresh version
-        let (actual_bundle_path, temp_bundle_path) = Self::copy_to_temp(bundle_path)?;
-        log::info!("Using bundle path: {:?}", actual_bundle_path);
+        log::info!("Step 1/10: Copying bundle to temp location...");
+        let (actual_bundle_path, temp_bundle_path) = Self::copy_to_temp(bundle_path, &options)?;
+        log::info!("Step 1/10: DONE - Using bundle path: {:?}", actual_bundle_path);
 
         // Resolve the dylib path inside the bundle
+        log::info!("Step 2/10: Resolving dylib path...");
         let dylib_path = Self::resolve_dylib_path(&actual_bundle_path)?;
-        log::info!("Resolved dylib path: {:?}", dylib_path);
+        log::info!("Step 2/10: DONE - Dylib path: {:?}", dylib_path);
 
-        // Load the library
+        // Load the library - THIS IS WHERE Objective-C CLASSES GET REGISTERED
+        log::info!("Step 3/10: Loading dynamic library (dlopen)...");
+        log::info!("           NOTE: This registers Objective-C classes that are NEVER unloaded!");
         let library = unsafe {
             Library::new(&dylib_path).map_err(|e| format!("Failed to load library: {}", e))?
         };
+        log::info!("Step 3/10: DONE - Library loaded successfully");
 
         // Get the clap_entry symbol
+        log::info!("Step 4/10: Getting clap_entry symbol...");
         let entry: *const ClapPluginEntry = unsafe {
             let symbol: Symbol<*const ClapPluginEntry> = library
                 .get(b"clap_entry\0")
@@ -181,6 +243,7 @@ impl PluginInstance {
         if entry.is_null() {
             return Err("clap_entry is null".to_string());
         }
+        log::info!("Step 4/10: DONE - clap_entry at {:p}", entry);
 
         // Check CLAP version compatibility
         let entry_ref = unsafe { &*entry };
@@ -192,6 +255,7 @@ impl PluginInstance {
         );
 
         // Initialize the plugin entry
+        log::info!("Step 5/10: Calling plugin entry init()...");
         let plugin_path_cstr = CString::new(bundle_path.to_string_lossy().as_bytes())
             .map_err(|e| format!("Invalid plugin path: {}", e))?;
 
@@ -200,8 +264,10 @@ impl PluginInstance {
         if !init_result {
             return Err("Plugin init() returned false".to_string());
         }
+        log::info!("Step 5/10: DONE - Plugin entry initialized");
 
         // Get the plugin factory
+        log::info!("Step 6/10: Getting plugin factory...");
         let get_factory_fn = entry_ref
             .get_factory
             .ok_or("Plugin has no get_factory function")?;
@@ -215,6 +281,7 @@ impl PluginInstance {
             }
             return Err("Failed to get plugin factory".to_string());
         }
+        log::info!("Step 6/10: DONE - Factory at {:p}", factory);
 
         let factory_ref = unsafe { &*factory };
 
@@ -295,6 +362,7 @@ impl PluginInstance {
         );
 
         // Create host callbacks structure
+        log::info!("Step 7/10: Creating host callbacks structure...");
         let host_name = CString::new(HOST_NAME).unwrap();
         let host_vendor = CString::new(HOST_VENDOR).unwrap();
         let host_url = CString::new(HOST_URL).unwrap();
@@ -312,8 +380,10 @@ impl PluginInstance {
             request_process: Some(host_request_process),
             request_callback: Some(host_request_callback),
         });
+        log::info!("Step 7/10: DONE - Host callbacks created");
 
         // Create the plugin instance
+        log::info!("Step 8/10: Creating plugin instance via factory...");
         let create_plugin_fn = factory_ref
             .create_plugin
             .ok_or("Factory has no create_plugin")?;
@@ -334,10 +404,12 @@ impl PluginInstance {
             }
             return Err("Failed to create plugin instance".to_string());
         }
+        log::info!("Step 8/10: DONE - Plugin instance created at {:p}", plugin);
 
         let plugin_ref = unsafe { &*plugin };
 
         // Initialize the plugin
+        log::info!("Step 9/10: Calling plugin->init()...");
         let init_plugin_fn = plugin_ref.init.ok_or("Plugin has no init function")?;
         let init_result = unsafe { init_plugin_fn(plugin) };
         if !init_result {
@@ -349,6 +421,7 @@ impl PluginInstance {
             }
             return Err("Plugin init() failed".to_string());
         }
+        log::info!("Step 9/10: DONE - Plugin initialized");
 
         // Pre-allocate audio buffers (stereo)
         let channels = 2usize;
@@ -394,26 +467,32 @@ impl PluginInstance {
             // Pre-allocate buffer for 256 events (covers typical usage without reallocation)
             midi_drain_buffer: Vec::with_capacity(256),
             crashed: false,
+            load_options: options,
         };
 
         // Activate the plugin
+        log::info!("Step 10/10: Activating plugin for audio processing...");
         host_instance.activate(sample_rate, max_frames)?;
+        log::info!("Step 10/10: DONE - Plugin activated");
 
-        log::info!("Plugin loaded and activated successfully");
+        log::info!("╔══════════════════════════════════════════════════════════════╗");
+        log::info!("║              PLUGIN LOAD COMPLETE                            ║");
+        log::info!("╚══════════════════════════════════════════════════════════════╝");
 
         Ok(host_instance)
     }
 
-    /// Copy the .clap bundle to a temp location with a unique suffix
-    /// This bypasses macOS's dylib caching which can cause hot reload to show old versions
-    fn copy_to_temp(bundle_path: &Path) -> Result<(PathBuf, Option<PathBuf>), String> {
+    /// Copy the .clap bundle to a temp location
+    ///
+    /// Two strategies based on options:
+    ///
+    /// **Fixed path (iPlug2)**: Uses a fixed temp path per plugin so NSBundle's cache
+    /// always points to a valid path. Required for iPlug2 due to NSBundle caching issues.
+    ///
+    /// **Unique path (nih-plug)**: Uses timestamp-based unique paths. Works fine for
+    /// nih-plug plugins and allows proper cleanup on drop.
+    fn copy_to_temp(bundle_path: &Path, options: &PluginLoadOptions) -> Result<(PathBuf, Option<PathBuf>), String> {
         use std::time::{SystemTime, UNIX_EPOCH};
-
-        // Generate a unique suffix using timestamp
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
 
         let bundle_name = bundle_path
             .file_stem()
@@ -425,21 +504,51 @@ impl PluginInstance {
         std::fs::create_dir_all(&temp_dir)
             .map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-        // Clean up old temp bundles for this plugin (keep only the most recent)
-        if let Ok(entries) = std::fs::read_dir(&temp_dir) {
-            let prefix = format!("{}_", bundle_name);
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(&prefix) && name.ends_with(".clap") {
-                    log::info!("Cleaning up old temp bundle: {:?}", entry.path());
-                    let _ = std::fs::remove_dir_all(entry.path());
+        let (temp_bundle_path, should_delete_on_drop) = if options.use_fixed_temp_path {
+            // iPlug2 mode: Use a FIXED temp path for this plugin (not unique per load)
+            // This ensures NSBundle's cache always points to a valid path
+            // Using unique paths causes blank windows due to NSBundle caching the old path
+            log::info!("Using FIXED temp path strategy (iPlug2 mode)");
+            let temp_bundle_name = format!("{}_freqlab.clap", bundle_name);
+            let path = temp_dir.join(&temp_bundle_name);
+
+            // Delete the old temp bundle completely before copying
+            // This ensures we get a fresh dylib (new inode) that macOS won't cache
+            if path.exists() {
+                log::info!("Removing old temp bundle: {:?}", path);
+                std::fs::remove_dir_all(&path)
+                    .map_err(|e| format!("Failed to remove old temp bundle: {}", e))?;
+            }
+
+            // Don't delete on drop - bundle should persist for NSBundle's cache
+            (path, false)
+        } else {
+            // nih-plug mode: Use unique temp path with timestamp
+            // Clean up old temp bundles for this plugin (keep only the most recent)
+            log::info!("Using UNIQUE temp path strategy (nih-plug mode)");
+            if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+                let prefix = format!("{}_", bundle_name);
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&prefix) && name.ends_with(".clap") {
+                        log::info!("Cleaning up old temp bundle: {:?}", entry.path());
+                        let _ = std::fs::remove_dir_all(entry.path());
+                    }
                 }
             }
-        }
 
-        // Create unique temp bundle name
-        let temp_bundle_name = format!("{}_{}.clap", bundle_name, timestamp);
-        let temp_bundle_path = temp_dir.join(&temp_bundle_name);
+            // Generate a unique suffix using timestamp
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+
+            let temp_bundle_name = format!("{}_{}.clap", bundle_name, timestamp);
+            let path = temp_dir.join(&temp_bundle_name);
+
+            // Delete on drop - unique paths can be cleaned up safely
+            (path, true)
+        };
 
         log::info!(
             "Copying plugin bundle to temp: {:?} -> {:?}",
@@ -450,7 +559,15 @@ impl PluginInstance {
         // Copy the entire bundle directory
         Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
 
-        Ok((temp_bundle_path.clone(), Some(temp_bundle_path)))
+        log::info!("Using bundle path: {:?}", temp_bundle_path);
+
+        // Return temp path for deletion on drop if using unique paths
+        let delete_path = if should_delete_on_drop {
+            Some(temp_bundle_path.clone())
+        } else {
+            None
+        };
+        Ok((temp_bundle_path, delete_path))
     }
 
     /// Recursively copy a directory
@@ -1131,6 +1248,11 @@ impl PluginInstance {
         // Note: Position saving is handled by AudioEngineHandle to survive plugin reload
         self.close_editor_window();
 
+        // Give the main thread run loop time to process WKWebView cleanup callbacks
+        // This sleep is on the async thread, so the main thread can process events
+        log::info!("close_editor: Waiting for WebView cleanup callbacks...");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
         self.editor_open = false;
         log::info!("close_editor: Editor closed");
     }
@@ -1191,13 +1313,16 @@ impl PluginInstance {
     /// Close the plugin's editor window directly (in-process, for editor_host binary only)
     #[cfg(target_os = "macos")]
     pub fn close_editor_window(&mut self) {
-        log::info!("close_editor_window: Called (direct/in-process)");
+        log::info!("close_editor_window: Called, has_window={}", self.editor_window.is_some());
 
         if let Some(window) = self.editor_window.take() {
+            log::info!("close_editor_window: Destroying window {:p}", window);
             unsafe {
                 editor::destroy_editor_window(self.plugin, window);
             }
             log::info!("close_editor_window: Window destroyed");
+        } else {
+            log::info!("close_editor_window: No window to close (already closed)");
         }
     }
 
@@ -1244,18 +1369,28 @@ impl PluginInstance {
 
 impl Drop for PluginInstance {
     fn drop(&mut self) {
+        log::info!("╔══════════════════════════════════════════════════════════════╗");
+        log::info!("║              PLUGIN UNLOAD (DROP) START                      ║");
+        log::info!("╚══════════════════════════════════════════════════════════════╝");
         log::info!("Unloading plugin: {}", self.name);
 
         // Close direct editor window first (if in editor_host process)
+        log::info!("Drop Step 1/7: close_editor_window...");
         self.close_editor_window();
+        log::info!("Drop Step 1/7: DONE");
 
         // Close out-of-process editor (if in main process)
+        log::info!("Drop Step 2/7: close_editor...");
         self.close_editor();
+        log::info!("Drop Step 2/7: DONE");
 
         // Stop processing
+        log::info!("Drop Step 3/7: stop_processing...");
         self.stop_processing();
+        log::info!("Drop Step 3/7: DONE");
 
         // Deactivate
+        log::info!("Drop Step 4/7: deactivate (is_active={})...", self.is_active);
         if self.is_active {
             let plugin_ref = unsafe { &*self.plugin };
             if let Some(deactivate) = plugin_ref.deactivate {
@@ -1263,26 +1398,48 @@ impl Drop for PluginInstance {
             }
             self.is_active = false;
         }
+        log::info!("Drop Step 4/7: DONE");
 
         // Destroy plugin instance
+        log::info!("Drop Step 5/7: plugin->destroy()...");
         let plugin_ref = unsafe { &*self.plugin };
         if let Some(destroy) = plugin_ref.destroy {
             unsafe { destroy(self.plugin) };
         }
+        log::info!("Drop Step 5/7: DONE");
 
         // Deinit entry
+        log::info!("Drop Step 6/7: entry->deinit()...");
         let entry_ref = unsafe { &*self.entry };
         if let Some(deinit) = entry_ref.deinit {
             unsafe { deinit() };
         }
+        log::info!("Drop Step 6/7: DONE");
 
-        // Explicitly drop the library BEFORE deleting temp bundle
-        // This ensures the dylib is fully unloaded and file handles are released
-        if let Some(library) = self._library.take() {
-            log::info!("Dropping library handle...");
-            drop(library);
-            // Small delay to ensure OS releases file handles
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        // Handle library unloading based on framework type
+        // iPlug2 WebView/IGraphics: LEAK the library to avoid crashes from Objective-C class conflicts
+        // nih-plug: Normal dlclose() - wry/webview handles cleanup properly
+        if self.load_options.should_leak_library {
+            log::info!("Drop Step 7/7: Leaking library handle (iPlug2 Obj-C mode)...");
+            log::info!("           NOTE: Intentionally NOT calling dlclose()");
+            log::info!("           This prevents crashes from Objective-C class registration conflicts");
+            log::info!("           (WebView/WKWebView or IGraphics/NanoVG/Metal classes).");
+            if let Some(library) = self._library.take() {
+                std::mem::forget(library);
+                log::info!("Drop Step 7/7: DONE - Library leaked (not unloaded)");
+            } else {
+                log::info!("Drop Step 7/7: DONE - library was already None");
+            }
+        } else {
+            log::info!("Drop Step 7/7: Dropping library handle (normal dlclose)...");
+            if let Some(library) = self._library.take() {
+                drop(library);
+                // Small delay to ensure OS releases file handles
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                log::info!("Drop Step 7/7: DONE - Library unloaded");
+            } else {
+                log::info!("Drop Step 7/7: DONE - library was already None");
+            }
         }
 
         // Now delete the temp bundle immediately
@@ -1294,7 +1451,9 @@ impl Drop for PluginInstance {
             }
         }
 
-        log::info!("Plugin unloaded");
+        log::info!("╔══════════════════════════════════════════════════════════════╗");
+        log::info!("║              PLUGIN UNLOAD (DROP) COMPLETE                   ║");
+        log::info!("╚══════════════════════════════════════════════════════════════╝");
     }
 }
 

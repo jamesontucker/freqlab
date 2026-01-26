@@ -1,0 +1,18 @@
+[package]
+name = "{{snake_name}}"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "{{description}}"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
+egui = "0.24"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

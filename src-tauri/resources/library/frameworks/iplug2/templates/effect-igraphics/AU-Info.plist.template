@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AudioComponents</key>
+	<array>
+		<dict>
+			<key>description</key>
+			<string>{{pascal_name}}</string>
+			<key>factoryFunction</key>
+			<string>{{pascal_name}}_Factory</string>
+			<key>manufacturer</key>
+			<string>{{mfr_id}}</string>
+			<key>name</key>
+			<string>{{vendor_name}}: {{pascal_name}}</string>
+			<key>sandboxSafe</key>
+			<true/>
+			<key>subtype</key>
+			<string>{{plugin_code}}</string>
+			<key>type</key>
+			<string>aufx</string>
+			<key>version</key>
+			<integer>65536</integer>
+		</dict>
+	</array>
+	<key>AudioUnit Version</key>
+	<string>0x00010000</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>{{pascal_name}}</string>
+	<key>CFBundleGetInfoString</key>
+	<string>{{pascal_name}} v1.0.0 Copyright 2025 {{vendor_name}}</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.{{vendor_id}}.audiounit.{{pascal_name}}</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>{{pascal_name}}</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleSignature</key>
+	<string>{{plugin_code}}</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>CSResourcesFileMapped</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.13.0</string>
+	<key>NSPrincipalClass</key>
+	<string>{{pascal_name}}_View</string>
+</dict>
+</plist>

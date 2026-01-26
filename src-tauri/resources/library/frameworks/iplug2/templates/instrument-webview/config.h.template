@@ -1,0 +1,68 @@
+#pragma once
+
+// Plugin identity
+#define PLUG_NAME "{{pascal_name}}"
+#define PLUG_MFR "{{vendor_name}}"
+#define PLUG_VERSION_HEX 0x00010000
+#define PLUG_VERSION_STR "1.0.0"
+#define PLUG_UNIQUE_ID '{{plugin_code}}'
+#define PLUG_MFR_ID '{{mfr_id}}'
+#define PLUG_URL_STR "{{vendor_url}}"
+#define PLUG_EMAIL_STR "{{vendor_email}}"
+#define PLUG_COPYRIGHT_STR "Copyright 2025 {{vendor_name}}"
+#define PLUG_CLASS_NAME {{pascal_name}}
+
+// Bundle configuration
+#define BUNDLE_NAME "{{pascal_name}}"
+#define BUNDLE_MFR "{{vendor_name}}"
+#define BUNDLE_DOMAIN "com"
+
+#define SHARED_RESOURCES_SUBPATH "{{pascal_name}}"
+
+// Channel configuration (instrument: 0 inputs, stereo output)
+#define PLUG_CHANNEL_IO "0-2"
+
+// Plugin characteristics
+#define PLUG_LATENCY 0
+#define PLUG_TYPE 1
+#define PLUG_DOES_MIDI_IN 1
+#define PLUG_DOES_MIDI_OUT 0
+#define PLUG_DOES_MPE 0
+#define PLUG_DOES_STATE_CHUNKS 0
+#define PLUG_HAS_UI 1
+#define PLUG_WIDTH 600
+#define PLUG_HEIGHT 400
+#define PLUG_FPS 60
+#define PLUG_SHARED_RESOURCES 0
+#define PLUG_HOST_RESIZE 0
+
+// Audio Unit configuration
+#define AUV2_ENTRY {{pascal_name}}_Entry
+#define AUV2_ENTRY_STR "{{pascal_name}}_Entry"
+#define AUV2_FACTORY {{pascal_name}}_Factory
+#define AUV2_VIEW_CLASS {{pascal_name}}_View
+#define AUV2_VIEW_CLASS_STR "{{pascal_name}}_View"
+
+// AAX configuration (Pro Tools)
+#define AAX_TYPE_IDS '{{plugin_code}}'
+#define AAX_TYPE_IDS_AUDIOSUITE '{{plugin_code}}'
+#define AAX_PLUG_MFR_STR "{{vendor_name}}"
+#define AAX_PLUG_NAME_STR "{{pascal_name}}"
+#define AAX_PLUG_CATEGORY_STR "SWGenerators"
+#define AAX_DOES_AUDIOSUITE 0
+
+// VST3 configuration
+#define VST3_SUBCATEGORY "Instrument|Synth"
+
+// CLAP configuration
+#define CLAP_MANUAL_URL ""
+#define CLAP_SUPPORT_URL ""
+#define CLAP_DESCRIPTION "{{description}}"
+#define CLAP_FEATURES "instrument", "synthesizer", "stereo"
+
+// Standalone app configuration
+#define APP_NUM_CHANNELS 2
+#define APP_N_VECTOR_WAIT 0
+#define APP_MULT 1
+#define APP_COPY_AUV3 0
+#define APP_SIGNAL_VECTOR_SIZE 64

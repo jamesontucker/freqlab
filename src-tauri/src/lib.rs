@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod library;
 mod commands;
 
 use tauri::{Manager, RunEvent};
@@ -35,10 +36,12 @@ pub fn run() {
             commands::prerequisites::install_xcode,
             commands::prerequisites::install_rust,
             commands::prerequisites::install_claude_cli,
+            commands::prerequisites::install_cmake,
             commands::prerequisites::start_claude_auth,
             commands::prerequisites::check_permissions,
             commands::prerequisites::request_accessibility_permission,
             commands::prerequisites::prime_admin_privileges,
+            commands::prerequisites::check_framework_prerequisites,
             commands::projects::create_project,
             commands::projects::list_projects,
             commands::projects::get_project,
@@ -47,6 +50,10 @@ pub fn run() {
             commands::projects::open_project_folder,
             commands::projects::open_in_editor,
             commands::projects::get_workspace_path_string,
+            commands::library::get_library,
+            commands::library::get_frameworks,
+            commands::library::ensure_library_item_in_project,
+            commands::library::refresh_project_glossary,
             commands::claude::send_to_claude,
             commands::claude::test_claude_cli,
             commands::claude::interrupt_claude,

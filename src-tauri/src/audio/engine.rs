@@ -13,7 +13,7 @@ use super::buffer::StereoSample;
 use super::device::{get_output_device, get_supported_config, AudioConfig};
 use super::input::{get_input_handle, start_input_capture, stop_input_capture};
 use super::midi::MidiEventQueue;
-use super::plugin::{PluginInstance, PluginState};
+use super::plugin::{PluginInstance, PluginLoadOptions, PluginState};
 use super::samples::{AudioSample, SamplePlayer};
 use super::signals::{GatePattern, SignalConfig, SignalGenerator};
 use super::spectrum::{SpectrumAnalyzer, NUM_BANDS};
@@ -599,7 +599,13 @@ impl AudioEngineHandle {
 
     /// Load a CLAP plugin from a .clap bundle path
     pub fn load_plugin(&self, path: &Path) -> Result<(), String> {
+        self.load_plugin_with_options(path, PluginLoadOptions::default())
+    }
+
+    /// Load a CLAP plugin from a .clap bundle path with specific options
+    pub fn load_plugin_with_options(&self, path: &Path, options: PluginLoadOptions) -> Result<(), String> {
         log::info!("Loading plugin from: {:?}", path);
+        log::info!("Load options: {:?}", options);
 
         // Update state to loading
         *self.shared.plugin_state.write() = PluginState::Loading {
@@ -611,7 +617,7 @@ impl AudioEngineHandle {
 
         // Load new plugin with sample rate and reasonable max frames
         let max_frames = 4096u32;
-        match PluginInstance::load(path, self.sample_rate as f64, max_frames) {
+        match PluginInstance::load_with_options(path, self.sample_rate as f64, max_frames, options) {
             Ok(mut plugin) => {
                 // Start processing
                 if let Err(e) = plugin.start_processing() {

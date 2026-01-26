@@ -1,0 +1,110 @@
+#include "PluginProcessor.h"
+#include "IPlug_include_in_plug_src.h"
+#include <cmath>
+
+using namespace iplug;
+using namespace igraphics;
+
+{{pascal_name}}::{{pascal_name}}(const InstanceInfo& info)
+    : iplug::Plugin(info, MakeConfig(kNumParams, 1))  // params, presets
+{
+    // Define parameters
+    GetParam(kGain)->InitDouble("Gain", -6., -70., 12., 0.1, "dB");
+
+    // Initialize cached values
+    mGain = DBToAmp(GetParam(kGain)->Value());
+
+#if IPLUG_EDITOR
+    mMakeGraphicsFunc = [&]() { return CreateGraphics(); };
+    mLayoutFunc = [&](IGraphics* pGraphics) { LayoutUI(pGraphics); };
+#endif
+}
+
+#if IPLUG_EDITOR
+IGraphics* {{pascal_name}}::CreateGraphics() {
+    return MakeGraphics(*this, PLUG_WIDTH, PLUG_HEIGHT, PLUG_FPS, 1.0f);
+}
+
+void {{pascal_name}}::LayoutUI(IGraphics* pGraphics) {
+    pGraphics->AttachCornerResizer(EUIResizerMode::Scale, false);
+    pGraphics->AttachPanelBackground(COLOR_DARK_GRAY);
+
+    const IRECT bounds = pGraphics->GetBounds();
+
+    // Title label
+    const IText titleText(24.f, COLOR_WHITE);
+    pGraphics->AttachControl(new ITextControl(
+        bounds.GetFromTop(50.f),
+        "{{pascal_name}}",
+        titleText
+    ));
+
+    // Gain knob
+    const IRECT knobArea = bounds.GetCentredInside(100.f, 100.f);
+    pGraphics->AttachControl(new IVKnobControl(knobArea, kGain));
+
+    // Gain label
+    const IText labelText(14.f, COLOR_WHITE);
+    pGraphics->AttachControl(new ITextControl(
+        knobArea.GetFromBottom(20.f).GetVShifted(30.f),
+        "Gain",
+        labelText
+    ));
+}
+#endif
+
+void {{pascal_name}}::OnReset() {
+    mPhase = 0.0;
+}
+
+void {{pascal_name}}::OnParamChange(int paramIdx) {
+    switch (paramIdx) {
+        case kGain:
+            mGain = DBToAmp(GetParam(kGain)->Value());
+            break;
+    }
+}
+
+void {{pascal_name}}::ProcessMidiMsg(const IMidiMsg& msg) {
+    switch (msg.StatusMsg()) {
+        case IMidiMsg::kNoteOn:
+            if (msg.Velocity() > 0) {
+                mFreq = 440.0 * std::pow(2.0, (msg.NoteNumber() - 69) / 12.0);
+                mVelocity = msg.Velocity() / 127.0;
+                mNoteOn = true;
+            } else {
+                mNoteOn = false;
+            }
+            break;
+        case IMidiMsg::kNoteOff:
+            mNoteOn = false;
+            break;
+        default:
+            break;
+    }
+}
+
+void {{pascal_name}}::ProcessBlock(sample** inputs, sample** outputs, int nFrames) {
+    const int nChans = NOutChansConnected();
+    const double sampleRate = GetSampleRate();
+    const double gain = mGain;
+
+    for (int s = 0; s < nFrames; s++) {
+        double out = 0.0;
+
+        if (mNoteOn && mFreq > 0.0) {
+            // Simple sine wave oscillator
+            out = std::sin(mPhase * 2.0 * M_PI) * mVelocity * gain;
+            mPhase += mFreq / sampleRate;
+            if (mPhase >= 1.0) mPhase -= 1.0;
+        }
+
+        if (!std::isfinite(out)) {
+            out = 0.0;
+        }
+
+        for (int c = 0; c < nChans; c++) {
+            outputs[c][s] = out;
+        }
+    }
+}

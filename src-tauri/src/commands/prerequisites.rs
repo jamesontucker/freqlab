@@ -60,6 +60,7 @@ pub enum InstallEvent {
 pub struct PrerequisiteStatus {
     pub xcode_cli: CheckResult,
     pub rust: CheckResult,
+    pub cmake: CheckResult,
     pub claude_cli: CheckResult,
     pub claude_auth: CheckResult,
 }
@@ -167,6 +168,28 @@ fn check_rust() -> CheckResult {
     }
 }
 
+fn check_cmake() -> CheckResult {
+    match run_command_with_timeout("cmake", &["--version"], 5) {
+        Some(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("installed")
+                .to_string();
+            CheckResult {
+                status: CheckStatus::Installed,
+                version: Some(version),
+                message: None,
+            }
+        }
+        _ => CheckResult {
+            status: CheckStatus::NotInstalled,
+            version: None,
+            message: Some("Required for JUCE/iPlug2 frameworks".to_string()),
+        },
+    }
+}
+
 fn check_claude_cli() -> CheckResult {
     // Check if claude binary exists in PATH
     match run_command_with_timeout("which", &["claude"], 3) {
@@ -247,6 +270,7 @@ pub async fn check_prerequisites() -> PrerequisiteStatus {
         PrerequisiteStatus {
             xcode_cli: check_xcode(),
             rust: check_rust(),
+            cmake: check_cmake(),
             claude_cli: check_claude_cli(),
             claude_auth: check_claude_auth(),
         }
@@ -259,6 +283,11 @@ pub async fn check_prerequisites() -> PrerequisiteStatus {
             message: Some("Check failed".to_string()),
         },
         rust: CheckResult {
+            status: CheckStatus::NotInstalled,
+            version: None,
+            message: Some("Check failed".to_string()),
+        },
+        cmake: CheckResult {
             status: CheckStatus::NotInstalled,
             version: None,
             message: Some("Check failed".to_string()),
@@ -1544,4 +1573,313 @@ pub async fn prime_admin_privileges(window: tauri::Window) -> Result<bool, Strin
         let _ = window.emit("install-stream", InstallEvent::Done { success: false });
         Ok(false)
     }
+}
+
+/// Install CMake - tries Homebrew first, falls back to direct download
+#[tauri::command]
+pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Start {
+            step: "cmake".to_string(),
+        },
+    );
+
+    // Check if already installed
+    if let Some(output) = run_command_with_timeout("cmake", &["--version"], 5) {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("installed")
+                .to_string();
+            let _ = window.emit(
+                "install-stream",
+                InstallEvent::Output {
+                    line: format!("CMake is already installed: {}", version),
+                },
+            );
+            let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+            return Ok(true);
+        }
+    }
+
+    // Check if Homebrew is available - use it if so (faster, handles updates)
+    if run_command_with_timeout("which", &["brew"], 3)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Installing CMake via Homebrew...".to_string(),
+            },
+        );
+
+        let mut child = tokio::process::Command::new("brew")
+            .args(["install", "cmake"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to start Homebrew: {}", e))?;
+
+        let success = stream_and_wait(&mut child, &window).await;
+
+        if success {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if run_command_with_timeout("cmake", &["--version"], 5)
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                let _ = window.emit(
+                    "install-stream",
+                    InstallEvent::Output {
+                        line: "CMake installed successfully!".to_string(),
+                    },
+                );
+                let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+                return Ok(true);
+            }
+        }
+    }
+
+    // No Homebrew - download directly from cmake.org
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "Downloading CMake from official releases...".to_string(),
+        },
+    );
+
+    // Use a stable CMake version
+    let cmake_version = "3.28.1";
+    let download_url = format!(
+        "https://github.com/Kitware/CMake/releases/download/v{}/cmake-{}-macos-universal.tar.gz",
+        cmake_version, cmake_version
+    );
+
+    let temp_dir = std::env::temp_dir();
+    let archive_path = temp_dir.join(format!("cmake-{}-macos-universal.tar.gz", cmake_version));
+    let extract_dir = temp_dir.join("cmake-extract");
+
+    // Download the archive
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: format!("Downloading CMake {}...", cmake_version),
+        },
+    );
+
+    let mut child = tokio::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "-o",
+            archive_path.to_str().unwrap(),
+            &download_url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to download CMake: {}", e))?;
+
+    if !stream_and_wait(&mut child, &window).await {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Failed to download CMake".to_string(),
+            },
+        );
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        return Err("Download failed".to_string());
+    }
+
+    // Create extract directory
+    let _ = std::fs::remove_dir_all(&extract_dir);
+    std::fs::create_dir_all(&extract_dir)
+        .map_err(|e| format!("Failed to create extract directory: {}", e))?;
+
+    // Extract the archive
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "Extracting CMake...".to_string(),
+        },
+    );
+
+    let mut child = tokio::process::Command::new("tar")
+        .args([
+            "-xzf",
+            archive_path.to_str().unwrap(),
+            "-C",
+            extract_dir.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to extract CMake: {}", e))?;
+
+    if !stream_and_wait(&mut child, &window).await {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Failed to extract CMake".to_string(),
+            },
+        );
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        return Err("Extraction failed".to_string());
+    }
+
+    // Move CMake.app to /Applications
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "Installing CMake to /Applications...".to_string(),
+        },
+    );
+
+    let cmake_app_src = extract_dir.join(format!("cmake-{}-macos-universal", cmake_version))
+        .join("CMake.app");
+    let cmake_app_dest = std::path::PathBuf::from("/Applications/CMake.app");
+
+    // Remove existing installation if present
+    if cmake_app_dest.exists() {
+        let _ = std::fs::remove_dir_all(&cmake_app_dest);
+    }
+
+    // Copy CMake.app to /Applications (may need admin for /Applications)
+    let mut child = tokio::process::Command::new("cp")
+        .args([
+            "-R",
+            cmake_app_src.to_str().unwrap(),
+            "/Applications/",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to install CMake: {}", e))?;
+
+    if !stream_and_wait(&mut child, &window).await {
+        // Try with sudo via osascript
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "Requesting admin access to install...".to_string(),
+            },
+        );
+
+        let script = format!(
+            r#"do shell script "cp -R '{}' /Applications/" with administrator privileges"#,
+            cmake_app_src.to_str().unwrap()
+        );
+
+        let result = tokio::process::Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .await;
+
+        if result.is_err() || !result.unwrap().status.success() {
+            let _ = window.emit(
+                "install-stream",
+                InstallEvent::Output {
+                    line: "Failed to install to /Applications".to_string(),
+                },
+            );
+            let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+            return Err("Installation failed".to_string());
+        }
+    }
+
+    // Create symlinks in /usr/local/bin
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "Creating command-line links...".to_string(),
+        },
+    );
+
+    // Ensure /usr/local/bin exists
+    let _ = std::fs::create_dir_all("/usr/local/bin");
+
+    // Run the CMake command-line tools installer
+    let cmake_bin = "/Applications/CMake.app/Contents/bin/cmake";
+    let link_script = format!(
+        r#"do shell script "
+            ln -sf /Applications/CMake.app/Contents/bin/cmake /usr/local/bin/cmake
+            ln -sf /Applications/CMake.app/Contents/bin/ccmake /usr/local/bin/ccmake
+            ln -sf /Applications/CMake.app/Contents/bin/cpack /usr/local/bin/cpack
+            ln -sf /Applications/CMake.app/Contents/bin/ctest /usr/local/bin/ctest
+        " with administrator privileges"#
+    );
+
+    let _result = tokio::process::Command::new("osascript")
+        .args(["-e", &link_script])
+        .output()
+        .await;
+
+    // Clean up temp files
+    let _ = std::fs::remove_file(&archive_path);
+    let _ = std::fs::remove_dir_all(&extract_dir);
+
+    // Verify installation
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Check using the direct path first, then PATH
+    let cmake_works = run_command_with_timeout(cmake_bin, &["--version"], 5)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+        || run_command_with_timeout("cmake", &["--version"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+    if cmake_works {
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::Output {
+                line: "CMake installed successfully!".to_string(),
+            },
+        );
+        let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+        return Ok(true);
+    }
+
+    let _ = window.emit(
+        "install-stream",
+        InstallEvent::Output {
+            line: "CMake installed but may need a terminal restart to be in PATH".to_string(),
+        },
+    );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+    Ok(true)
+}
+
+/// Check framework-specific prerequisites (for New Project modal)
+/// Returns a list of warning messages if prerequisites are missing
+#[tauri::command]
+pub async fn check_framework_prerequisites(
+    app_handle: tauri::AppHandle,
+    framework_id: String,
+) -> Vec<String> {
+    let lib = crate::library::loader::load_library(&app_handle);
+    let framework = lib.frameworks.iter().find(|f| f.id == framework_id);
+
+    let Some(fw) = framework else {
+        return vec![];
+    };
+
+    let mut warnings = Vec::new();
+    for prereq in &fw.prerequisites.required {
+        // Only check cmake here - core prereqs are handled by main check
+        if prereq == "cmake" {
+            let prereq_check = check_cmake();
+            if prereq_check.status == CheckStatus::NotInstalled {
+                warnings.push("CMake required for this framework".to_string());
+            }
+        }
+    }
+
+    warnings
 }

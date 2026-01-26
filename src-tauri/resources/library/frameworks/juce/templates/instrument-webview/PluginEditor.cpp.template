@@ -1,0 +1,71 @@
+#include "PluginEditor.h"
+
+{{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
+    : AudioProcessorEditor(p), processor(p)
+{
+    addAndMakeVisible(webView);
+
+    // Load UI from binary data
+    webView.goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+
+    // Start timer for parameter sync (30Hz)
+    startTimerHz(30);
+
+    setSize(500, 350);
+}
+
+{{pascal_name}}Editor::~{{pascal_name}}Editor()
+{
+    stopTimer();
+}
+
+void {{pascal_name}}Editor::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colour(0xff1a1a2e));
+}
+
+void {{pascal_name}}Editor::resized()
+{
+    webView.setBounds(getLocalBounds());
+}
+
+void {{pascal_name}}Editor::timerCallback()
+{
+    // Sync parameter changes from host/automation to UI
+    auto checkAndSend = [this](const juce::String& id, int index) {
+        if (auto* param = processor.apvts.getParameter(id))
+        {
+            auto range = param->getNormalisableRange();
+            float displayValue = range.convertFrom0to1(param->getValue());
+            if (std::abs(displayValue - lastValues[index]) > 0.001f)
+            {
+                lastValues[index] = displayValue;
+                sendParameterUpdate(id, displayValue);
+            }
+        }
+    };
+
+    checkAndSend("gain", 0);
+    checkAndSend("attack", 1);
+    checkAndSend("decay", 2);
+    checkAndSend("sustain", 3);
+    checkAndSend("release", 4);
+}
+
+std::optional<juce::WebBrowserComponent::Resource> {{pascal_name}}Editor::getResource(const juce::String& url)
+{
+    if (url == "/" || url == "/index.html" || url.isEmpty())
+    {
+        return juce::WebBrowserComponent::Resource{
+            juce::String(BinaryData::ui_html, BinaryData::ui_htmlSize),
+            "text/html"
+        };
+    }
+    return std::nullopt;
+}
+
+void {{pascal_name}}Editor::sendParameterUpdate(const juce::String& paramId, float value)
+{
+    juce::String script = "if (window.onParamChange) window.onParamChange('" + paramId + "', " + juce::String(value) + ");";
+    webView.evaluateJavascript(script, nullptr);
+}

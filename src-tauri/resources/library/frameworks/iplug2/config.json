@@ -1,0 +1,121 @@
+{
+    "id": "iplug2",
+    "name": "iPlug2",
+    "display_name": "iPlug2",
+    "description": "Lightweight C++ audio plugin framework with multiple UI options",
+    "language": "cpp",
+    "version": "latest",
+    "website": "https://github.com/iPlug2/iPlug2",
+    "documentation": "https://iplug2.github.io/docs",
+
+    "license": {
+        "name": "WDL/zlib-like",
+        "type": "permissive",
+        "summary": "Free for all use, including commercial. No restrictions.",
+        "details": "iPlug2 uses a permissive WDL/zlib-like license. You can use it for any purpose, commercial or non-commercial, with no royalties or attribution requirements. Source code disclosure is not required.",
+        "url": "https://github.com/iPlug2/iPlug2/blob/master/LICENSE.md"
+    },
+
+    "prerequisites": {
+        "required": ["xcode_cli", "cmake", "claude_cli", "claude_auth"],
+        "optional": []
+    },
+
+    "outputs": {
+        "vst3": {
+            "extension": ".vst3",
+            "description": "VST3 plugin"
+        },
+        "au": {
+            "extension": ".component",
+            "description": "Audio Unit plugin (macOS)"
+        },
+        "clap": {
+            "extension": ".clap",
+            "description": "CLAP plugin"
+        },
+        "standalone": {
+            "extension": ".app",
+            "description": "Standalone application"
+        }
+    },
+
+    "build": {
+        "build_system": "cmake",
+        "configure_command": "cmake",
+        "configure_arguments": ["-B", "build", "-S", ".", "-DCMAKE_BUILD_TYPE=Release"],
+        "command": "cmake",
+        "arguments": ["--build", "build", "--config", "Release"],
+        "working_directory": "{{project_path}}",
+        "output_directory": "build",
+        "artifact_patterns": [
+            "build/**/*.clap",
+            "build/**/*.vst3",
+            "build/**/*.component",
+            "build/**/*.app"
+        ],
+        "notes": {
+            "first_build": "First build downloads iPlug2 via FetchContent. This is cached in build/_deps/ for subsequent builds.",
+            "cache": "Do not delete build/_deps/ unless you want to re-download dependencies. Deleting build/ is safe for clean rebuilds.",
+            "offline": "Builds will fail without network access on first run. Once cached, offline builds work."
+        }
+    },
+
+    "templates": {
+        "effect": {
+            "igraphics": "effect-igraphics",
+            "webview": "effect-webview",
+            "native": "effect-native"
+        },
+        "instrument": {
+            "igraphics": "instrument-igraphics",
+            "webview": "instrument-webview",
+            "native": "instrument-native"
+        }
+    },
+
+    "ui_frameworks": [
+        {
+            "id": "igraphics",
+            "name": "IGraphics",
+            "description": "Native vector graphics UI with NanoVG backend",
+            "dependencies": {}
+        },
+        {
+            "id": "webview",
+            "name": "WebView",
+            "description": "HTML/CSS/JS interface via platform WebView",
+            "dependencies": {}
+        },
+        {
+            "id": "native",
+            "name": "Native (No UI)",
+            "description": "Use DAW's generic parameter interface",
+            "dependencies": {}
+        }
+    ],
+
+    "skills": {
+        "core": ["basics"],
+        "effect": [],
+        "instrument": [],
+        "ui": {
+            "igraphics": ["igraphics-ui"],
+            "webview": ["webview-ui"],
+            "native": ["native-ui"]
+        },
+        "shared": []
+    },
+
+    "components": [],
+
+    "placeholders": {
+        "plugin_name": "Plugin name (MyPlugin)",
+        "pascal_name": "PascalCase name (MyPlugin)",
+        "snake_name": "snake_case name (my_plugin)",
+        "description": "Plugin description",
+        "vendor_name": "Company/developer name",
+        "vendor_id": "4-character manufacturer ID (e.g., ACME)",
+        "plugin_code": "4-character plugin ID (e.g., Mplg)"
+    }
+}

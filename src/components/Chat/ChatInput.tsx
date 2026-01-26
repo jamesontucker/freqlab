@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { registerTourRef, unregisterTourRef } from '../../utils/tourRefs';
@@ -6,6 +6,7 @@ import { useTourStore, TOUR_STEPS } from '../../stores/tourStore';
 import { useTipsStore } from '../../stores/tipsStore';
 import { useDraftStore } from '../../stores/draftStore';
 import { Tip } from '../Common/Tip';
+import { GuidePicker } from './GuidePicker';
 
 interface PendingAttachment {
   id: string;
@@ -14,6 +15,16 @@ interface PendingAttachment {
   mimeType: string;
   size: number;
   previewUrl?: string;
+  // Library item fields (mutually exclusive with sourcePath for files)
+  libraryType?: 'skill' | 'algorithm';
+  libraryItemId?: string;  // The library item ID (for reference-based attachment)
+}
+
+// LibraryItem type used internally by GuidePicker
+interface LibraryItem {
+  type: 'skill' | 'algorithm';
+  id: string;
+  name: string;
 }
 
 interface ChatInputProps {
@@ -25,6 +36,7 @@ interface ChatInputProps {
   placeholder?: string;
   droppedFiles?: string[]; // File paths dropped from outside (e.g., drag onto chat panel)
   onDroppedFilesProcessed?: () => void; // Called after dropped files are added to attachments
+  // Guide picker is now built-in, no need for external library modal callbacks
 }
 
 // Helper to get MIME type from file extension
@@ -65,13 +77,73 @@ function isImageMime(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
-// Helper to get file icon based on MIME type
-function getFileIcon(mimeType: string): string {
-  if (mimeType.startsWith('audio/')) return '🎵';
-  if (mimeType.startsWith('text/') || mimeType === 'application/json') return '📄';
-  if (mimeType === 'application/pdf') return '📕';
-  if (mimeType === 'application/zip') return '📦';
-  return '📎';
+// SVG icons for different file/attachment types
+function SkillIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+    </svg>
+  );
+}
+
+function AlgorithmIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5" />
+    </svg>
+  );
+}
+
+function AudioIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z" />
+    </svg>
+  );
+}
+
+function DocumentIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+    </svg>
+  );
+}
+
+function PdfIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+    </svg>
+  );
+}
+
+function ArchiveIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+    </svg>
+  );
+}
+
+function AttachmentIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+    </svg>
+  );
+}
+
+// Helper to get file icon component based on MIME type or library type
+function getFileIcon(mimeType: string, libraryType?: 'skill' | 'algorithm'): JSX.Element {
+  const className = "w-6 h-6 text-text-secondary";
+  if (libraryType === 'skill') return <SkillIcon className={className} />;
+  if (libraryType === 'algorithm') return <AlgorithmIcon className={className} />;
+  if (mimeType.startsWith('audio/')) return <AudioIcon className={className} />;
+  if (mimeType.startsWith('text/') || mimeType === 'application/json') return <DocumentIcon className={className} />;
+  if (mimeType === 'application/pdf') return <PdfIcon className={className} />;
+  if (mimeType === 'application/zip') return <ArchiveIcon className={className} />;
+  return <AttachmentIcon className={className} />;
 }
 
 // Helper to format file size
@@ -93,10 +165,12 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
   const [value, setValue] = useState(draft.message);
   const [attachments, setAttachments] = useState<PendingAttachment[]>(draft.attachments);
   const [previewErrors, setPreviewErrors] = useState<Set<string>>(new Set());
+  const [guidePickerOpen, setGuidePickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const attachButtonRef = useRef<HTMLButtonElement>(null);
+  const guideButtonRef = useRef<HTMLButtonElement>(null);
 
   // Track previous project path to detect switches
   const prevProjectPathRef = useRef(projectPath);
@@ -186,9 +260,9 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
   }, [attachments, projectPath, setDraftAttachments]);
 
   // Handle preview image load error - fall back to file icon
-  const handlePreviewError = (id: string) => {
+  const handlePreviewError = useCallback((id: string) => {
     setPreviewErrors(prev => new Set(prev).add(id));
-  };
+  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -221,7 +295,29 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
     }
   }, [droppedFiles, onDroppedFilesProcessed]);
 
-  const handleFileSelect = async () => {
+  // Handle guide selection from the GuidePicker
+  // Guide items use reference-based attachment - content is NOT embedded
+  // The item will be copied to .claude/commands/ when the message is sent
+  const handleGuideSelect = useCallback((item: { type: 'skill' | 'algorithm'; id: string; name: string }) => {
+    const newAttachment: PendingAttachment = {
+      id: crypto.randomUUID(),
+      originalName: `${item.name}.md`,
+      sourcePath: '', // No file path for library items
+      mimeType: 'text/markdown',
+      size: 0, // Size unknown until copied
+      libraryType: item.type,
+      libraryItemId: item.id, // Store the ID for reference-based lookup
+    };
+    setAttachments(prev => [...prev, newAttachment]);
+    // Don't close - let user attach multiple items
+  }, []);
+
+  // Remove a library item from attachments (called from GuidePicker)
+  const handleGuideRemove = useCallback((item: { type: 'skill' | 'algorithm'; id: string }) => {
+    setAttachments(prev => prev.filter(a => !(a.libraryType === item.type && a.libraryItemId === item.id)));
+  }, []);
+
+  const handleFileSelect = useCallback(async () => {
     try {
       const selected = await open({
         multiple: true,
@@ -250,13 +346,13 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
     } catch (err) {
       console.error('Failed to select files:', err);
     }
-  };
+  }, []);
 
-  const handleRemoveAttachment = (id: string) => {
+  const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments(prev => prev.filter(a => a.id !== id));
-  };
+  }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if ((trimmed || attachments.length > 0) && !disabled) {
       onSend(trimmed, attachments.length > 0 ? attachments : undefined);
@@ -266,14 +362,14 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
       // Clear draft in store (local state clears trigger sync, but be explicit)
       clearDraft(projectPath);
     }
-  };
+  }, [value, attachments, disabled, onSend, clearDraft, projectPath]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
-  };
+  }, [handleSubmit]);
 
   const canSend = (value.trim() || attachments.length > 0) && !disabled;
 
@@ -295,16 +391,18 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
                   onError={() => handlePreviewError(attachment.id)}
                 />
               ) : (
-                <span className="text-xl w-10 h-10 flex items-center justify-center">
-                  {getFileIcon(attachment.mimeType)}
-                </span>
+                <div className="w-10 h-10 flex items-center justify-center">
+                  {getFileIcon(attachment.mimeType, attachment.libraryType)}
+                </div>
               )}
               <div className="max-w-32">
                 <div className="text-sm text-text-primary truncate">
                   {attachment.originalName}
                 </div>
                 <div className="text-xs text-text-muted">
-                  {attachment.size > 0 ? formatFileSize(attachment.size) : 'File'}
+                  {attachment.libraryType
+                    ? (attachment.libraryType === 'skill' ? 'Guide' : 'Recipe')
+                    : (attachment.size > 0 ? formatFileSize(attachment.size) : 'File')}
                 </div>
               </div>
               <button
@@ -338,6 +436,35 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
           </svg>
         </button>
+
+        {/* Library button - attach guides/recipes or open resources */}
+        <div className="relative">
+          <button
+            ref={guideButtonRef}
+            onClick={() => setGuidePickerOpen(!guidePickerOpen)}
+            disabled={disabled}
+            className={`p-2.5 rounded-lg border transition-all duration-200 flex-shrink-0 flex items-center justify-center ${
+              disabled
+                ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
+                : guidePickerOpen
+                  ? 'bg-accent/20 text-accent border-accent/30'
+                  : 'bg-bg-tertiary text-text-muted hover:bg-accent/20 hover:text-accent border-border hover:border-accent/30'
+            }`}
+            title="Library"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            </svg>
+          </button>
+          <GuidePicker
+            isOpen={guidePickerOpen}
+            onClose={() => setGuidePickerOpen(false)}
+            onSelect={handleGuideSelect}
+            onRemove={handleGuideRemove}
+            anchorRef={guideButtonRef}
+            attachedItems={attachments}
+          />
+        </div>
 
         {/* Tip for file attachments - shows while Claude is thinking after 3+ builds */}
         <Tip
@@ -427,4 +554,4 @@ export function ChatInput({ projectPath, onSend, onInterrupt, disabled = false, 
   );
 }
 
-export type { PendingAttachment };
+export type { PendingAttachment, LibraryItem };

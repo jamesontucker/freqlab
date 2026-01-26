@@ -1,0 +1,105 @@
+#include "PluginEditor.h"
+
+{{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
+    : AudioProcessorEditor(p), processor(p)
+{
+    // Apply custom look and feel
+    setLookAndFeel(&lookAndFeel);
+
+    // Set up knobs
+    setupKnob(gainSlider, gainLabel, "Gain");
+    setupKnob(attackSlider, attackLabel, "Attack");
+    setupKnob(decaySlider, decayLabel, "Decay");
+    setupKnob(sustainSlider, sustainLabel, "Sustain");
+    setupKnob(releaseSlider, releaseLabel, "Release");
+
+    // Create attachments AFTER configuring sliders
+    gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "gain", gainSlider);
+    attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "attack", attackSlider);
+    decayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "decay", decaySlider);
+    sustainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "sustain", sustainSlider);
+    releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "release", releaseSlider);
+
+    // Set editor size
+    setSize(500, 280);
+}
+
+{{pascal_name}}Editor::~{{pascal_name}}Editor()
+{
+    // IMPORTANT: Remove look and feel before destruction
+    setLookAndFeel(nullptr);
+}
+
+void {{pascal_name}}Editor::setupKnob(juce::Slider& slider, juce::Label& label, const juce::String& text)
+{
+    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 18);
+    addAndMakeVisible(slider);
+
+    label.setText(text, juce::dontSendNotification);
+    label.setJustificationType(juce::Justification::centred);
+    label.setFont(juce::Font(12.0f, juce::Font::bold));
+    addAndMakeVisible(label);
+}
+
+void {{pascal_name}}Editor::paint(juce::Graphics& g)
+{
+    // Dark gradient background
+    auto bounds = getLocalBounds().toFloat();
+    g.setGradientFill(juce::ColourGradient(
+        juce::Colour(0xff1a1a2e), bounds.getCentreX(), 0,
+        juce::Colour(0xff0f0f1a), bounds.getCentreX(), bounds.getHeight(),
+        false));
+    g.fillAll();
+
+    // Plugin name
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(20.0f, juce::Font::bold));
+    g.drawText("{{pascal_name}}", getLocalBounds().removeFromTop(40), juce::Justification::centred);
+
+    // Section labels
+    g.setFont(juce::Font(11.0f));
+    g.setColour(juce::Colour(0xff6c9ced));
+    g.drawText("ENVELOPE", 130, 55, 240, 20, juce::Justification::centred);
+}
+
+void {{pascal_name}}Editor::resized()
+{
+    auto bounds = getLocalBounds().reduced(20);
+    bounds.removeFromTop(50);  // Space for title
+
+    // Layout: [Gain] | [A] [D] [S] [R]
+    auto leftArea = bounds.removeFromLeft(100);
+    auto adsrArea = bounds.withTrimmedLeft(30);
+
+    // Gain knob (larger)
+    gainLabel.setBounds(leftArea.removeFromTop(20));
+    gainSlider.setBounds(leftArea.withSizeKeepingCentre(80, 80));
+
+    // ADSR knobs (smaller, in a row)
+    int knobWidth = 80;
+    int knobHeight = 80;
+    int spacing = 10;
+
+    auto adsrBounds = adsrArea.removeFromTop(120);
+    adsrBounds.removeFromTop(20);  // Space for section label
+
+    int totalWidth = 4 * knobWidth + 3 * spacing;
+    int startX = adsrBounds.getCentreX() - totalWidth / 2;
+
+    auto placeKnob = [&](juce::Slider& slider, juce::Label& label, int index) {
+        int x = startX + index * (knobWidth + spacing);
+        label.setBounds(x, adsrBounds.getY(), knobWidth, 18);
+        slider.setBounds(x, adsrBounds.getY() + 20, knobWidth, knobHeight);
+    };
+
+    placeKnob(attackSlider, attackLabel, 0);
+    placeKnob(decaySlider, decayLabel, 1);
+    placeKnob(sustainSlider, sustainLabel, 2);
+    placeKnob(releaseSlider, releaseLabel, 3);
+}

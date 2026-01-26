@@ -35,6 +35,10 @@ export async function installClaudeCli(): Promise<boolean> {
   return invoke<boolean>('install_claude_cli');
 }
 
+export async function installCmake(): Promise<boolean> {
+  return invoke<boolean>('install_cmake');
+}
+
 export async function startClaudeAuth(): Promise<boolean> {
   return invoke<boolean>('start_claude_auth');
 }

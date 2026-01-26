@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-pub use clap_host::{cleanup_temp_bundles, PluginInstance};
+pub use clap_host::{cleanup_temp_bundles, PluginInstance, PluginLoadOptions};
 
 /// Plugin type determines audio routing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

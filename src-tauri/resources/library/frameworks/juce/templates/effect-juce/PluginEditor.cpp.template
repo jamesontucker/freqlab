@@ -1,0 +1,59 @@
+#include "PluginEditor.h"
+
+{{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
+    : AudioProcessorEditor(p), processor(p)
+{
+    // Apply custom look and feel
+    setLookAndFeel(&lookAndFeel);
+
+    // Configure gain slider
+    gainSlider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    gainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
+    addAndMakeVisible(gainSlider);
+
+    // Configure gain label
+    gainLabel.setText("Gain", juce::dontSendNotification);
+    gainLabel.setJustificationType(juce::Justification::centred);
+    gainLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    addAndMakeVisible(gainLabel);
+
+    // Create attachment AFTER configuring the slider
+    gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, "gain", gainSlider);
+
+    // Set editor size
+    setSize(300, 200);
+}
+
+{{pascal_name}}Editor::~{{pascal_name}}Editor()
+{
+    // IMPORTANT: Remove look and feel before destruction
+    setLookAndFeel(nullptr);
+}
+
+void {{pascal_name}}Editor::paint(juce::Graphics& g)
+{
+    // Dark gradient background
+    auto bounds = getLocalBounds().toFloat();
+    g.setGradientFill(juce::ColourGradient(
+        juce::Colour(0xff1a1a2e), bounds.getCentreX(), 0,
+        juce::Colour(0xff0f0f1a), bounds.getCentreX(), bounds.getHeight(),
+        false));
+    g.fillAll();
+
+    // Plugin name
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(20.0f, juce::Font::bold));
+    g.drawText("{{pascal_name}}", getLocalBounds().removeFromTop(40), juce::Justification::centred);
+}
+
+void {{pascal_name}}Editor::resized()
+{
+    auto bounds = getLocalBounds().reduced(20);
+    bounds.removeFromTop(40);  // Space for title
+
+    auto sliderBounds = bounds.withSizeKeepingCentre(120, 120);
+
+    gainLabel.setBounds(sliderBounds.removeFromTop(20));
+    gainSlider.setBounds(sliderBounds);
+}

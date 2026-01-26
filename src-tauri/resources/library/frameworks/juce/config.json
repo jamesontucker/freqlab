@@ -1,0 +1,169 @@
+{
+    "id": "juce",
+    "name": "JUCE",
+    "display_name": "JUCE (C++)",
+    "description": "Industry-standard C++ framework for audio plugins with native or web-based UIs",
+    "language": "cpp",
+    "version": "8.0.0",
+    "website": "https://juce.com",
+    "documentation": "https://docs.juce.com/",
+
+    "license": {
+        "name": "AGPLv3 / Commercial",
+        "type": "copyleft",
+        "summary": "Free for open-source projects or revenue under $50K/year. Commercial license required otherwise.",
+        "details": "JUCE is dual-licensed under AGPLv3 (requires source disclosure) or a commercial license. Personal License is free for individuals/small companies with gross revenue under $50K. Commercial licenses required for revenue over $50K.",
+        "url": "https://juce.com/get-juce/"
+    },
+
+    "prerequisites": {
+        "required": ["xcode_cli", "cmake", "claude_cli", "claude_auth"],
+        "optional": []
+    },
+
+    "outputs": {
+        "vst3": {
+            "extension": ".vst3",
+            "description": "VST3 plugin bundle"
+        },
+        "au": {
+            "extension": ".component",
+            "description": "Audio Unit plugin bundle (macOS)"
+        },
+        "clap": {
+            "extension": ".clap",
+            "description": "CLAP plugin bundle (via clap-juce-extensions)"
+        },
+        "standalone": {
+            "extension": ".app",
+            "description": "Standalone application (macOS)"
+        }
+    },
+
+    "build": {
+        "build_system": "cmake",
+        "command": "cmake",
+        "arguments": ["--build", "build", "--config", "Release"],
+        "configure_command": "cmake",
+        "configure_arguments": ["-B", "build", "-S", ".", "-DCMAKE_BUILD_TYPE=Release"],
+        "working_directory": "{{project_path}}",
+        "output_directory": "{{workspace_path}}/output/{{project_name}}/v{{version}}",
+        "artifact_patterns": [
+            "build/*_artefacts/Release/**/*.vst3",
+            "build/*_artefacts/Release/**/*.component",
+            "build/*_artefacts/Release/**/*.clap",
+            "build/*_artefacts/Release/**/*.app"
+        ],
+        "notes": {
+            "first_build": "First build downloads JUCE (~100MB) via FetchContent. This is cached in build/_deps/ for subsequent builds.",
+            "cache": "Do not delete build/_deps/ unless you want to re-download dependencies. Deleting build/ is safe for clean rebuilds.",
+            "offline": "Builds will fail without network access on first run. Once cached, offline builds work."
+        }
+    },
+
+    "templates": {
+        "effect": {
+            "juce": "effect-juce",
+            "webview": "effect-webview",
+            "native": "effect-native"
+        },
+        "instrument": {
+            "juce": "instrument-juce",
+            "webview": "instrument-webview",
+            "native": "instrument-native"
+        }
+    },
+
+    "ui_frameworks": [
+        {
+            "id": "juce",
+            "name": "JUCE UI",
+            "description": "Traditional JUCE Components with LookAndFeel. Best for cross-platform consistency.",
+            "dependencies": {}
+        },
+        {
+            "id": "webview",
+            "name": "WebView (JUCE 8+)",
+            "description": "HTML/CSS/JS via WebBrowserComponent. Best for modern, complex UIs.",
+            "dependencies": {}
+        },
+        {
+            "id": "native",
+            "name": "Native (No UI)",
+            "description": "No custom UI - uses DAW's generic parameter interface. Good for simple utilities.",
+            "dependencies": {}
+        }
+    ],
+
+    "skills": {
+        "core": ["basics"],
+        "effect": ["../../guides/effect-patterns"],
+        "instrument": ["../../guides/instrument-patterns"],
+        "ui": {
+            "juce": ["juce-ui"],
+            "webview": ["webview-ui"],
+            "native": ["native-ui"]
+        },
+        "shared": ["../../guides/dsp-safety"]
+    },
+
+    "components": [
+        {
+            "id": "preset_system",
+            "name": "Preset System",
+            "description": "Save/load user presets with APVTS state",
+            "skill": "../../guides/components/preset-system"
+        },
+        {
+            "id": "param_smoothing",
+            "name": "Parameter Smoothing",
+            "description": "SmoothedValue for click-free automation",
+            "skill": "../../guides/components/param-smoothing"
+        },
+        {
+            "id": "sidechain_input",
+            "name": "Sidechain Input",
+            "description": "Auxiliary input for ducking/keying",
+            "skill": "../../guides/components/sidechain-input",
+            "template_type": "effect"
+        },
+        {
+            "id": "oversampling",
+            "name": "Oversampling",
+            "description": "Anti-aliasing using juce::dsp::Oversampling",
+            "skill": "../../guides/components/oversampling",
+            "template_type": "effect"
+        },
+        {
+            "id": "polyphony",
+            "name": "Polyphony",
+            "description": "juce::Synthesiser voice management",
+            "skill": "../../guides/components/polyphony",
+            "template_type": "instrument"
+        },
+        {
+            "id": "adsr_envelope",
+            "name": "ADSR Envelope",
+            "description": "juce::ADSR for amplitude/filter envelopes",
+            "skill": "../../guides/components/adsr-envelope",
+            "template_type": "instrument"
+        },
+        {
+            "id": "lfo",
+            "name": "LFO",
+            "description": "Low frequency oscillator for modulation",
+            "skill": "../../guides/components/lfo"
+        }
+    ],
+
+    "placeholders": {
+        "pascal_name": "PascalCase plugin name (e.g., MyPlugin)",
+        "snake_name": "snake_case plugin name (e.g., my_plugin)",
+        "description": "Plugin description (escaped for strings)",
+        "vendor_name": "Vendor display name",
+        "vendor_id": "4-character plugin manufacturer code",
+        "vendor_url": "Vendor website URL",
+        "vendor_email": "Vendor contact email",
+        "plugin_code": "4-character unique plugin code"
+    }
+}

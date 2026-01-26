@@ -1,0 +1,22 @@
+#pragma once
+
+#include "IPlug_include_in_plug_hdr.h"
+
+// Parameter indices
+enum EParams {
+    kGain = 0,
+    kNumParams
+};
+
+class {{pascal_name}} final : public iplug::Plugin {
+public:
+    {{pascal_name}}(const iplug::InstanceInfo& info);
+
+    void OnReset() override;
+    void OnParamChange(int paramIdx) override;
+    void ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames) override;
+
+private:
+    // Cached parameter values for real-time safe access
+    double mGain = 1.0;
+};

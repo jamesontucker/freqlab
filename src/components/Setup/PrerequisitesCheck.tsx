@@ -5,6 +5,7 @@ import { Spinner } from '../Common/Spinner';
 import {
   installXcode,
   installRust,
+  installCmake,
   installClaudeCli,
   startClaudeAuth,
   requestAccessibilityPermission,
@@ -25,7 +26,7 @@ interface InstallEvent {
   action?: string;
 }
 
-type InstallStep = 'xcode' | 'rust' | 'claude_cli' | 'claude_auth';
+type InstallStep = 'xcode' | 'rust' | 'cmake' | 'claude_cli' | 'claude_auth';
 type InstallStage = 'preparing' | 'downloading' | 'installing' | 'finishing' | 'done' | 'error';
 
 interface InstallState {
@@ -77,6 +78,21 @@ function parseStageFromOutput(step: InstallStep, output: string[], currentStage:
     }
   }
 
+  if (step === 'cmake') {
+    if (lastLines.includes('already installed')) {
+      return { stage: 'done', message: 'Already installed!' };
+    }
+    if (lastLines.includes('downloading')) {
+      return { stage: 'downloading', message: 'Downloading CMake...' };
+    }
+    if (lastLines.includes('extracting') || lastLines.includes('installing')) {
+      return { stage: 'installing', message: 'Installing CMake...' };
+    }
+    if (lastLines.includes('success') || lastLines.includes('complete')) {
+      return { stage: 'finishing', message: 'Finishing up...' };
+    }
+  }
+
   if (step === 'claude_cli') {
     if (lastLines.includes('already installed')) {
       return { stage: 'done', message: 'Already installed!' };
@@ -108,6 +124,7 @@ function parseStageFromOutput(step: InstallStep, output: string[], currentStage:
   const defaults: Record<InstallStep, string> = {
     xcode: 'Setting up Apple Developer Tools...',
     rust: 'Setting up Rust...',
+    cmake: 'Setting up CMake...',
     claude_cli: 'Setting up Claude Code...',
     claude_auth: 'Setting up sign-in...',
   };
@@ -601,7 +618,7 @@ function InstallItem({
   const needsAction = result && result.status !== 'installed' && !isInstalling && !justCompletedSuccessfully;
 
   return (
-    <div className={`p-4 rounded-lg border transition-all duration-300 ${
+    <div className={`p-3 rounded-lg border transition-all duration-300 ${
       isInstalled || justCompletedSuccessfully
         ? 'bg-success-subtle border-success/20'
         : isInstalling
@@ -612,9 +629,9 @@ function InstallItem({
     }`}>
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Status Icon */}
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+          <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
             isInstalled || justCompletedSuccessfully
               ? 'bg-success/20 text-success'
               : isInstalling
@@ -757,6 +774,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
   const [installStates, setInstallStates] = useState<Record<InstallStep, InstallState | null>>({
     xcode: null,
     rust: null,
+    cmake: null,
     claude_cli: null,
     claude_auth: null,
   });
@@ -826,6 +844,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
       case 'xcode':
         return adminPrimed;
       case 'rust':
+      case 'cmake':
       case 'claude_cli':
         return permissionsReady || allInstalled;
       case 'claude_auth':
@@ -842,6 +861,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         if (!adminPrimed) return 'Enter your password above first';
         break;
       case 'rust':
+      case 'cmake':
       case 'claude_cli':
         if (!permissionsReady && !allInstalled) return 'Complete the permissions step above first';
         break;
@@ -932,6 +952,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
   // Install handlers
   const handleInstallXcode = useCallback(() => runInstallStep('xcode', installXcode), [runInstallStep]);
   const handleInstallRust = useCallback(() => runInstallStep('rust', installRust), [runInstallStep]);
+  const handleInstallCmake = useCallback(() => runInstallStep('cmake', installCmake), [runInstallStep]);
   const handleInstallClaudeCli = useCallback(() => runInstallStep('claude_cli', installClaudeCli), [runInstallStep]);
 
   const handleClaudeAuthStart = useCallback(() => {
@@ -982,6 +1003,13 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
       onInstall: handleInstallRust,
     },
     {
+      key: 'cmake',
+      label: 'CMake',
+      timeEstimate: 'Takes about 1 minute',
+      result: status?.cmake,
+      onInstall: handleInstallCmake,
+    },
+    {
       key: 'claude_cli',
       label: 'Claude Code',
       timeEstimate: 'Takes about 30 seconds',
@@ -1017,16 +1045,16 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         />
       )}
 
-      <div className="space-y-4 animate-fade-in">
+      <div className="space-y-3 animate-fade-in">
         {/* Header */}
         <div className="text-center">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-accent/20 flex items-center justify-center mb-3">
-            <svg className="w-6 h-6 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <div className="w-10 h-10 mx-auto rounded-xl bg-accent/20 flex items-center justify-center mb-2">
+            <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h2 className="text-xl font-semibold text-text-primary">Let's get you set up</h2>
-          <p className="text-sm text-text-secondary mt-1">This only takes a few minutes</p>
+          <h2 className="text-lg font-semibold text-text-primary">Let's get you set up</h2>
+          <p className="text-xs text-text-secondary mt-0.5">This only takes a few minutes</p>
         </div>
 
         {/* Disk Space Check */}
@@ -1063,14 +1091,14 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         </div>
 
         {/* Help Link */}
-        <div className="text-center pt-2">
+        <div className="text-center pt-1">
           <a
             href={helpUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-accent transition-colors"
+            className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-accent transition-colors"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span>Having trouble?</span>
@@ -1081,7 +1109,7 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         <button
           onClick={onComplete}
           disabled={!allInstalled || installingStep !== null}
-          className="w-full py-3 text-sm bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-lg transition-all disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none"
+          className="w-full py-2.5 text-sm bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-lg transition-all disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none"
         >
           {allInstalled ? 'Continue' : 'Complete the steps above to continue'}
         </button>

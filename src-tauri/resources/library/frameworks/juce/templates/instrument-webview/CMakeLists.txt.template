@@ -1,0 +1,107 @@
+cmake_minimum_required(VERSION 3.22)
+project({{pascal_name}} VERSION 1.0.0)
+
+# Static linking on Windows
+if(WIN32)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE INTERNAL "")
+endif()
+
+# macOS deployment target and universal binary
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary")
+endif()
+
+# Fetch JUCE
+include(FetchContent)
+FetchContent_Declare(
+    JUCE
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 8.0.0
+)
+
+# Fetch clap-juce-extensions for CLAP format support (JUCE 8 doesn't have native CLAP)
+FetchContent_Declare(
+    clap-juce-extensions
+    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+    GIT_TAG main
+)
+
+FetchContent_MakeAvailable(JUCE clap-juce-extensions)
+
+# Plugin definition
+juce_add_plugin({{pascal_name}}
+    COMPANY_NAME "{{vendor_name}}"
+    PLUGIN_MANUFACTURER_CODE {{vendor_id}}
+    PLUGIN_CODE {{plugin_code}}
+
+    # Formats - build Standalone first for fastest iteration
+    FORMATS Standalone VST3 AU
+
+    PRODUCT_NAME "{{pascal_name}}"
+
+    # Auto-copy after build
+    COPY_PLUGIN_AFTER_BUILD TRUE
+
+    # Plugin characteristics (instrument/synth)
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+
+    # VST3 categories
+    VST3_CATEGORIES "Instrument" "Synth"
+
+    # WebView2 required on Windows
+    NEEDS_WEBVIEW2 TRUE
+)
+
+# Add CLAP format via clap-juce-extensions (required for freqlab preview)
+clap_juce_extensions_plugin(
+    TARGET {{pascal_name}}
+    CLAP_ID "com.{{vendor_id}}.{{snake_name}}"
+    CLAP_FEATURES "instrument" "synthesizer" "stereo"
+)
+
+# Embed web resources as binary data
+juce_add_binary_data({{pascal_name}}WebResources
+    SOURCES
+        src/ui.html
+)
+
+# Source files
+target_sources({{pascal_name}}
+    PRIVATE
+        src/PluginProcessor.cpp
+        src/PluginEditor.cpp
+        src/SynthVoice.cpp
+)
+
+# Include directories
+target_include_directories({{pascal_name}} PRIVATE src)
+
+# Required JUCE modules (including juce_gui_extra for WebBrowserComponent)
+target_link_libraries({{pascal_name}}
+    PRIVATE
+        {{pascal_name}}WebResources
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# Compile definitions - enable WebView
+target_compile_definitions({{pascal_name}}
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+# C++17
+target_compile_features({{pascal_name}} PRIVATE cxx_std_17)

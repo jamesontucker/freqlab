@@ -447,7 +447,12 @@ export function PreviewPanel() {
           setLoadedPlugin({ status: 'reloading', path: pluginPath });
           // Use folder name from path for reload
           const reloadFolderName = getFolderName(activeProject.path);
-          await previewApi.pluginReload(reloadFolderName, version);
+          await previewApi.pluginReload(
+            reloadFolderName,
+            version,
+            activeProject.frameworkId,
+            activeProject.uiFramework
+          );
 
           // Update state after reload (event listeners may not be active when panel is closed)
           const newState = await previewApi.pluginGetState();
@@ -455,6 +460,8 @@ export function PreviewPanel() {
 
           // Re-open editor if it was open before
           // Position is stored at engine level, so it will restore to same position
+          // Note: WebView plugins leak libraries intentionally to keep Objective-C code
+          // in memory, preventing crashes from async WebView callbacks
           if (editorWasOpen && newState.status === 'active') {
             setTimeout(async () => {
               try {

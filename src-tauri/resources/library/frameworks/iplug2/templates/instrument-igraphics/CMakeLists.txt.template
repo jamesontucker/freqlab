@@ -1,0 +1,102 @@
+cmake_minimum_required(VERSION 3.22)
+project({{pascal_name}} VERSION 1.0.0)
+
+# Allow FetchContent_Populate for selective dependency handling
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
+# Static linking on Windows
+if(WIN32)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE INTERNAL "")
+endif()
+
+# macOS deployment target and universal binary
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary")
+endif()
+
+# Fetch dependencies
+include(FetchContent)
+
+# CLAP SDK
+FetchContent_Declare(
+    clap
+    GIT_REPOSITORY https://github.com/free-audio/clap.git
+    GIT_TAG 1.2.7
+)
+
+# CLAP helpers
+FetchContent_Declare(
+    clap-helpers
+    GIT_REPOSITORY https://github.com/free-audio/clap-helpers.git
+    GIT_TAG main
+)
+
+# VST3 SDK
+FetchContent_Declare(
+    vst3sdk
+    GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
+    GIT_TAG v3.7.11_build_10
+)
+
+# iPlug2
+FetchContent_Declare(
+    iPlug2
+    GIT_REPOSITORY https://github.com/iPlug2/iPlug2.git
+    GIT_TAG master
+)
+
+# Populate CLAP SDK and helpers
+FetchContent_MakeAvailable(clap clap-helpers)
+
+# Populate VST3 SDK (don't add as subdirectory)
+FetchContent_GetProperties(vst3sdk)
+if(NOT vst3sdk_POPULATED)
+    FetchContent_Populate(vst3sdk)
+endif()
+
+# Populate iPlug2 (don't add subdirectory - skip examples/tests)
+FetchContent_GetProperties(iPlug2)
+if(NOT iplug2_POPULATED)
+    FetchContent_Populate(iPlug2)
+endif()
+
+# Set up SDK paths for iPlug2
+set(IPLUG_DEPS_DIR ${iplug2_SOURCE_DIR}/Dependencies/IPlug CACHE PATH "" FORCE)
+file(MAKE_DIRECTORY ${IPLUG_DEPS_DIR}/CLAP_SDK)
+file(MAKE_DIRECTORY ${IPLUG_DEPS_DIR}/CLAP_HELPERS)
+file(MAKE_DIRECTORY ${IPLUG_DEPS_DIR}/VST3_SDK)
+
+# Create symlinks to SDK locations
+if(NOT EXISTS ${IPLUG_DEPS_DIR}/CLAP_SDK/include)
+    file(CREATE_LINK ${clap_SOURCE_DIR}/include ${IPLUG_DEPS_DIR}/CLAP_SDK/include SYMBOLIC)
+endif()
+if(NOT EXISTS ${IPLUG_DEPS_DIR}/CLAP_HELPERS/include)
+    file(CREATE_LINK ${clap-helpers_SOURCE_DIR}/include ${IPLUG_DEPS_DIR}/CLAP_HELPERS/include SYMBOLIC)
+endif()
+if(NOT EXISTS ${IPLUG_DEPS_DIR}/VST3_SDK/base)
+    file(CREATE_LINK ${vst3sdk_SOURCE_DIR}/base ${IPLUG_DEPS_DIR}/VST3_SDK/base SYMBOLIC)
+endif()
+if(NOT EXISTS ${IPLUG_DEPS_DIR}/VST3_SDK/pluginterfaces)
+    file(CREATE_LINK ${vst3sdk_SOURCE_DIR}/pluginterfaces ${IPLUG_DEPS_DIR}/VST3_SDK/pluginterfaces SYMBOLIC)
+endif()
+if(NOT EXISTS ${IPLUG_DEPS_DIR}/VST3_SDK/public.sdk)
+    file(CREATE_LINK ${vst3sdk_SOURCE_DIR}/public.sdk ${IPLUG_DEPS_DIR}/VST3_SDK/public.sdk SYMBOLIC)
+endif()
+
+# Set up iPlug2 CMake module
+set(IPLUG2_DIR ${iplug2_SOURCE_DIR} CACHE PATH "iPlug2 root directory" FORCE)
+include(${IPLUG2_DIR}/iPlug2.cmake)
+find_package(iPlug2 REQUIRED)
+
+# Create plugin targets with IGraphics UI
+iplug_add_plugin(${PROJECT_NAME}
+    SOURCES
+        src/PluginProcessor.cpp
+        src/PluginProcessor.h
+        config.h
+        resource.h
+    UI IGRAPHICS
+)

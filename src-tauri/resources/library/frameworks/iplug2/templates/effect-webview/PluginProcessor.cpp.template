@@ -1,0 +1,51 @@
+#include "PluginProcessor.h"
+#include "IPlug_include_in_plug_src.h"
+
+using namespace iplug;
+
+{{pascal_name}}::{{pascal_name}}(const InstanceInfo& info)
+    : iplug::Plugin(info, MakeConfig(kNumParams, 1))  // params, presets
+{
+    // Define parameters
+    GetParam(kGain)->InitDouble("Gain", 0., -70., 12., 0.1, "dB");
+
+    // Initialize cached values
+    mGain = DBToAmp(GetParam(kGain)->Value());
+
+#if IPLUG_EDITOR
+    // WebView editor setup - load bundled HTML
+    mEditorInitFunc = [&]() {
+        LoadFile("ui.html", GetBundleID());
+    };
+#endif
+}
+
+void {{pascal_name}}::OnReset() {
+    // Called when sample rate or block size changes
+}
+
+void {{pascal_name}}::OnParamChange(int paramIdx) {
+    switch (paramIdx) {
+        case kGain:
+            mGain = DBToAmp(GetParam(kGain)->Value());
+            break;
+    }
+}
+
+void {{pascal_name}}::ProcessBlock(sample** inputs, sample** outputs, int nFrames) {
+    const int nChans = NOutChansConnected();
+    const double gain = mGain;
+
+    for (int s = 0; s < nFrames; s++) {
+        for (int c = 0; c < nChans; c++) {
+            double samp = inputs[c][s];
+            samp *= gain;
+
+            if (!std::isfinite(samp)) {
+                samp = 0.0;
+            }
+
+            outputs[c][s] = samp;
+        }
+    }
+}

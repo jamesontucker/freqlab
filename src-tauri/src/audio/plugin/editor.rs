@@ -73,6 +73,24 @@ mod macos {
     };
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSThread};
 
+    // FFI bindings for Core Foundation run loop
+    extern "C" {
+        fn CFRunLoopRunInMode(
+            mode: *const std::ffi::c_void,
+            seconds: f64,
+            returnAfterSourceHandled: bool,
+        ) -> i32;
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+    }
+
+    /// Pump the macOS run loop to process pending events
+    /// This helps flush deferred WebView callbacks after destroying the GUI
+    pub fn pump_run_loop_for_cleanup(seconds: f64) {
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, false);
+        }
+    }
+
     // FFI bindings for Grand Central Dispatch
     #[repr(C)]
     struct DispatchQueueS {
@@ -429,6 +447,12 @@ mod macos {
             if let Some(destroy) = (*gui).destroy {
                 destroy(plugin);
             }
+            log::info!("destroy_editor_window_inner: GUI destroyed");
+
+            // Brief delay for iPlug2 WebView to complete synchronous cleanup
+            // before we close the NSWindow. This must happen while window is still valid.
+            log::info!("destroy_editor_window_inner: Brief delay for WebView sync cleanup");
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         // Close and release the window
@@ -613,3 +637,6 @@ pub fn is_window_visible(_window: *mut c_void) -> bool {
 
 #[cfg(not(target_os = "macos"))]
 pub fn restore_window(_window: *mut c_void) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pump_run_loop_for_cleanup(_seconds: f64) {}

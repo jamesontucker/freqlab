@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{pascal_name}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+
+        .plugin-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            color: #ffffff;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .knob-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .knob {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #2a2a4a, #1a1a2e);
+            box-shadow:
+                8px 8px 16px rgba(0, 0, 0, 0.4),
+                -4px -4px 12px rgba(255, 255, 255, 0.05),
+                inset 0 0 20px rgba(0, 0, 0, 0.3);
+            position: relative;
+            cursor: pointer;
+        }
+
+        .knob::before {
+            content: '';
+            position: absolute;
+            width: 4px;
+            height: 25px;
+            background: linear-gradient(to bottom, #6c63ff, #4a42d4);
+            border-radius: 2px;
+            top: 10px;
+            left: 50%;
+            transform-origin: bottom center;
+            transform: translateX(-50%) rotate(var(--rotation, 0deg));
+            box-shadow: 0 0 10px rgba(108, 99, 255, 0.5);
+        }
+
+        .knob-label {
+            margin-top: 12px;
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .knob-value {
+            margin-top: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #6c63ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="plugin-title">{{pascal_name}}</div>
+
+    <div class="knob-container">
+        <div class="knob" id="gainKnob" data-param="0"></div>
+        <div class="knob-label">Gain</div>
+        <div class="knob-value" id="gainValue">-6 dB</div>
+    </div>
+
+    <script>
+        // iPlug2 WebView Bridge
+        function IPlugSendMsg(message) {
+            if (typeof webkit !== 'undefined' && webkit.messageHandlers && webkit.messageHandlers.callback) {
+                webkit.messageHandlers.callback.postMessage(message);
+            }
+        }
+
+        function SPVFUI(paramIdx, value) {
+            IPlugSendMsg({ msg: "SPVFUI", paramIdx: parseInt(paramIdx), value: value });
+        }
+
+        function BPCFUI(paramIdx) {
+            IPlugSendMsg({ msg: "BPCFUI", paramIdx: parseInt(paramIdx) });
+        }
+
+        function EPCFUI(paramIdx) {
+            IPlugSendMsg({ msg: "EPCFUI", paramIdx: parseInt(paramIdx) });
+        }
+
+        // Callbacks from plugin
+        function SPVFD(paramIdx, val) {
+            if (paramIdx === 0 && knob) {
+                knob.setValue(val);
+            }
+        }
+
+        // Send Arbitrary Message From Delegate (handles MIDI state, etc.)
+        function SAMFD(msgTag, dataSize, msg) {
+            // Override this to handle custom messages from the plugin
+        }
+
+        // Knob controller
+        class KnobController {
+            constructor(element, valueDisplay, formatFn) {
+                this.element = element;
+                this.valueDisplay = valueDisplay;
+                this.formatFn = formatFn;
+                this.paramIdx = parseInt(element.dataset.param);
+                this.value = 0.78; // -6dB default (normalized)
+                this.dragging = false;
+                this.startY = 0;
+                this.startValue = 0;
+
+                element.addEventListener('mousedown', this.onMouseDown.bind(this));
+                document.addEventListener('mousemove', this.onMouseMove.bind(this));
+                document.addEventListener('mouseup', this.onMouseUp.bind(this));
+                this.updateVisual();
+            }
+
+            onMouseDown(e) {
+                this.dragging = true;
+                this.startY = e.clientY;
+                this.startValue = this.value;
+                e.preventDefault();
+                BPCFUI(this.paramIdx);
+            }
+
+            onMouseMove(e) {
+                if (!this.dragging) return;
+                const deltaY = this.startY - e.clientY;
+                let newValue = this.startValue + deltaY * 0.005;
+                newValue = Math.max(0, Math.min(1, newValue));
+                if (newValue !== this.value) {
+                    this.value = newValue;
+                    this.updateVisual();
+                    SPVFUI(this.paramIdx, this.value);
+                }
+            }
+
+            onMouseUp() {
+                if (this.dragging) {
+                    this.dragging = false;
+                    EPCFUI(this.paramIdx);
+                }
+            }
+
+            setValue(normalized) {
+                this.value = normalized;
+                this.updateVisual();
+            }
+
+            updateVisual() {
+                const rotation = (this.value - 0.5) * 270;
+                this.element.style.setProperty('--rotation', `${rotation}deg`);
+                if (this.valueDisplay && this.formatFn) {
+                    this.valueDisplay.textContent = this.formatFn(this.value);
+                }
+            }
+        }
+
+        // Initialize knob
+        const knob = new KnobController(
+            document.getElementById('gainKnob'),
+            document.getElementById('gainValue'),
+            v => (-70 + v * 82).toFixed(1) + ' dB'
+        );
+    </script>
+</body>
+</html>

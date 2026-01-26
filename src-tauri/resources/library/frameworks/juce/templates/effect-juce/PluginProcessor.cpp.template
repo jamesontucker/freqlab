@@ -1,0 +1,129 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+{{pascal_name}}Processor::{{pascal_name}}Processor()
+    : AudioProcessor(BusesProperties()
+                     .withInput("Input", juce::AudioChannelSet::stereo(), true)
+                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts(*this, nullptr, "Parameters", createParameterLayout())
+{
+}
+
+{{pascal_name}}Processor::~{{pascal_name}}Processor()
+{
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout {{pascal_name}}Processor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    // Gain parameter (dB scale with proper skew)
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"gain", 1},
+        "Gain",
+        juce::NormalisableRange<float>(-30.0f, 30.0f, 0.1f),
+        0.0f,  // Default 0 dB
+        juce::String(),
+        juce::AudioProcessorParameter::genericParameter,
+        [](float value, int) { return juce::String(value, 1) + " dB"; },
+        [](const juce::String& text) { return text.getFloatValue(); }
+    ));
+
+    return { params.begin(), params.end() };
+}
+
+void {{pascal_name}}Processor::prepareToPlay(double sampleRate, int samplesPerBlock)
+{
+    // Cache parameter pointer
+    gainParameter = apvts.getRawParameterValue("gain");
+
+    // Initialize smoothed value (20ms ramp)
+    smoothedGain.reset(sampleRate, 0.02);
+    smoothedGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(gainParameter->load()));
+
+    juce::ignoreUnused(samplesPerBlock);
+}
+
+void {{pascal_name}}Processor::releaseResources()
+{
+}
+
+void {{pascal_name}}Processor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    juce::ScopedNoDenormals noDenormals;
+    juce::ignoreUnused(midiMessages);
+
+    auto totalNumInputChannels = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    // Clear any output channels that don't have corresponding inputs
+    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+        buffer.clear(i, 0, buffer.getNumSamples());
+
+    // Update smoothed gain target from parameter
+    smoothedGain.setTargetValue(juce::Decibels::decibelsToGain(gainParameter->load()));
+
+    // Process audio with smoothed gain
+    if (smoothedGain.isSmoothing())
+    {
+        // Per-sample processing when gain is changing
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+        {
+            float gain = smoothedGain.getNextValue();
+
+            for (int channel = 0; channel < totalNumInputChannels; ++channel)
+            {
+                float* channelData = buffer.getWritePointer(channel);
+                channelData[sample] *= gain;
+
+                // Protect against NaN/Inf (can crash DAWs)
+                if (!std::isfinite(channelData[sample]))
+                    channelData[sample] = 0.0f;
+            }
+        }
+    }
+    else
+    {
+        // Apply constant gain when not smoothing (more efficient)
+        float gain = smoothedGain.getTargetValue();
+
+        for (int channel = 0; channel < totalNumInputChannels; ++channel)
+        {
+            float* channelData = buffer.getWritePointer(channel);
+            for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+            {
+                channelData[sample] *= gain;
+
+                // Protect against NaN/Inf
+                if (!std::isfinite(channelData[sample]))
+                    channelData[sample] = 0.0f;
+            }
+        }
+    }
+}
+
+void {{pascal_name}}Processor::getStateInformation(juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    copyXmlToBinary(*xml, destData);
+}
+
+void {{pascal_name}}Processor::setStateInformation(const void* data, int sizeInBytes)
+{
+    std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
+
+    if (xml != nullptr && xml->hasTagName(apvts.state.getType()))
+        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+}
+
+juce::AudioProcessorEditor* {{pascal_name}}Processor::createEditor()
+{
+    return new {{pascal_name}}Editor(*this);
+}
+
+// Plugin instantiation
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new {{pascal_name}}Processor();
+}

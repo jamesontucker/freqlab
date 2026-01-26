@@ -1,0 +1,161 @@
+{
+    "id": "nih-plug",
+    "name": "nih-plug",
+    "display_name": "nih-plug (Rust)",
+    "description": "Modern Rust audio plugin framework for VST3 and CLAP",
+    "language": "rust",
+    "version": "0.1.0",
+    "website": "https://github.com/robbert-vdh/nih-plug",
+    "documentation": "https://nih-plug.robbertvanderhelm.nl/",
+
+    "license": {
+        "name": "ISC (core) + GPLv3 (egui)",
+        "type": "permissive",
+        "summary": "Core is permissive (ISC). nih-plug-egui requires GPLv3. WebView UI is permissive.",
+        "details": "nih-plug core uses ISC license (permissive, similar to MIT). The nih-plug-egui GUI crate is GPLv3 which requires source disclosure. nih-plug-webview is permissive. Choose WebView or native UI for commercial closed-source plugins.",
+        "url": "https://github.com/robbert-vdh/nih-plug/blob/master/LICENSE"
+    },
+
+    "prerequisites": {
+        "required": ["xcode_cli", "rust", "claude_cli", "claude_auth"],
+        "optional": []
+    },
+
+    "outputs": {
+        "vst3": {
+            "extension": ".vst3",
+            "description": "VST3 plugin bundle"
+        },
+        "clap": {
+            "extension": ".clap",
+            "description": "CLAP plugin bundle"
+        }
+    },
+
+    "build": {
+        "command": "cargo xtask bundle",
+        "arguments": ["{{package_name}}", "--release"],
+        "working_directory": "{{workspace_path}}",
+        "output_directory": "{{workspace_path}}/output/{{project_name}}/v{{version}}"
+    },
+
+    "templates": {
+        "effect": {
+            "native": "effect-native",
+            "webview": "effect-webview",
+            "egui": "effect-egui"
+        },
+        "instrument": {
+            "native": "instrument-native",
+            "webview": "instrument-webview",
+            "egui": "instrument-egui"
+        }
+    },
+
+    "ui_frameworks": [
+        {
+            "id": "webview",
+            "name": "WebView (HTML/JS)",
+            "description": "Modern HTML/CSS/JS interface using nih-plug-webview. Best for complex UIs.",
+            "dependencies": {
+                "nih_plug_webview": { "git": "https://github.com/jamesontucker/nih-plug-webview", "branch": "main" },
+                "serde": { "version": "1.0", "features": ["derive"] },
+                "serde_json": "1.0"
+            }
+        },
+        {
+            "id": "egui",
+            "name": "egui (Rust UI)",
+            "description": "Immediate mode Rust GUI using nih-plug-egui. Cross-platform and simple.",
+            "dependencies": {
+                "nih_plug_egui": { "git": "https://github.com/robbert-vdh/nih-plug.git", "rev": "28b149ec" },
+                "egui": "0.24"
+            }
+        },
+        {
+            "id": "native",
+            "name": "Native (No UI)",
+            "description": "No custom UI - uses DAW's generic interface. Good for simple utilities.",
+            "dependencies": {}
+        }
+    ],
+
+    "skills": {
+        "core": ["basics"],
+        "effect": ["../../guides/effect-patterns"],
+        "instrument": ["../../guides/instrument-patterns"],
+        "ui": {
+            "webview": ["webview-ui"],
+            "egui": ["egui-ui"],
+            "native": ["native-ui"]
+        },
+        "shared": ["../../guides/dsp-safety"]
+    },
+
+    "components": [
+        {
+            "id": "preset_system",
+            "name": "Preset System",
+            "description": "Save/load user presets",
+            "skill": "../../guides/components/preset-system"
+        },
+        {
+            "id": "param_smoothing",
+            "name": "Parameter Smoothing",
+            "description": "Advanced smoothing techniques",
+            "skill": "../../guides/components/param-smoothing"
+        },
+        {
+            "id": "sidechain_input",
+            "name": "Sidechain Input",
+            "description": "Auxiliary input for ducking/keying",
+            "skill": "../../guides/components/sidechain-input",
+            "template_type": "effect"
+        },
+        {
+            "id": "oversampling",
+            "name": "Oversampling",
+            "description": "Anti-aliasing for distortion effects",
+            "skill": "../../guides/components/oversampling",
+            "template_type": "effect"
+        },
+        {
+            "id": "polyphony",
+            "name": "Polyphony",
+            "description": "Multiple voice management",
+            "skill": "../../guides/components/polyphony",
+            "template_type": "instrument"
+        },
+        {
+            "id": "velocity_layers",
+            "name": "Velocity Layers",
+            "description": "Velocity-sensitive sample playback",
+            "skill": "../../guides/components/velocity-layers",
+            "template_type": "instrument"
+        },
+        {
+            "id": "adsr_envelope",
+            "name": "ADSR Envelope",
+            "description": "Attack/Decay/Sustain/Release envelope",
+            "skill": "../../guides/components/adsr-envelope",
+            "template_type": "instrument"
+        },
+        {
+            "id": "lfo",
+            "name": "LFO",
+            "description": "Low frequency oscillator for modulation",
+            "skill": "../../guides/components/lfo"
+        }
+    ],
+
+    "placeholders": {
+        "pascal_name": "PascalCase plugin name (e.g., MyPlugin)",
+        "snake_name": "snake_case plugin name (e.g., my_plugin)",
+        "description": "Plugin description (escaped for Rust strings)",
+        "vst3_id": "16-character VST3 class ID",
+        "vendor_name": "Vendor display name",
+        "vendor_id": "Lowercase alphanumeric vendor ID",
+        "vendor_url": "Vendor website URL",
+        "vendor_email": "Vendor contact email"
+    }
+}

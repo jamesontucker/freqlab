@@ -1,0 +1,66 @@
+#pragma once
+
+#include "PluginProcessor.h"
+#include <juce_gui_extra/juce_gui_extra.h>
+#include "BinaryData.h"
+
+/// WebView-based plugin editor for {{pascal_name}}
+class {{pascal_name}}Editor : public juce::AudioProcessorEditor,
+                               private juce::Timer
+{
+public:
+    explicit {{pascal_name}}Editor({{pascal_name}}Processor&);
+    ~{{pascal_name}}Editor() override;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+
+    // Serve web resources from binary data
+    std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url);
+
+    // Handle messages from JavaScript
+    void handleJavaScriptMessage(const juce::var& message);
+
+    // Send parameter values to JavaScript
+    void sendParameterUpdate(const juce::String& paramId, float value);
+
+    {{pascal_name}}Processor& processor;
+
+    // WebView component
+    juce::WebBrowserComponent webView{
+        juce::WebBrowserComponent::Options{}
+            .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
+            .withNativeIntegrationEnabled()
+            .withResourceProvider([this](const auto& url) { return getResource(url); })
+            .withNativeFunction("setParameter", [this](const juce::var::NativeFunctionArgs& args) {
+                if (args.numArguments >= 2)
+                {
+                    juce::String paramId = args.arguments[0].toString();
+                    float value = static_cast<float>(args.arguments[1]);
+
+                    if (auto* param = processor.apvts.getParameter(paramId))
+                    {
+                        // Convert from display value to normalized
+                        auto range = param->getNormalisableRange();
+                        float normalized = range.convertTo0to1(value);
+                        param->setValueNotifyingHost(normalized);
+                    }
+                }
+                return juce::var();
+            })
+            .withNativeFunction("requestInit", [this](const juce::var::NativeFunctionArgs&) {
+                // Send current parameter values to UI
+                if (auto* param = processor.apvts.getParameter("gain"))
+                    sendParameterUpdate("gain", param->getValue() * 60.0f - 30.0f);
+                return juce::var();
+            })
+    };
+
+    // Track last sent values to avoid redundant updates
+    float lastGainValue = 0.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR({{pascal_name}}Editor)
+};

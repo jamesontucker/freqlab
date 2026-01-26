@@ -1,0 +1,32 @@
+#pragma once
+
+// No graphics - use IPlugEditorDelegate instead of IGraphicsEditorDelegate
+#define NO_IGRAPHICS 1
+
+#include "IPlug_include_in_plug_hdr.h"
+
+// Parameter indices
+enum EParams {
+    kGain = 0,
+    kNumParams
+};
+
+class {{pascal_name}} final : public iplug::Plugin {
+public:
+    {{pascal_name}}(const iplug::InstanceInfo& info);
+
+    void OnReset() override;
+    void OnParamChange(int paramIdx) override;
+    void ProcessBlock(iplug::sample** inputs, iplug::sample** outputs, int nFrames) override;
+    void ProcessMidiMsg(const iplug::IMidiMsg& msg) override;
+
+private:
+    // Cached parameter values for real-time safe access
+    double mGain = 1.0;
+
+    // Simple oscillator state
+    double mPhase = 0.0;
+    double mFreq = 0.0;
+    double mVelocity = 0.0;
+    bool mNoteOn = false;
+};

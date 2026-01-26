@@ -1,9 +1,35 @@
 //! Tauri commands for the audio preview system
 
+use crate::audio::plugin::PluginLoadOptions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
+
+/// Determine if a plugin needs library leak handling to avoid Objective-C class conflicts
+/// Returns true for iPlug2 plugins with UI frameworks that register Objective-C classes:
+/// - WebView: WKWebView and related classes
+/// - IGraphics: NanoVG/Metal rendering classes
+fn needs_library_leak(framework_id: Option<&str>, ui_framework: Option<&str>) -> bool {
+    matches!(
+        (framework_id, ui_framework),
+        (Some("iplug2"), Some("webview")) | (Some("iplug2"), Some("igraphics"))
+    )
+}
+
+/// Create PluginLoadOptions based on framework type
+fn create_load_options(framework_id: Option<&str>, ui_framework: Option<&str>) -> PluginLoadOptions {
+    let needs_leak = needs_library_leak(framework_id, ui_framework);
+
+    PluginLoadOptions {
+        // iPlug2 WebView/IGraphics: leak library to prevent crashes from Objective-C class conflicts
+        should_leak_library: needs_leak,
+        // iPlug2: use fixed temp path due to NSBundle caching issues
+        use_fixed_temp_path: framework_id == Some("iplug2"),
+        framework_id: framework_id.map(String::from),
+        ui_framework: ui_framework.map(String::from),
+    }
+}
 
 /// Global flag to control the level meter thread
 static LEVEL_METER_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -651,6 +677,10 @@ pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     clear_midi_input_queue();
     // Close editor first to save window position
     handle.close_plugin_editor();
+    // Delay for WebView cleanup before unloading (same as hot reload path)
+    log::info!("Waiting 500ms for WebView cleanup before unload...");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    log::info!("WebView cleanup delay complete, unloading plugin...");
     handle.unload_plugin();
     let _ = app_handle.emit("plugin-unloaded", ());
     Ok(())
@@ -728,13 +758,41 @@ pub fn get_project_plugin_path(project_name: String, version: u32) -> Result<Opt
         .join(&project_name)
         .join(format!("v{}", folder_version));
 
-    // Look for .clap bundle in the version folder
+    // Look for .clap bundle matching the project name (case-insensitive)
+    // This ensures we load the correct plugin even if other .clap files exist in the folder
+    let project_name_lower = project_name.to_lowercase();
+
     if let Ok(entries) = std::fs::read_dir(&output_path) {
+        // First pass: look for exact match (case-insensitive)
+        let mut first_clap: Option<std::path::PathBuf> = None;
+
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().map(|e| e == "clap").unwrap_or(false) {
-                return Ok(Some(path.to_string_lossy().to_string()));
+                // Get the bundle name (filename without extension)
+                if let Some(stem) = path.file_stem() {
+                    let stem_lower = stem.to_string_lossy().to_lowercase();
+                    if stem_lower == project_name_lower {
+                        // Exact match found - return immediately
+                        log::info!("Found matching plugin: {:?}", path);
+                        return Ok(Some(path.to_string_lossy().to_string()));
+                    }
+                }
+                // Remember the first .clap we found as fallback
+                if first_clap.is_none() {
+                    first_clap = Some(path);
+                }
             }
+        }
+
+        // Fallback: if no exact match, use the first .clap found (legacy behavior)
+        // This maintains backwards compatibility but logs a warning
+        if let Some(fallback_path) = first_clap {
+            log::warn!(
+                "No .clap matching project name '{}', falling back to: {:?}",
+                project_name, fallback_path
+            );
+            return Ok(Some(fallback_path.to_string_lossy().to_string()));
         }
     }
 
@@ -742,10 +800,13 @@ pub fn get_project_plugin_path(project_name: String, version: u32) -> Result<Opt
 }
 
 /// Load the plugin for the current project (auto-detect from output folder)
+/// framework_id and ui_framework are used to determine load options (e.g., iPlug2 WebView needs special handling)
 #[tauri::command]
 pub fn plugin_load_for_project(
     project_name: String,
     version: u32,
+    framework_id: Option<String>,
+    ui_framework: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     use tauri::Emitter;
@@ -756,10 +817,17 @@ pub fn plugin_load_for_project(
     let plugin_path = get_project_plugin_path(project_name.clone(), version)?
         .ok_or_else(|| format!("No .clap plugin found for {} v{}", project_name, version))?;
 
+    // Create load options based on framework type
+    let options = create_load_options(framework_id.as_deref(), ui_framework.as_deref());
+    log::info!(
+        "Loading plugin for project '{}': framework={:?}, ui={:?}, leak={}, fixed_temp={}",
+        project_name, framework_id, ui_framework, options.should_leak_library, options.use_fixed_temp_path
+    );
+
     // Emit loading event
     let _ = app_handle.emit("plugin-loading", &plugin_path);
 
-    match handle.load_plugin(std::path::Path::new(&plugin_path)) {
+    match handle.load_plugin_with_options(std::path::Path::new(&plugin_path), options) {
         Ok(()) => {
             // Reset crash event flag AFTER successful load so we don't get a
             // spurious toast from the old crashed plugin during reload
@@ -841,10 +909,13 @@ pub fn plugin_idle() {
 
 /// Reload the current plugin (for hot reload)
 /// If a project is specified, reload from that project's output folder
+/// framework_id and ui_framework determine cleanup behavior (e.g., iPlug2 WebView needs extra delays)
 #[tauri::command]
 pub fn plugin_reload(
     project_name: Option<String>,
     version: Option<u32>,
+    framework_id: Option<String>,
+    ui_framework: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     use tauri::Emitter;
@@ -864,25 +935,47 @@ pub fn plugin_reload(
         }
     };
 
-    log::info!("Hot reloading plugin: {}", plugin_path);
+    // Create load options based on framework type
+    let options = create_load_options(framework_id.as_deref(), ui_framework.as_deref());
+    let needs_objc_cleanup = needs_library_leak(framework_id.as_deref(), ui_framework.as_deref());
+
+    log::info!("═══════════════════════════════════════════════════════════════");
+    log::info!("                  HOT RELOAD SEQUENCE START                    ");
+    log::info!("═══════════════════════════════════════════════════════════════");
+    log::info!("Plugin path: {}", plugin_path);
+    log::info!("Framework: {:?}, UI: {:?}, needs_objc_cleanup: {}",
+        framework_id, ui_framework, needs_objc_cleanup);
 
     // Emit reloading event
     let _ = app_handle.emit("plugin-reloading", &plugin_path);
 
     // Close editor if open
+    log::info!("Hot reload step 1: Closing editor (if open)...");
     handle.close_plugin_editor();
+    log::info!("Hot reload step 1: DONE");
 
-    // Small delay to ensure editor window is fully closed
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    // iPlug2 WebView/IGraphics need extra delay for Objective-C cleanup
+    if needs_objc_cleanup {
+        log::info!("Hot reload step 2: Waiting 500ms for iPlug2 Obj-C cleanup...");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        log::info!("Hot reload step 2: DONE");
+    } else {
+        log::info!("Hot reload step 2: SKIPPED (not iPlug2 WebView/IGraphics)");
+    }
 
-    // Unload and reload the plugin
+    // Unload the current plugin
+    log::info!("Hot reload step 3: Unloading current plugin...");
     handle.unload_plugin();
+    log::info!("Hot reload step 3: DONE");
 
     // Small delay to ensure file handles are released
+    log::info!("Hot reload step 4: Waiting 100ms for file handle release...");
     std::thread::sleep(std::time::Duration::from_millis(100));
+    log::info!("Hot reload step 4: DONE");
 
     // Reload
-    match handle.load_plugin(std::path::Path::new(&plugin_path)) {
+    log::info!("Hot reload step 5: Loading new plugin...");
+    match handle.load_plugin_with_options(std::path::Path::new(&plugin_path), options) {
         Ok(()) => {
             // Reset crash event flag AFTER successful load so we can detect crashes in the reloaded plugin
             CRASH_EVENT_EMITTED.store(false, Ordering::SeqCst);
@@ -897,10 +990,17 @@ pub fn plugin_reload(
             update_midi_input_queue();
             // Pre-warm MIDI code paths to reduce initial lag
             prewarm_midi_paths(&handle);
-            log::info!("Plugin hot reload successful");
+            log::info!("Hot reload step 5: DONE");
+            log::info!("═══════════════════════════════════════════════════════════════");
+            log::info!("                  HOT RELOAD SEQUENCE COMPLETE                 ");
+            log::info!("═══════════════════════════════════════════════════════════════");
             Ok(())
         }
         Err(e) => {
+            log::error!("Hot reload step 5: FAILED - {}", e);
+            log::error!("═══════════════════════════════════════════════════════════════");
+            log::error!("                  HOT RELOAD SEQUENCE FAILED                   ");
+            log::error!("═══════════════════════════════════════════════════════════════");
             let _ = app_handle.emit("plugin-error", &e);
             Err(e)
         }

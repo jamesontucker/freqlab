@@ -1,0 +1,104 @@
+#include "SynthVoice.h"
+
+{{pascal_name}}Voice::{{pascal_name}}Voice()
+{
+    adsr.setParameters(adsrParams);
+}
+
+bool {{pascal_name}}Voice::canPlaySound(juce::SynthesiserSound* sound)
+{
+    return dynamic_cast<{{pascal_name}}Sound*>(sound) != nullptr;
+}
+
+void {{pascal_name}}Voice::startNote(int midiNoteNumber, float velocity,
+                                     juce::SynthesiserSound* /*sound*/,
+                                     int /*currentPitchWheelPosition*/)
+{
+    frequency = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
+    level = velocity;
+
+    // Calculate phase increment
+    angleDelta = frequency / sampleRate * juce::MathConstants<double>::twoPi;
+
+    adsr.noteOn();
+}
+
+void {{pascal_name}}Voice::stopNote(float /*velocity*/, bool allowTailOff)
+{
+    if (allowTailOff)
+    {
+        adsr.noteOff();
+    }
+    else
+    {
+        clearCurrentNote();
+        adsr.reset();
+        currentAngle = 0.0;
+    }
+}
+
+void {{pascal_name}}Voice::pitchWheelMoved(int /*newPitchWheelValue*/)
+{
+    // Optional: implement pitch bend
+}
+
+void {{pascal_name}}Voice::controllerMoved(int /*controllerNumber*/, int /*newControllerValue*/)
+{
+    // Optional: respond to MIDI CC
+}
+
+void {{pascal_name}}Voice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
+                                           int startSample, int numSamples)
+{
+    if (!isVoiceActive())
+        return;
+
+    // Smooth gain changes
+    const float gainSmoothing = 0.999f;
+
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        // Simple sine oscillator
+        float currentSample = static_cast<float>(std::sin(currentAngle));
+
+        // Apply envelope
+        float envelopeValue = adsr.getNextSample();
+        currentSample *= level * envelopeValue;
+
+        // Smooth gain
+        currentGain = currentGain * gainSmoothing + targetGain * (1.0f - gainSmoothing);
+        currentSample *= currentGain;
+
+        // Protect against NaN/Inf
+        if (!std::isfinite(currentSample))
+            currentSample = 0.0f;
+
+        // Add to output (allows polyphonic mixing)
+        for (int channel = 0; channel < outputBuffer.getNumChannels(); ++channel)
+        {
+            outputBuffer.addSample(channel, startSample + sample, currentSample);
+        }
+
+        // Advance phase
+        currentAngle += angleDelta;
+        if (currentAngle >= juce::MathConstants<double>::twoPi)
+            currentAngle -= juce::MathConstants<double>::twoPi;
+
+        // Check if voice should stop
+        if (!adsr.isActive())
+        {
+            clearCurrentNote();
+            break;
+        }
+    }
+}
+
+void {{pascal_name}}Voice::setCurrentSampleRate(double newRate)
+{
+    sampleRate = newRate;
+    adsr.setSampleRate(newRate);
+
+    // Recalculate angle delta if playing
+    if (frequency > 0.0)
+        angleDelta = frequency / sampleRate * juce::MathConstants<double>::twoPi;
+}

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { SettingsModal } from '../Settings/SettingsModal';
 import { ShareImportModal } from '../Share';
 import { AboutModal } from '../About';
+import { LibraryModal } from '../Library';
 import { PluginViewerToggle } from './PluginViewerToggle';
 import { usePreviewStore } from '../../stores/previewStore';
 import { useUpdateStore } from '../../stores/updateStore';
@@ -35,6 +36,7 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showShareImport, setShowShareImport] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>();
 
   // Tour refs
@@ -75,6 +77,7 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
   const settingsBlocked = tourActive;
   const shareBlocked = tourActive;
   const aboutBlocked = tourActive;
+  const libraryBlocked = tourActive;
   const controlsBlocked = tourActive && currentTourStep !== 'open-controls';
 
   // === STABLE ACTION REFERENCES ===
@@ -157,6 +160,20 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
           )}
 
           <button
+            onClick={() => !libraryBlocked && setShowLibrary(true)}
+            disabled={libraryBlocked}
+            className={`p-2 rounded-lg border transition-all duration-200 ${
+              libraryBlocked
+                ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
+                : 'bg-bg-tertiary text-text-primary hover:bg-accent/20 hover:text-accent border-border hover:border-accent/30'
+            }`}
+            title={libraryBlocked ? 'Complete the tour first' : 'Library'}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />
+            </svg>
+          </button>
+          <button
             ref={shareButtonRef}
             onClick={() => !anyBuildInProgress && !shareBlocked && setShowShareImport(true)}
             disabled={anyBuildInProgress || shareBlocked}
@@ -221,6 +238,7 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
         }}
       />
       <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
+      <LibraryModal isOpen={showLibrary} onClose={() => setShowLibrary(false)} />
     </>
   );
 }

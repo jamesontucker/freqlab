@@ -1,0 +1,93 @@
+#pragma once
+
+#include "PluginProcessor.h"
+
+/// Custom LookAndFeel for {{pascal_name}}
+class {{pascal_name}}LookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    {{pascal_name}}LookAndFeel()
+    {
+        // Dark theme colors
+        setColour(juce::Slider::backgroundColourId, juce::Colour(0xff2b2b2b));
+        setColour(juce::Slider::thumbColourId, juce::Colour(0xff6c9ced));
+        setColour(juce::Slider::trackColourId, juce::Colour(0xff4a4a4a));
+        setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff6c9ced));
+        setColour(juce::Slider::rotarySliderOutlineColourId, juce::Colour(0xff4a4a4a));
+        setColour(juce::Label::textColourId, juce::Colours::white);
+    }
+
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
+                          float sliderPosProportional, float rotaryStartAngle,
+                          float rotaryEndAngle, juce::Slider& slider) override
+    {
+        auto radius = (float)juce::jmin(width / 2, height / 2) - 4.0f;
+        auto centreX = (float)x + (float)width * 0.5f;
+        auto centreY = (float)y + (float)height * 0.5f;
+        auto rx = centreX - radius;
+        auto ry = centreY - radius;
+        auto rw = radius * 2.0f;
+        auto angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+
+        // Background track
+        g.setColour(slider.findColour(juce::Slider::rotarySliderOutlineColourId));
+        g.fillEllipse(rx, ry, rw, rw);
+
+        // Inner circle
+        g.setColour(juce::Colour(0xff1a1a2e));
+        g.fillEllipse(rx + 4, ry + 4, rw - 8, rw - 8);
+
+        // Value arc
+        juce::Path arcPath;
+        arcPath.addCentredArc(centreX, centreY, radius - 2, radius - 2,
+                              0.0f, rotaryStartAngle, angle, true);
+        g.setColour(slider.findColour(juce::Slider::rotarySliderFillColourId));
+        g.strokePath(arcPath, juce::PathStrokeType(4.0f));
+
+        // Pointer
+        juce::Path pointer;
+        auto pointerLength = radius * 0.6f;
+        auto pointerThickness = 3.0f;
+        pointer.addRoundedRectangle(-pointerThickness * 0.5f, -radius + 6, pointerThickness, pointerLength, 1.5f);
+        pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+        g.setColour(juce::Colours::white);
+        g.fillPath(pointer);
+    }
+};
+
+/// Plugin editor for {{pascal_name}}
+class {{pascal_name}}Editor : public juce::AudioProcessorEditor
+{
+public:
+    explicit {{pascal_name}}Editor({{pascal_name}}Processor&);
+    ~{{pascal_name}}Editor() override;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    {{pascal_name}}Processor& processor;
+
+    // LookAndFeel (declare BEFORE components that use it!)
+    {{pascal_name}}LookAndFeel lookAndFeel;
+
+    // UI components - main
+    juce::Slider gainSlider;
+    juce::Label gainLabel;
+
+    // UI components - ADSR
+    juce::Slider attackSlider, decaySlider, sustainSlider, releaseSlider;
+    juce::Label attackLabel, decayLabel, sustainLabel, releaseLabel;
+
+    // Attachments (declare AFTER components!)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sustainAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
+
+    // Helper to set up a knob
+    void setupKnob(juce::Slider& slider, juce::Label& label, const juce::String& text);
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR({{pascal_name}}Editor)
+};

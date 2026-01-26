@@ -1,0 +1,157 @@
+use nih_plug::prelude::*;
+use std::sync::Arc;
+
+/// {{description}}
+struct {{pascal_name}} {
+    params: Arc<{{pascal_name}}Params>,
+    sample_rate: f32,
+    /// Current phase of the oscillator (0.0 to 1.0)
+    phase: f32,
+    /// Current note frequency (0 if no note playing)
+    note_freq: f32,
+    /// Current note velocity (0.0 to 1.0)
+    velocity: f32,
+}
+
+#[derive(Params)]
+struct {{pascal_name}}Params {
+    #[id = "gain"]
+    pub gain: FloatParam,
+}
+
+impl Default for {{pascal_name}} {
+    fn default() -> Self {
+        Self {
+            params: Arc::new({{pascal_name}}Params::default()),
+            sample_rate: 44100.0,
+            phase: 0.0,
+            note_freq: 0.0,
+            velocity: 0.0,
+        }
+    }
+}
+
+impl Default for {{pascal_name}}Params {
+    fn default() -> Self {
+        Self {
+            gain: FloatParam::new(
+                "Gain",
+                util::db_to_gain(-6.0),
+                FloatRange::Skewed {
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(6.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 6.0),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+        }
+    }
+}
+
+impl {{pascal_name}} {
+    /// Convert MIDI note number to frequency in Hz
+    fn midi_note_to_freq(note: u8) -> f32 {
+        440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+    }
+}
+
+impl Plugin for {{pascal_name}} {
+    const NAME: &'static str = "{{pascal_name}}";
+    const VENDOR: &'static str = "{{vendor_name}}";
+    const URL: &'static str = "{{vendor_url}}";
+    const EMAIL: &'static str = "{{vendor_email}}";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    // Instrument: no audio input, stereo output
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {
+        self.params.clone()
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        self.sample_rate = buffer_config.sample_rate;
+        true
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        // Process MIDI events
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::NoteOn { note, velocity, .. } => {
+                    self.note_freq = Self::midi_note_to_freq(note);
+                    self.velocity = velocity;
+                }
+                NoteEvent::NoteOff { note, .. } => {
+                    // Only stop if it's the same note
+                    if Self::midi_note_to_freq(note) == self.note_freq {
+                        self.note_freq = 0.0;
+                        self.velocity = 0.0;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Generate audio
+        let phase_delta = self.note_freq / self.sample_rate;
+
+        for channel_samples in buffer.iter_samples() {
+            let gain = self.params.gain.smoothed.next();
+            // Simple sine wave oscillator
+            let sample = if self.note_freq > 0.0 {
+                let sine = (self.phase * std::f32::consts::TAU).sin();
+                self.phase = (self.phase + phase_delta) % 1.0;
+                sine * self.velocity * gain
+            } else {
+                0.0
+            };
+
+            for output_sample in channel_samples {
+                // Protect against NaN/Inf (can crash DAWs)
+                *output_sample = if sample.is_finite() { sample } else { 0.0 };
+            }
+        }
+
+        ProcessStatus::Normal
+    }
+}
+
+impl ClapPlugin for {{pascal_name}} {
+    const CLAP_ID: &'static str = "com.{{vendor_id}}.{{snake_name}}";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("{{description}}");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Stereo];
+}
+
+impl Vst3Plugin for {{pascal_name}} {
+    const VST3_CLASS_ID: [u8; 16] = *b"{{vst3_id}}";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Synth, Vst3SubCategory::Instrument];
+}
+
+nih_export_clap!({{pascal_name}});
+nih_export_vst3!({{pascal_name}});

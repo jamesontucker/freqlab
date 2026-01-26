@@ -41,6 +41,7 @@ export function usePrerequisites() {
   const allInstalled = status
     ? status.xcode_cli.status === 'installed' &&
       status.rust.status === 'installed' &&
+      status.cmake.status === 'installed' &&
       status.claude_cli.status === 'installed' &&
       status.claude_auth.status === 'installed'
     : false;

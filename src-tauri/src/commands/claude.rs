@@ -312,8 +312,14 @@ fn get_component_description(component_id: &str) -> &'static str {
     }
 }
 
-/// Local nih-plug API reference bundled at compile time (fallback)
-const NIH_PLUG_REFERENCE: &str = include_str!("../../resources/nih-plug-reference.md");
+/// Get framework display name and language from framework ID
+fn get_framework_info(framework_id: Option<&str>) -> (&'static str, &'static str) {
+    match framework_id {
+        Some("juce") => ("JUCE", "C++"),
+        Some("iplug2") => ("iPlug2", "C++"),
+        _ => ("nih-plug", "Rust"), // Default to nih-plug
+    }
+}
 
 /// Build the system context for Claude when working on a plugin project
 fn build_context(
@@ -322,11 +328,11 @@ fn build_context(
     project_path: &str,
     components: Option<&Vec<String>>,
     is_first_message: bool,
-    ui_framework: Option<&str>,
+    _ui_framework: Option<&str>, // Kept for potential future use; UI rules now in framework guides
+    framework_id: Option<&str>,
 ) -> String {
-    // Get path to local nih-plug repo for documentation
-    let nih_plug_docs_path = super::projects::get_nih_plug_docs_path();
-    let docs_path_str = nih_plug_docs_path.to_string_lossy();
+    // Get framework info for display
+    let (framework_name, framework_lang) = get_framework_info(framework_id);
 
     // Read project-specific CLAUDE.md if it exists
     let claude_md_path = PathBuf::from(project_path).join("CLAUDE.md");
@@ -358,20 +364,12 @@ fn build_context(
             }
         }
 
-        // Add UI requirement for webview plugins
-        if ui_framework == Some("webview") {
-            context.push_str("## YOU MUST UPDATE THE UI\n\n");
-            context.push_str("This is a WebView plugin. When you add parameters/features:\n");
-            context.push_str("1. Add the parameter in lib.rs\n");
-            context.push_str("2. **ALSO add a UI control in ui.html** (slider, knob, button, etc.)\n");
-            context.push_str("3. Connect the UI control via IPC messages\n\n");
-            context.push_str("A plugin with no UI controls is BROKEN. Always update both lib.rs AND ui.html.\n\n");
-            context.push_str("---\n\n");
-        }
+        // Note: UI requirements (webview, egui, etc.) are now in framework-specific guides
+        // which are copied to .claude/commands/ during project creation
     }
 
     context.push_str(&format!(
-        r#"You are helping develop a VST audio plugin using nih-plug (Rust).
+        r#"You are helping develop a VST audio plugin using {framework_name} ({framework_lang}).
 
 Project: {project_name}
 Description: {description}
@@ -429,23 +427,13 @@ Before implementing ANY audio feature, you MUST check if a relevant skill exists
 
 "#);
 
-    context.push_str(&format!(r#"## nih-plug Documentation
-
-A local clone of the nih-plug repository is available at: {}
-- Use Grep/Read to search the repo for API examples and syntax
-- Key directories: src/lib.rs (main exports), src/params/ (parameter types), src/buffer.rs (audio buffers)
-- The plugins/ directory contains example plugins you can reference
-
-## Quick Reference
-{}
-
-## Workflow (Follow This Order)
+    context.push_str(r#"## Workflow (Follow This Order)
 
 When the user requests a feature:
-1. **Read src/lib.rs** to understand current state
-2. **INVOKE THE RELEVANT SKILL** - this is NOT optional (see rule #5 above)
-3. Implement using patterns from the skill
-4. Protect against NaN/Inf: `if !sample.is_finite() {{ *sample = 0.0; }}`
+1. **Read the main source file** to understand current state
+2. **INVOKE THE RELEVANT SKILL** from `.claude/commands/` - this is NOT optional (see rule #5 above)
+3. Implement using patterns from the skill (skills contain framework-specific API patterns and best practices)
+4. Protect against NaN/Inf: `if !sample.is_finite() { *sample = 0.0; }`
 5. Briefly summarize what you added (feature terms, not code terms)
 
 **After completing a feature** (not during implementation):
@@ -460,10 +448,7 @@ When the user requests a feature:
   - Bad: "Prefers simple" + later "Actually likes complex" (contradictory)
   - Good: "Prefers simple UI but enjoys complex DSP under the hood"
 - Keep notes concise and current - this is a living profile, not a log
-- These notes help you work better with this user across sessions"#,
-        docs_path_str,
-        NIH_PLUG_REFERENCE
-    ));
+- These notes help you work better with this user across sessions"#);
 
     // Append project-specific CLAUDE.md guidelines if present
     if !claude_md_content.is_empty() {
@@ -517,13 +502,14 @@ pub async fn send_to_claude(
     let existing_session = load_session_id(&project_path);
     let is_first_message = existing_session.is_none();
 
-    // Load project metadata to get components and UI framework
+    // Load project metadata to get components, UI framework, and framework ID
     let metadata = load_project_metadata(&project_path);
     let components = metadata.as_ref().and_then(|m| m.components.as_ref());
     let ui_framework = metadata.as_ref().and_then(|m| m.ui_framework.as_deref());
+    let framework_id = metadata.as_ref().and_then(|m| m.framework_id.as_deref());
 
     // Build context with components info and project-specific CLAUDE.md
-    let context = build_context(&project_name, &description, &project_path, components, is_first_message, ui_framework);
+    let context = build_context(&project_name, &description, &project_path, components, is_first_message, ui_framework, framework_id);
 
     // Get verbosity style (default to balanced)
     let verbosity = agent_verbosity.as_deref().unwrap_or("balanced");
