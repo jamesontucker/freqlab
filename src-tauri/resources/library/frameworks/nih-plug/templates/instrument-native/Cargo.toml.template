@@ -10,7 +10,3 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "28b149ec" }
-
-[profile.release]
-lto = "thin"
-strip = "symbols"

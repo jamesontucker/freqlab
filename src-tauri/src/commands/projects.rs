@@ -132,6 +132,10 @@ pub fn ensure_workspace() -> Result<(), String> {
         r#"[workspace]
 {}
 resolver = "2"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
 "#,
         members_str
     );
