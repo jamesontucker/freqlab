@@ -89,6 +89,10 @@ endif()
 # Set up iPlug2 CMake module
 set(IPLUG2_DIR ${iplug2_SOURCE_DIR} CACHE PATH "iPlug2 root directory" FORCE)
 include(${IPLUG2_DIR}/iPlug2.cmake)
+
+# Don't auto-install to system plugin dirs - freqlab handles publishing
+set(IPLUG_DEPLOY_PLUGINS OFF CACHE BOOL "" FORCE)
+
 find_package(iPlug2 REQUIRED)
 
 # Create plugin targets (no UI - DAW controls only)

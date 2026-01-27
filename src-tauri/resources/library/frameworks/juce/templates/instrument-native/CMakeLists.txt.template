@@ -40,8 +40,8 @@ juce_add_plugin({{pascal_name}}
 
     PRODUCT_NAME "{{pascal_name}}"
 
-    # Auto-copy after build
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    # Don't auto-install to system plugin dirs - freqlab handles publishing
+    COPY_PLUGIN_AFTER_BUILD FALSE
 
     # Plugin characteristics (instrument/synth)
     IS_SYNTH TRUE
