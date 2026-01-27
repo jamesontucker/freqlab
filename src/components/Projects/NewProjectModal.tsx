@@ -328,7 +328,7 @@ interface FrameworkDisplayInfo {
   languageLabel: string;
   platforms: string[];
   features: string[];
-  buildSpeed: 'fast' | 'slow';
+  buildSpeed: 'fast' | 'slow' | 'slowest';
   buildNote: string;
 }
 
@@ -383,8 +383,8 @@ function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
       languageLabel: 'C++',
       platforms: ['macOS', 'Windows', 'Linux'],
       features: ['Industry standard', 'Most resources', 'Battle-tested'],
-      buildSpeed: 'slow',
-      buildNote: 'Slower C++ compilation',
+      buildSpeed: 'slowest',
+      buildNote: 'Slowest builds (large C++ framework)',
     };
   } else if (fw.id === 'iplug2') {
     return {
@@ -1024,12 +1024,14 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                             <div className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
                               displayInfo.buildSpeed === 'fast'
                                 ? 'bg-blue-500/10 text-blue-400'
-                                : 'bg-orange-500/10 text-orange-400'
+                                : displayInfo.buildSpeed === 'slow'
+                                  ? 'bg-orange-500/10 text-orange-400'
+                                  : 'bg-red-500/10 text-red-400'
                             }`} title={displayInfo.buildNote}>
                               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
-                              {displayInfo.buildSpeed === 'fast' ? 'Fast builds' : 'Slower builds'}
+                              {displayInfo.buildSpeed === 'fast' ? 'Fast builds' : displayInfo.buildSpeed === 'slow' ? 'Slow builds' : 'Slowest builds'}
                             </div>
                           </div>
                           <p className="text-xs text-text-muted mt-1">{displayInfo.tagline}</p>

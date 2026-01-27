@@ -160,14 +160,14 @@ export function Header({ title = 'freqlab' }: HeaderProps) {
           )}
 
           <button
-            onClick={() => !libraryBlocked && setShowLibrary(true)}
-            disabled={libraryBlocked}
+            onClick={() => !anyBuildInProgress && !libraryBlocked && setShowLibrary(true)}
+            disabled={anyBuildInProgress || libraryBlocked}
             className={`p-2 rounded-lg border transition-all duration-200 ${
-              libraryBlocked
+              anyBuildInProgress || libraryBlocked
                 ? 'bg-bg-tertiary text-text-muted border-border opacity-50 cursor-not-allowed'
                 : 'bg-bg-tertiary text-text-primary hover:bg-accent/20 hover:text-accent border-border hover:border-accent/30'
             }`}
-            title={libraryBlocked ? 'Complete the tour first' : 'Library'}
+            title={libraryBlocked ? 'Complete the tour first' : anyBuildInProgress ? 'Build in progress...' : 'Library'}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />
