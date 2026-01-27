@@ -28,7 +28,11 @@
         },
         "au": {
             "extension": ".component",
-            "description": "Audio Unit plugin (macOS)"
+            "description": "Audio Unit v2 plugin (macOS)"
+        },
+        "auv3": {
+            "extension": ".appex",
+            "description": "Audio Unit v3 plugin (macOS/iOS)"
         },
         "clap": {
             "extension": ".clap",
@@ -52,7 +56,9 @@
             "build/**/*.clap",
             "build/**/*.vst3",
             "build/**/*.component",
-            "build/**/*.app"
+            "build/**/*.app",
+            "build/**/*.appex",
+            "build/**/*.framework"
         ],
         "notes": {
             "first_build": "First build downloads iPlug2 via FetchContent. This is cached in build/_deps/ for subsequent builds.",

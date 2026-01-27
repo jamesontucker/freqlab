@@ -938,12 +938,25 @@ export function ChatPanel({ project, onVersionChange }: ChatPanelProps) {
           </div>
         </div>
       )}
-      {/* Header with UI type and version */}
+      {/* Header with framework, UI type and version */}
       <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+        {/* Framework with label */}
+        {project.frameworkId && (
+          <>
+            <span className="text-[10px] text-text-muted">Framework:</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-bg-tertiary text-text-secondary font-medium">
+              {{
+                'nih-plug': 'NIH-plug',
+                'iplug2': 'iPlug2',
+                'juce': 'JUCE',
+              }[project.frameworkId] || project.frameworkId}
+            </span>
+          </>
+        )}
         {/* UI type with label */}
         {project.uiFramework && (
           <>
-            <span className="text-[10px] text-text-muted">UI Type:</span>
+            <span className="text-[10px] text-text-muted">UI:</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-bg-tertiary text-text-secondary font-medium">
               {{
                 webview: 'WebView',

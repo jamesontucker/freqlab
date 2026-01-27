@@ -187,12 +187,32 @@ function IGraphicsIcon({ className }: { className?: string }) {
   );
 }
 
+function JuceUIIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      {/* Main container */}
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      {/* Slider component */}
+      <rect x="5" y="6" width="6" height="2" rx="1" />
+      <circle cx="9" cy="7" r="1.5" fill="currentColor" />
+      {/* Button component */}
+      <rect x="13" y="5" width="6" height="4" rx="1" />
+      {/* Knob component */}
+      <circle cx="8" cy="14" r="3" />
+      <path d="M8 12v2" />
+      {/* Text/label */}
+      <rect x="13" y="12" width="5" height="1.5" rx="0.5" fill="currentColor" />
+      <rect x="13" y="15" width="4" height="1.5" rx="0.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 function getUIFrameworkIcon(id: string, className?: string) {
   switch (id) {
     case 'webview': return <WebViewIcon className={className} />;
     case 'egui': return <EguiIcon className={className} />;
     case 'igraphics': return <IGraphicsIcon className={className} />;
-    case 'juce': return <CppIcon className={className} />;
+    case 'juce': return <JuceUIIcon className={className} />;
     case 'native': return <NativeIcon className={className} />;
     default: return <NativeIcon className={className} />;
   }
@@ -308,12 +328,39 @@ interface FrameworkDisplayInfo {
   languageLabel: string;
   platforms: string[];
   features: string[];
+  buildSpeed: 'fast' | 'slow';
+  buildNote: string;
+}
+
+// Consistent format order for all frameworks
+const FORMAT_ORDER = ['.clap', '.vst3', '.component', '.appex', '.app'];
+
+// Display names for extensions (e.g., .app -> standalone)
+const FORMAT_DISPLAY_NAMES: Record<string, string> = {
+  '.app': 'standalone',
+};
+
+function sortFormats(outputs: Record<string, { extension: string; description: string }>): Array<{ key: string; extension: string; displayName: string; description: string }> {
+  return Object.entries(outputs)
+    .map(([key, output]) => ({
+      key,
+      ...output,
+      displayName: FORMAT_DISPLAY_NAMES[output.extension] || output.extension,
+    }))
+    .sort((a, b) => {
+      const aIndex = FORMAT_ORDER.indexOf(a.extension);
+      const bIndex = FORMAT_ORDER.indexOf(b.extension);
+      if (aIndex === -1 && bIndex === -1) return a.extension.localeCompare(b.extension);
+      if (aIndex === -1) return 1;
+      if (bIndex === -1) return -1;
+      return aIndex - bIndex;
+    });
 }
 
 function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
   if (fw.id === 'nih-plug') {
     return {
-      displayName: 'Rust Audio',
+      displayName: 'NIH-plug',
       tagline: 'Modern, memory-safe plugin development with excellent performance',
       icon: (className) => <RustIcon className={className} />,
       licenseType: 'free',
@@ -321,7 +368,9 @@ function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
       licenseNote: 'Open source, no restrictions',
       languageLabel: 'Rust',
       platforms: ['macOS', 'Windows', 'Linux'],
-      features: ['Web UI', 'egui UI', 'Memory safe'],
+      features: ['Crash resistant', 'Fast iteration', 'Modern tooling'],
+      buildSpeed: 'fast',
+      buildNote: 'Fast incremental builds',
     };
   } else if (fw.id === 'juce') {
     return {
@@ -329,11 +378,13 @@ function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
       tagline: 'Industry-standard framework used by major plugin companies',
       icon: (className) => <CppIcon className={className} />,
       licenseType: 'conditional',
-      licenseLabel: 'Free up to $50K revenue',
+      licenseLabel: 'Free up to $50K',
       licenseNote: 'Commercial license required above $50K/year revenue',
       languageLabel: 'C++',
       platforms: ['macOS', 'Windows', 'Linux'],
-      features: ['Web UI', 'Native UI', 'Large ecosystem'],
+      features: ['Industry standard', 'Most resources', 'Battle-tested'],
+      buildSpeed: 'slow',
+      buildNote: 'Slower C++ compilation',
     };
   } else if (fw.id === 'iplug2') {
     return {
@@ -345,7 +396,9 @@ function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
       licenseNote: 'Permissive license, no restrictions',
       languageLabel: 'C++',
       platforms: ['macOS', 'Windows'],
-      features: ['Web UI', 'Vector UI', 'Permissive'],
+      features: ['Lightweight', 'Simple setup', 'Small footprint'],
+      buildSpeed: 'slow',
+      buildNote: 'Slower C++ compilation',
     };
   }
   // Default fallback
@@ -359,6 +412,8 @@ function getFrameworkDisplayInfo(fw: LibraryFramework): FrameworkDisplayInfo {
     languageLabel: fw.language,
     platforms: ['macOS'],
     features: [],
+    buildSpeed: 'slow',
+    buildNote: '',
   };
 }
 
@@ -485,9 +540,20 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
     setFrameworksError(null);
     try {
       const fws = await invoke<LibraryFramework[]>('get_frameworks');
-      setFrameworks(fws);
-      if (fws.length > 0 && !fws.find(f => f.id === frameworkId)) {
-        setFrameworkId(fws[0].id);
+      // Sort frameworks: nih-plug first, then iplug2, then juce, then others alphabetically
+      const frameworkOrder = ['nih-plug', 'iplug2', 'juce'];
+      const sortedFws = [...fws].sort((a, b) => {
+        const aIndex = frameworkOrder.indexOf(a.id);
+        const bIndex = frameworkOrder.indexOf(b.id);
+        if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+        if (aIndex !== -1) return -1;
+        if (bIndex !== -1) return 1;
+        return a.id.localeCompare(b.id);
+      });
+      setFrameworks(sortedFws);
+      // Default to first framework if none selected yet
+      if (sortedFws.length > 0) {
+        setFrameworkId(current => sortedFws.find(f => f.id === current) ? current : sortedFws[0].id);
       }
     } catch (err) {
       console.error('Failed to load frameworks:', err);
@@ -496,7 +562,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
     } finally {
       setFrameworksLoading(false);
     }
-  }, [frameworkId]);
+  }, []); // No dependencies - only load when modal opens
 
   // Load frameworks when modal opens
   useEffect(() => {
@@ -864,7 +930,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
         {step === 'framework' && (
           <div className="space-y-4">
             <div>
-              <h3 className="text-sm font-medium text-text-secondary mb-1">Choose Your Language</h3>
+              <h3 className="text-sm font-medium text-text-secondary mb-1">Choose Your Framework</h3>
               <p className="text-xs text-text-muted mb-4">
                 Pick the programming language and framework for your plugin.
               </p>
@@ -926,90 +992,92 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
                           </div>
                         )}
 
-                        <div className="flex items-start gap-4">
-                          {/* Language icon */}
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                            isSelected ? 'bg-accent/20' : 'bg-bg-tertiary'
-                          }`}>
-                            {displayInfo.icon(`w-6 h-6 ${isSelected ? 'text-accent' : 'text-text-muted'}`)}
-                          </div>
-
-                          <div className="flex-1 min-w-0 pr-8">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-semibold ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
-                                {displayInfo.displayName}
-                              </span>
-                              <span className="px-1.5 py-0.5 text-[10px] rounded bg-bg-tertiary text-text-muted">
-                                {displayInfo.languageLabel}
-                              </span>
-                            </div>
-                            <p className="text-xs text-text-muted mt-1">{displayInfo.tagline}</p>
-
-                            {/* Platforms and Features row */}
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
-                              {/* Platforms */}
-                              <div className="flex items-center gap-1.5">
-                                <svg className="w-3 h-3 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        <div className="flex-1 min-w-0 pr-8">
+                          {/* Title row with language and license */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`font-semibold ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
+                              {displayInfo.displayName}
+                            </span>
+                            <span className="px-1.5 py-0.5 text-[10px] rounded bg-bg-tertiary text-text-muted">
+                              {displayInfo.languageLabel}
+                            </span>
+                            {/* License badge */}
+                            <div className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
+                              displayInfo.licenseType === 'free'
+                                ? 'bg-green-500/10 text-green-400'
+                                : displayInfo.licenseType === 'conditional'
+                                ? 'bg-amber-500/10 text-amber-400'
+                                : 'bg-red-500/10 text-red-400'
+                            }`}>
+                              {displayInfo.licenseType === 'free' ? (
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
-                                <span className="text-[10px] text-text-secondary">
-                                  {displayInfo.platforms.join(' · ')}
-                                </span>
-                              </div>
+                              ) : (
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                              )}
+                              {displayInfo.licenseLabel}
+                            </div>
+                            {/* Build speed indicator */}
+                            <div className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded ${
+                              displayInfo.buildSpeed === 'fast'
+                                ? 'bg-blue-500/10 text-blue-400'
+                                : 'bg-orange-500/10 text-orange-400'
+                            }`} title={displayInfo.buildNote}>
+                              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                              </svg>
+                              {displayInfo.buildSpeed === 'fast' ? 'Fast builds' : 'Slower builds'}
+                            </div>
+                          </div>
+                          <p className="text-xs text-text-muted mt-1">{displayInfo.tagline}</p>
 
-                              {/* Features */}
-                              <div className="flex items-center gap-1.5">
-                                {displayInfo.features.map((feature) => (
-                                  <span
-                                    key={feature}
-                                    className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent"
-                                  >
-                                    {feature}
-                                  </span>
-                                ))}
-                              </div>
+                          {/* Platforms and Features row */}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
+                            {/* Platforms */}
+                            <div className="flex items-center gap-1.5">
+                              <svg className="w-3 h-3 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                              </svg>
+                              <span className="text-[10px] text-text-secondary">
+                                {displayInfo.platforms.join(' · ')}
+                              </span>
                             </div>
 
-                            {/* License and formats row */}
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              {/* License badge */}
-                              <div className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md ${
-                                displayInfo.licenseType === 'free'
-                                  ? 'bg-green-500/10 text-green-400'
-                                  : displayInfo.licenseType === 'conditional'
-                                  ? 'bg-amber-500/10 text-amber-400'
-                                  : 'bg-red-500/10 text-red-400'
-                              }`}>
-                                {displayInfo.licenseType === 'free' ? (
-                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                  </svg>
-                                ) : (
-                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                  </svg>
-                                )}
-                                {displayInfo.licenseLabel}
-                              </div>
-
-                              {/* Output formats */}
-                              {Object.entries(fw.outputs).map(([key, output]) => (
+                            {/* Features */}
+                            <div className="flex items-center gap-1.5">
+                              {displayInfo.features.map((feature) => (
                                 <span
-                                  key={key}
-                                  className="px-2 py-1 text-[10px] rounded-md bg-bg-tertiary text-text-secondary"
+                                  key={feature}
+                                  className="px-1.5 py-0.5 text-[10px] rounded bg-accent/10 text-accent"
                                 >
-                                  {output.extension}
+                                  {feature}
                                 </span>
                               ))}
                             </div>
-
-                            {/* License note for conditional */}
-                            {displayInfo.licenseType === 'conditional' && (
-                              <p className="text-[10px] text-amber-400/80 mt-2">
-                                {displayInfo.licenseNote}
-                              </p>
-                            )}
                           </div>
+
+                          {/* Formats row */}
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <span className="text-[10px] text-text-muted">Formats:</span>
+                            {sortFormats(fw.outputs).map(({ key, displayName }) => (
+                              <span
+                                key={key}
+                                className="px-2 py-0.5 text-[10px] rounded-md bg-bg-tertiary text-text-secondary"
+                              >
+                                {displayName}
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* License note for conditional */}
+                          {displayInfo.licenseType === 'conditional' && (
+                            <p className="text-[10px] text-amber-400/80 mt-2">
+                              {displayInfo.licenseNote}
+                            </p>
+                          )}
                         </div>
                       </button>
                     );

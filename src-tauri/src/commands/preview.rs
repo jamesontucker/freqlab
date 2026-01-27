@@ -676,11 +676,8 @@ pub fn plugin_unload(app_handle: tauri::AppHandle) -> Result<(), String> {
     clear_midi_player_queue();
     clear_midi_input_queue();
     // Close editor first to save window position
+    // Note: close_plugin_editor() already has a 300ms delay for WebView cleanup
     handle.close_plugin_editor();
-    // Delay for WebView cleanup before unloading (same as hot reload path)
-    log::info!("Waiting 500ms for WebView cleanup before unload...");
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    log::info!("WebView cleanup delay complete, unloading plugin...");
     handle.unload_plugin();
     let _ = app_handle.emit("plugin-unloaded", ());
     Ok(())
