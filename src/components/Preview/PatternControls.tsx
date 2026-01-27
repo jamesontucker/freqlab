@@ -77,6 +77,14 @@ export function PatternControls({ pluginLoaded }: PatternControlsProps) {
     };
   }, []);
 
+  // Reset play state when plugin is unloaded
+  useEffect(() => {
+    if (!pluginLoaded && isPlaying) {
+      setIsPlaying(false);
+      playbackStartedRef.current = false;
+    }
+  }, [pluginLoaded, isPlaying]);
+
   const filteredPatterns = patterns.filter(p => p.category === selectedCategory);
 
   // Handle category change - stop playback if switching away from playing pattern

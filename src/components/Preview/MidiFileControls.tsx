@@ -59,6 +59,14 @@ export function MidiFileControls({ pluginLoaded }: MidiFileControlsProps) {
     };
   }, []);
 
+  // Reset play state when plugin is unloaded
+  useEffect(() => {
+    if (!pluginLoaded && isPlaying) {
+      setIsPlaying(false);
+      playbackStartedRef.current = false;
+    }
+  }, [pluginLoaded, isPlaying]);
+
   // Poll playback position while playing (with guards against overlapping calls)
   useEffect(() => {
     if (!isPlaying) return;
