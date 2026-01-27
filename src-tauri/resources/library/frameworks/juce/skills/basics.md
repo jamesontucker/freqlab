@@ -8,6 +8,8 @@ internal: true
 
 This plugin uses [JUCE](https://juce.com), a C++ framework for audio applications and plugins.
 
+**Version requirement**: JUCE 8.0.12+ is required for macOS 15 (Sequoia) compatibility.
+
 ## Two-Thread Model
 
 JUCE plugins have two threads you must understand:

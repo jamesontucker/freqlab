@@ -1,7 +1,7 @@
 #include "PluginEditor.h"
 
 {{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
-    : AudioProcessorEditor(p), processor(p)
+    : AudioProcessorEditor(p), processorRef(p)
 {
     addAndMakeVisible(webView);
 
@@ -32,32 +32,26 @@ void {{pascal_name}}Editor::resized()
 void {{pascal_name}}Editor::timerCallback()
 {
     // Sync parameter changes from host/automation to UI
-    auto checkAndSend = [this](const juce::String& id, int index) {
-        if (auto* param = processor.apvts.getParameter(id))
-        {
-            auto range = param->getNormalisableRange();
-            float displayValue = range.convertFrom0to1(param->getValue());
-            if (std::abs(displayValue - lastValues[index]) > 0.001f)
-            {
-                lastValues[index] = displayValue;
-                sendParameterUpdate(id, displayValue);
-            }
-        }
-    };
+    if (auto* param = processorRef.apvts.getParameter("gain"))
+    {
+        auto range = param->getNormalisableRange();
+        float currentValue = range.convertFrom0to1(param->getValue());
 
-    checkAndSend("gain", 0);
-    checkAndSend("attack", 1);
-    checkAndSend("decay", 2);
-    checkAndSend("sustain", 3);
-    checkAndSend("release", 4);
+        if (std::abs(currentValue - lastGainValue) > 0.01f)
+        {
+            lastGainValue = currentValue;
+            sendParameterUpdate("gain", currentValue);
+        }
+    }
 }
 
 std::optional<juce::WebBrowserComponent::Resource> {{pascal_name}}Editor::getResource(const juce::String& url)
 {
     if (url == "/" || url == "/index.html" || url.isEmpty())
     {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::ui_html);
         return juce::WebBrowserComponent::Resource{
-            juce::String(BinaryData::ui_html, BinaryData::ui_htmlSize),
+            std::vector<std::byte>(data, data + BinaryData::ui_htmlSize),
             "text/html"
         };
     }

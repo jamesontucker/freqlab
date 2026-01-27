@@ -51,6 +51,19 @@
             background: linear-gradient(145deg, #2b2b3d, #1a1a2e);
             box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1);
             cursor: pointer;
+            position: relative;
+        }
+
+        .knob-pointer {
+            position: absolute;
+            top: 10%;
+            left: 50%;
+            width: 3px;
+            height: 25%;
+            background: #6c9ced;
+            border-radius: 2px;
+            transform-origin: center 167%;
+            transform: translateX(-50%) rotate(0deg);
         }
 
         .knob-value {
@@ -68,6 +81,7 @@
 
         .large .knob-container { width: 90px; height: 90px; }
         .large .knob-value { font-size: 13px; }
+        .large .knob-pointer { width: 4px; height: 30%; }
     </style>
 </head>
 <body>
@@ -79,45 +93,8 @@
                 <label>Gain</label>
                 <div class="knob-container">
                     <div class="knob" id="gainKnob" data-param="gain" data-min="-30" data-max="12" data-value="0" data-unit=" dB">
+                        <div class="knob-pointer"></div>
                         <div class="knob-value">0 dB</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-label">Envelope</div>
-            <div class="knob-row">
-                <div class="control">
-                    <label>Attack</label>
-                    <div class="knob-container">
-                        <div class="knob" data-param="attack" data-min="0.001" data-max="2" data-value="0.01" data-unit=" s">
-                            <div class="knob-value">10 ms</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="control">
-                    <label>Decay</label>
-                    <div class="knob-container">
-                        <div class="knob" data-param="decay" data-min="0.001" data-max="2" data-value="0.1" data-unit=" s">
-                            <div class="knob-value">100 ms</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="control">
-                    <label>Sustain</label>
-                    <div class="knob-container">
-                        <div class="knob" data-param="sustain" data-min="0" data-max="1" data-value="0.8" data-unit="">
-                            <div class="knob-value">80%</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="control">
-                    <label>Release</label>
-                    <div class="knob-container">
-                        <div class="knob" data-param="release" data-min="0.001" data-max="5" data-value="0.3" data-unit=" s">
-                            <div class="knob-value">300 ms</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -125,6 +102,41 @@
     </div>
 
     <script>
+        // ============================================================
+        // JUCE 8 WebView Native Function Bridge
+        // Uses the low-level __juce__invoke event API
+        // ============================================================
+        let promiseId = 0;
+        const pendingPromises = new Map();
+
+        if (window.__JUCE__ && window.__JUCE__.backend) {
+            window.__JUCE__.backend.addEventListener("__juce__complete", (data) => {
+                if (pendingPromises.has(data.promiseId)) {
+                    pendingPromises.get(data.promiseId).resolve(data.result);
+                    pendingPromises.delete(data.promiseId);
+                }
+            });
+        }
+
+        function callNative(name, ...args) {
+            return new Promise((resolve, reject) => {
+                if (!window.__JUCE__ || !window.__JUCE__.backend) {
+                    reject("No JUCE backend");
+                    return;
+                }
+                const id = promiseId++;
+                pendingPromises.set(id, { resolve, reject });
+                window.__JUCE__.backend.emitEvent("__juce__invoke", {
+                    name: name,
+                    params: args,
+                    resultId: id
+                });
+            });
+        }
+
+        // ============================================================
+        // Knob UI Component
+        // ============================================================
         let activeKnob = null;
         let startY = 0;
         let startValue = 0;
@@ -149,10 +161,10 @@
             let newValue = Math.max(min, Math.min(max, startValue + delta));
             activeKnob.dataset.value = newValue;
             updateKnobVisual(activeKnob);
+
+            // Send to JUCE via native function
             const paramId = activeKnob.dataset.param;
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.setParameter(paramId, newValue);
-            }
+            callNative("setParameter", paramId, newValue);
         });
 
         document.addEventListener('mouseup', () => {
@@ -164,30 +176,24 @@
             const min = parseFloat(knob.dataset.min);
             const max = parseFloat(knob.dataset.max);
             const value = parseFloat(knob.dataset.value);
-            const unit = knob.dataset.unit || '';
-            const paramId = knob.dataset.param;
 
-            // Format display value
-            let displayText;
-            if (paramId === 'gain') {
-                displayText = (value >= 0 ? '+' : '') + value.toFixed(1) + unit;
-            } else if (paramId === 'sustain') {
-                displayText = (value * 100).toFixed(0) + '%';
-            } else {
-                // Time parameters
-                const ms = value * 1000;
-                displayText = ms < 1000 ? ms.toFixed(0) + ' ms' : value.toFixed(2) + ' s';
-            }
-
+            // Format display value (gain in dB)
+            const displayText = (value >= 0 ? '+' : '') + value.toFixed(1) + ' dB';
             const valueDisplay = knob.querySelector('.knob-value');
             if (valueDisplay) valueDisplay.textContent = displayText;
 
-            // Rotation
+            // Rotate only the pointer, not the whole knob
             const normalized = (value - min) / (max - min);
             const angle = -135 + normalized * 270;
-            knob.style.transform = `rotate(${angle}deg)`;
+            const pointer = knob.querySelector('.knob-pointer');
+            if (pointer) {
+                pointer.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+            }
         }
 
+        // ============================================================
+        // Parameter Sync from JUCE (called via evaluateJavascript)
+        // ============================================================
         window.onParamChange = function(paramId, value) {
             const knob = document.querySelector(`[data-param="${paramId}"]`);
             if (knob) {
@@ -196,10 +202,9 @@
             }
         };
 
+        // Request initial parameter values on load
         window.addEventListener('load', () => {
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.requestInit();
-            }
+            callNative("requestInit");
         });
     </script>
 </body>

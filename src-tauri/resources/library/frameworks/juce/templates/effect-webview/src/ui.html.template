@@ -56,8 +56,7 @@
             cursor: pointer;
         }
 
-        .knob::before {
-            content: '';
+        .knob-pointer {
             position: absolute;
             top: 10%;
             left: 50%;
@@ -65,8 +64,8 @@
             height: 30%;
             background: #6c9ced;
             border-radius: 2px;
-            transform: translateX(-50%);
-            transform-origin: center 200%;
+            transform-origin: center 167%;
+            transform: translateX(-50%) rotate(0deg);
         }
 
         .knob-track {
@@ -111,13 +110,50 @@
         <div class="knob-container">
             <div class="knob-track"></div>
             <div class="knob" id="gainKnob" data-param="gain" data-min="-30" data-max="30" data-value="0">
+                <div class="knob-pointer"></div>
                 <div class="knob-value" id="gainValue">0 dB</div>
             </div>
         </div>
     </div>
 
     <script>
-        // Knob interaction state
+        // ============================================================
+        // JUCE 8 WebView Native Function Bridge
+        // Uses the low-level __juce__invoke event API
+        // ============================================================
+        let promiseId = 0;
+        const pendingPromises = new Map();
+
+        // Listen for native function completions
+        if (window.__JUCE__ && window.__JUCE__.backend) {
+            window.__JUCE__.backend.addEventListener("__juce__complete", (data) => {
+                if (pendingPromises.has(data.promiseId)) {
+                    pendingPromises.get(data.promiseId).resolve(data.result);
+                    pendingPromises.delete(data.promiseId);
+                }
+            });
+        }
+
+        // Call a native function registered with withNativeFunction()
+        function callNative(name, ...args) {
+            return new Promise((resolve, reject) => {
+                if (!window.__JUCE__ || !window.__JUCE__.backend) {
+                    reject("No JUCE backend");
+                    return;
+                }
+                const id = promiseId++;
+                pendingPromises.set(id, { resolve, reject });
+                window.__JUCE__.backend.emitEvent("__juce__invoke", {
+                    name: name,
+                    params: args,
+                    resultId: id
+                });
+            });
+        }
+
+        // ============================================================
+        // Knob UI Component
+        // ============================================================
         let activeKnob = null;
         let startY = 0;
         let startValue = 0;
@@ -152,11 +188,9 @@
             activeKnob.dataset.value = newValue;
             updateKnobVisual(activeKnob);
 
-            // Send to JUCE
+            // Send to JUCE via native function
             const paramId = activeKnob.dataset.param;
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.setParameter(paramId, newValue);
-            }
+            callNative("setParameter", paramId, newValue);
         });
 
         document.addEventListener('mouseup', () => {
@@ -173,8 +207,11 @@
             const normalized = (value - min) / (max - min);
             const angle = -135 + normalized * 270;
 
-            knob.style.setProperty('--rotation', angle + 'deg');
-            knob.querySelector('::before')?.style.setProperty('transform', `translateX(-50%) rotate(${angle}deg)`);
+            // Rotate only the pointer, not the whole knob
+            const pointer = knob.querySelector('.knob-pointer');
+            if (pointer) {
+                pointer.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+            }
 
             // Update display
             const valueDisplay = knob.querySelector('.knob-value');
@@ -182,18 +219,11 @@
                 const displayValue = value >= 0 ? '+' + value.toFixed(1) : value.toFixed(1);
                 valueDisplay.textContent = displayValue + ' dB';
             }
-
-            // Update knob pointer rotation
-            const pointer = knob.querySelector('::before');
-            if (pointer) {
-                pointer.style.transform = `translateX(-50%) rotate(${angle}deg)`;
-            }
-
-            // Apply rotation via CSS variable
-            knob.style.transform = `rotate(${angle}deg)`;
         }
 
-        // Receive parameter updates from JUCE
+        // ============================================================
+        // Parameter Sync from JUCE (called via evaluateJavascript)
+        // ============================================================
         window.onParamChange = function(paramId, value) {
             const knob = document.querySelector(`[data-param="${paramId}"]`);
             if (knob) {
@@ -202,11 +232,9 @@
             }
         };
 
-        // Request initial values on load
+        // Request initial parameter values on load
         window.addEventListener('load', () => {
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.requestInit();
-            }
+            callNative("requestInit");
         });
     </script>
 </body>

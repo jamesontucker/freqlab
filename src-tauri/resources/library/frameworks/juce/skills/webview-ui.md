@@ -10,7 +10,7 @@ This guide covers building web-based UIs using JUCE 8's WebBrowserComponent.
 
 ## Requirements
 
-- JUCE 8.0.0+
+- JUCE 8.0.12+ (macOS 15 compatibility)
 - CMake definition: `JUCE_WEB_BROWSER=1`
 - Windows: WebView2 runtime (auto-bundled with `JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1`)
 - macOS: Uses WKWebView (built-in)
@@ -42,7 +42,7 @@ target_compile_definitions(MyPlugin
 )
 ```
 
-## Editor Structure
+## Editor Structure (JUCE 8 API)
 
 ```cpp
 // PluginEditor.h
@@ -65,30 +65,34 @@ private:
     void timerCallback() override;
     std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url);
     void sendParameterUpdate(const juce::String& paramId, float value);
+    void sendAllParameters();
 
     MyPluginProcessor& processor;
 
+    // JUCE 8 WebView with native functions
+    // NOTE: Native function signature uses Array<var> and NativeFunctionCompletion callback
     juce::WebBrowserComponent webView{
         juce::WebBrowserComponent::Options{}
             .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
             .withNativeIntegrationEnabled()
             .withResourceProvider([this](const auto& url) { return getResource(url); })
-            // JavaScript -> C++
-            .withNativeFunction("setParameter", [this](const juce::var::NativeFunctionArgs& args) {
-                if (args.numArguments >= 2) {
-                    juce::String paramId = args.arguments[0].toString();
-                    float value = static_cast<float>(args.arguments[1]);
+            // JavaScript -> C++ (JUCE 8 callback-based API)
+            .withNativeFunction("setParameter", [this](const juce::Array<juce::var>& args,
+                                                       juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+                if (args.size() >= 2) {
+                    juce::String paramId = args[0].toString();
+                    float value = static_cast<float>(args[1]);
                     if (auto* param = processor.apvts.getParameter(paramId)) {
                         auto range = param->getNormalisableRange();
                         param->setValueNotifyingHost(range.convertTo0to1(value));
                     }
                 }
-                return juce::var();
+                completion(juce::var());  // Must call completion!
             })
-            .withNativeFunction("requestInit", [this](const juce::var::NativeFunctionArgs&) {
-                // Send current parameter values to UI on load
+            .withNativeFunction("requestInit", [this](const juce::Array<juce::var>&,
+                                                      juce::WebBrowserComponent::NativeFunctionCompletion completion) {
                 sendAllParameters();
-                return juce::var();
+                completion(juce::var());  // Must call completion!
             })
     };
 
@@ -132,20 +136,16 @@ void MyPluginEditor::resized()
 }
 
 // Serve resources from binary data
+// IMPORTANT: JUCE 8 requires std::vector<std::byte>, NOT juce::String
 std::optional<juce::WebBrowserComponent::Resource> MyPluginEditor::getResource(const juce::String& url)
 {
     if (url == "/" || url == "/index.html" || url.isEmpty())
     {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::ui_html);
         return juce::WebBrowserComponent::Resource{
-            juce::String(BinaryData::ui_html, BinaryData::ui_htmlSize),
+            std::vector<std::byte>(data, data + BinaryData::ui_htmlSize),
             "text/html"
         };
-    }
-
-    // Serve CSS files
-    if (url.endsWith(".css"))
-    {
-        // Look up in BinaryData...
     }
 
     return std::nullopt;
@@ -156,7 +156,10 @@ void MyPluginEditor::timerCallback()
 {
     if (auto* param = processor.apvts.getParameter("gain"))
     {
-        float displayValue = /* convert from normalized */;
+        // Use parameter's range for proper conversion
+        auto range = param->getNormalisableRange();
+        float displayValue = range.convertFrom0to1(param->getValue());
+
         if (std::abs(displayValue - lastGainValue) > 0.01f)
         {
             lastGainValue = displayValue;
@@ -172,9 +175,22 @@ void MyPluginEditor::sendParameterUpdate(const juce::String& paramId, float valu
                         + paramId + "', " + juce::String(value) + ");";
     webView.evaluateJavascript(script, nullptr);
 }
+
+void MyPluginEditor::sendAllParameters()
+{
+    if (auto* param = processor.apvts.getParameter("gain"))
+    {
+        auto range = param->getNormalisableRange();
+        float displayValue = range.convertFrom0to1(param->getValue());
+        sendParameterUpdate("gain", displayValue);
+        lastGainValue = displayValue;
+    }
+}
 ```
 
-## HTML/JavaScript Structure
+## HTML/JavaScript Structure (JUCE 8 Low-Level API)
+
+JUCE 8 uses a low-level event-based API. The `window.__JUCE__.backend` object does NOT have methods like `setParameter()` or `requestInit()` directly. Instead, you must use `emitEvent("__juce__invoke", ...)`.
 
 ```html
 <!DOCTYPE html>
@@ -189,7 +205,6 @@ void MyPluginEditor::sendParameterUpdate(const juce::String& paramId, float valu
             height: 100vh;
             user-select: none;
         }
-        /* Your styles... */
     </style>
 </head>
 <body>
@@ -198,14 +213,43 @@ void MyPluginEditor::sendParameterUpdate(const juce::String& paramId, float valu
     <span id="gainValue">0 dB</span>
 
     <script>
-        // Send parameter to C++
-        function setParameter(paramId, value) {
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.setParameter(paramId, value);
-            }
+        // ============================================================
+        // JUCE 8 WebView Native Function Bridge
+        // Uses the low-level __juce__invoke event API
+        // ============================================================
+        let promiseId = 0;
+        const pendingPromises = new Map();
+
+        // Listen for native function completions
+        if (window.__JUCE__ && window.__JUCE__.backend) {
+            window.__JUCE__.backend.addEventListener("__juce__complete", (data) => {
+                if (pendingPromises.has(data.promiseId)) {
+                    pendingPromises.get(data.promiseId).resolve(data.result);
+                    pendingPromises.delete(data.promiseId);
+                }
+            });
         }
 
-        // Receive parameter from C++
+        // Call a native function registered with withNativeFunction()
+        function callNative(name, ...args) {
+            return new Promise((resolve, reject) => {
+                if (!window.__JUCE__ || !window.__JUCE__.backend) {
+                    reject("No JUCE backend");
+                    return;
+                }
+                const id = promiseId++;
+                pendingPromises.set(id, { resolve, reject });
+                window.__JUCE__.backend.emitEvent("__juce__invoke", {
+                    name: name,
+                    params: args,
+                    resultId: id
+                });
+            });
+        }
+
+        // ============================================================
+        // Receive parameter updates from C++ (via evaluateJavascript)
+        // ============================================================
         window.onParamChange = function(paramId, value) {
             if (paramId === 'gain') {
                 document.getElementById('gainSlider').value = value;
@@ -213,41 +257,101 @@ void MyPluginEditor::sendParameterUpdate(const juce::String& paramId, float valu
             }
         };
 
-        // UI event handlers
+        // ============================================================
+        // UI Event Handlers
+        // ============================================================
         document.getElementById('gainSlider').addEventListener('input', (e) => {
             const value = parseFloat(e.target.value);
-            setParameter('gain', value);
+            callNative('setParameter', 'gain', value);
             document.getElementById('gainValue').textContent = value.toFixed(1) + ' dB';
         });
 
         // Request initial values when loaded
         window.addEventListener('load', () => {
-            if (window.__JUCE__ && window.__JUCE__.backend) {
-                window.__JUCE__.backend.requestInit();
-            }
+            callNative('requestInit');
         });
     </script>
 </body>
 </html>
 ```
 
-## Native Functions API
+## Native Functions API (JUCE 8)
 
-Register C++ functions callable from JavaScript:
+Register C++ functions callable from JavaScript. **Important**: JUCE 8 uses a callback-based API:
 
 ```cpp
-.withNativeFunction("functionName", [this](const juce::var::NativeFunctionArgs& args) {
-    // args.numArguments - number of arguments
-    // args.arguments[0], args.arguments[1], etc. - juce::var values
+// JUCE 8 signature (correct):
+.withNativeFunction("functionName", [this](const juce::Array<juce::var>& args,
+                                           juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+    // args.size() - number of arguments
+    // args[0], args[1], etc. - juce::var values
 
-    // Return value back to JavaScript
-    return juce::var("result");
+    // MUST call completion to return result to JavaScript
+    completion(juce::var("result"));
 })
+
+// OLD signature (will NOT compile in JUCE 8):
+// .withNativeFunction("functionName", [](const juce::var::NativeFunctionArgs& args) {
+//     return juce::var();  // Wrong!
+// })
 ```
 
-Call from JavaScript:
+Call from JavaScript using the `callNative()` helper:
 ```javascript
-const result = window.__JUCE__.backend.functionName(arg1, arg2);
+callNative("functionName", arg1, arg2).then(result => {
+    console.log("Got result:", result);
+});
+```
+
+## Serving Resources (JUCE 8)
+
+**Critical**: JUCE 8 requires `std::vector<std::byte>`, not `juce::String`:
+
+```cpp
+std::optional<juce::WebBrowserComponent::Resource> MyPluginEditor::getResource(const juce::String& url)
+{
+    // Main HTML
+    if (url == "/" || url.isEmpty())
+    {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::ui_html);
+        return juce::WebBrowserComponent::Resource{
+            std::vector<std::byte>(data, data + BinaryData::ui_htmlSize),
+            "text/html"
+        };
+    }
+
+    // CSS
+    if (url == "/styles.css")
+    {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::styles_css);
+        return juce::WebBrowserComponent::Resource{
+            std::vector<std::byte>(data, data + BinaryData::styles_cssSize),
+            "text/css"
+        };
+    }
+
+    // JavaScript
+    if (url == "/app.js")
+    {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::app_js);
+        return juce::WebBrowserComponent::Resource{
+            std::vector<std::byte>(data, data + BinaryData::app_jsSize),
+            "application/javascript"
+        };
+    }
+
+    // Images
+    if (url == "/logo.png")
+    {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::logo_png);
+        return juce::WebBrowserComponent::Resource{
+            std::vector<std::byte>(data, data + BinaryData::logo_pngSize),
+            "image/png"
+        };
+    }
+
+    return std::nullopt;
+}
 ```
 
 ## Evaluating JavaScript from C++
@@ -263,53 +367,63 @@ webView.evaluateJavascript("document.title", [](juce::WebBrowserComponent::Evalu
 });
 ```
 
-## Serving Multiple Files
+## Parameter Range Conversions
+
+Always use the parameter's built-in range for conversions:
 
 ```cpp
-std::optional<juce::WebBrowserComponent::Resource> MyPluginEditor::getResource(const juce::String& url)
-{
-    // Main HTML
-    if (url == "/" || url.isEmpty())
-        return makeResource(BinaryData::ui_html, BinaryData::ui_htmlSize, "text/html");
+// Getting display value from normalized (0-1) parameter:
+auto range = param->getNormalisableRange();
+float displayValue = range.convertFrom0to1(param->getValue());
 
-    // CSS
-    if (url == "/styles.css")
-        return makeResource(BinaryData::styles_css, BinaryData::styles_cssSize, "text/css");
+// Setting parameter from display value:
+float normalized = range.convertTo0to1(displayValue);
+param->setValueNotifyingHost(normalized);
 
-    // JavaScript
-    if (url == "/app.js")
-        return makeResource(BinaryData::app_js, BinaryData::app_jsSize, "application/javascript");
-
-    // Images
-    if (url == "/logo.png")
-        return makeResource(BinaryData::logo_png, BinaryData::logo_pngSize, "image/png");
-
-    return std::nullopt;
-}
-
-juce::WebBrowserComponent::Resource makeResource(const char* data, int size, const char* mimeType)
-{
-    return { juce::String(data, size), mimeType };
-}
+// DON'T do manual conversions like:
+// float displayValue = param->getValue() * 60.0f - 30.0f;  // Wrong!
 ```
 
 ## Best Practices
 
-1. **Parameter sync frequency**: 30Hz is usually sufficient; higher rates waste CPU
-2. **Debounce UI updates**: Don't send every mouse move - batch or throttle
-3. **Handle load timing**: UI might request init before webview is fully ready
-4. **Escape strings**: When building JavaScript, escape user-provided strings
-5. **Error handling**: Check `window.__JUCE__` exists before calling backend
-6. **Test on all platforms**: WebView2 (Windows) and WKWebView (macOS) may differ slightly
+1. **JUCE version**: Use 8.0.12+ for macOS 15 compatibility
+2. **Parameter sync frequency**: 30Hz is usually sufficient; higher rates waste CPU
+3. **Debounce UI updates**: Don't send every mouse move - batch or throttle
+4. **Handle load timing**: UI might request init before webview is fully ready
+5. **Escape strings**: When building JavaScript, escape user-provided strings
+6. **Error handling**: Check `window.__JUCE__` exists before calling backend
+7. **Test on all platforms**: WebView2 (Windows) and WKWebView (macOS) may differ slightly
+8. **Always call completion**: Native functions MUST call the completion callback
 
 ## Debugging
 
+On macOS, use Safari's Develop menu to inspect WKWebView content:
+1. Enable "Show Develop menu" in Safari preferences
+2. Run your plugin in a DAW
+3. Safari → Develop → [Your DAW name] → [WebView]
+
+## Common Errors
+
+### "no viable conversion from lambda to NativeFunction"
+You're using the old callback signature. Use:
 ```cpp
-// Enable developer tools
-juce::WebBrowserComponent::Options{}
-    .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
-    .withNativeIntegrationEnabled()
-    // Right-click -> Inspect works when this is enabled
+[this](const juce::Array<juce::var>& args,
+       juce::WebBrowserComponent::NativeFunctionCompletion completion) { ... }
 ```
 
-On macOS, use Safari's Develop menu to inspect WKWebView content.
+### "no viable conversion from juce::String to std::vector<std::byte>"
+JUCE 8 Resource requires `std::vector<std::byte>`:
+```cpp
+auto* data = reinterpret_cast<const std::byte*>(BinaryData::ui_html);
+std::vector<std::byte>(data, data + BinaryData::ui_htmlSize)
+```
+
+### Native function not being called
+Make sure your JavaScript uses the low-level API:
+```javascript
+window.__JUCE__.backend.emitEvent("__juce__invoke", {
+    name: "functionName",
+    params: [arg1, arg2],
+    resultId: someId
+});
+```

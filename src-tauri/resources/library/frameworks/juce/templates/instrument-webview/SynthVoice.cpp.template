@@ -61,9 +61,9 @@ void {{pascal_name}}Voice::renderNextBlock(juce::AudioBuffer<float>& outputBuffe
         // Simple sine oscillator
         float currentSample = static_cast<float>(std::sin(currentAngle));
 
-        // Apply envelope
+        // Apply envelope and base level
         float envelopeValue = adsr.getNextSample();
-        currentSample *= level * envelopeValue;
+        currentSample *= baseLevel * level * envelopeValue;
 
         // Smooth gain
         currentGain = currentGain * gainSmoothing + targetGain * (1.0f - gainSmoothing);

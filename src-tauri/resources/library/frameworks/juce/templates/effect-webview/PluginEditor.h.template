@@ -27,35 +27,37 @@ private:
     // Send parameter values to JavaScript
     void sendParameterUpdate(const juce::String& paramId, float value);
 
-    {{pascal_name}}Processor& processor;
+    // Send all parameters to UI (called on init)
+    void sendAllParameters();
 
-    // WebView component
+    {{pascal_name}}Processor& processorRef;
+
+    // WebView component - JUCE 8 API
     juce::WebBrowserComponent webView{
         juce::WebBrowserComponent::Options{}
             .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
             .withNativeIntegrationEnabled()
             .withResourceProvider([this](const auto& url) { return getResource(url); })
-            .withNativeFunction("setParameter", [this](const juce::var::NativeFunctionArgs& args) {
-                if (args.numArguments >= 2)
+            .withNativeFunction("setParameter", [this](const juce::Array<juce::var>& args,
+                                                       juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+                if (args.size() >= 2)
                 {
-                    juce::String paramId = args.arguments[0].toString();
-                    float value = static_cast<float>(args.arguments[1]);
+                    juce::String paramId = args[0].toString();
+                    float value = static_cast<float>(args[1]);
 
-                    if (auto* param = processor.apvts.getParameter(paramId))
+                    if (auto* param = processorRef.apvts.getParameter(paramId))
                     {
-                        // Convert from display value to normalized
                         auto range = param->getNormalisableRange();
                         float normalized = range.convertTo0to1(value);
                         param->setValueNotifyingHost(normalized);
                     }
                 }
-                return juce::var();
+                completion(juce::var());
             })
-            .withNativeFunction("requestInit", [this](const juce::var::NativeFunctionArgs&) {
-                // Send current parameter values to UI
-                if (auto* param = processor.apvts.getParameter("gain"))
-                    sendParameterUpdate("gain", param->getValue() * 60.0f - 30.0f);
-                return juce::var();
+            .withNativeFunction("requestInit", [this](const juce::Array<juce::var>&,
+                                                      juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+                sendAllParameters();
+                completion(juce::var());
             })
     };
 

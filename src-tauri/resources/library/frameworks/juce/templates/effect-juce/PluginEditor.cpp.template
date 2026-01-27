@@ -1,7 +1,7 @@
 #include "PluginEditor.h"
 
 {{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
-    : AudioProcessorEditor(p), processor(p)
+    : AudioProcessorEditor(p), processorRef(p)
 {
     // Apply custom look and feel
     setLookAndFeel(&lookAndFeel);
@@ -14,12 +14,12 @@
     // Configure gain label
     gainLabel.setText("Gain", juce::dontSendNotification);
     gainLabel.setJustificationType(juce::Justification::centred);
-    gainLabel.setFont(juce::Font(14.0f, juce::Font::bold));
+    gainLabel.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
     addAndMakeVisible(gainLabel);
 
     // Create attachment AFTER configuring the slider
     gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.apvts, "gain", gainSlider);
+        processorRef.apvts, "gain", gainSlider);
 
     // Set editor size
     setSize(300, 200);
@@ -43,7 +43,7 @@ void {{pascal_name}}Editor::paint(juce::Graphics& g)
 
     // Plugin name
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(20.0f, juce::Font::bold));
+    g.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
     g.drawText("{{pascal_name}}", getLocalBounds().removeFromTop(40), juce::Justification::centred);
 }
 

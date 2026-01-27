@@ -1,7 +1,7 @@
 #include "PluginEditor.h"
 
 {{pascal_name}}Editor::{{pascal_name}}Editor({{pascal_name}}Processor& p)
-    : AudioProcessorEditor(p), processor(p)
+    : AudioProcessorEditor(p), processorRef(p)
 {
     addAndMakeVisible(webView);
 
@@ -33,9 +33,12 @@ void {{pascal_name}}Editor::resized()
 void {{pascal_name}}Editor::timerCallback()
 {
     // Sync parameter changes from host/automation to UI
-    if (auto* param = processor.apvts.getParameter("gain"))
+    if (auto* param = processorRef.apvts.getParameter("gain"))
     {
-        float currentValue = param->getValue() * 60.0f - 30.0f;  // Convert from 0-1 to -30 to 30
+        // Convert normalized (0-1) to display value using parameter's range
+        auto range = param->getNormalisableRange();
+        float currentValue = range.convertFrom0to1(param->getValue());
+
         if (std::abs(currentValue - lastGainValue) > 0.01f)
         {
             lastGainValue = currentValue;
@@ -46,11 +49,12 @@ void {{pascal_name}}Editor::timerCallback()
 
 std::optional<juce::WebBrowserComponent::Resource> {{pascal_name}}Editor::getResource(const juce::String& url)
 {
-    // Serve UI from binary data
+    // Serve UI from binary data - JUCE 8 requires std::vector<std::byte>
     if (url == "/" || url == "/index.html" || url.isEmpty())
     {
+        auto* data = reinterpret_cast<const std::byte*>(BinaryData::ui_html);
         return juce::WebBrowserComponent::Resource{
-            juce::String(BinaryData::ui_html, BinaryData::ui_htmlSize),
+            std::vector<std::byte>(data, data + BinaryData::ui_htmlSize),
             "text/html"
         };
     }
@@ -63,6 +67,18 @@ void {{pascal_name}}Editor::sendParameterUpdate(const juce::String& paramId, flo
     // Send parameter update to JavaScript
     juce::String script = "if (window.onParamChange) window.onParamChange('" + paramId + "', " + juce::String(value) + ");";
     webView.evaluateJavascript(script, nullptr);
+}
+
+void {{pascal_name}}Editor::sendAllParameters()
+{
+    // Send all parameter values to UI
+    if (auto* param = processorRef.apvts.getParameter("gain"))
+    {
+        auto range = param->getNormalisableRange();
+        float displayValue = range.convertFrom0to1(param->getValue());
+        sendParameterUpdate("gain", displayValue);
+        lastGainValue = displayValue;
+    }
 }
 
 void {{pascal_name}}Editor::handleJavaScriptMessage(const juce::var& message)

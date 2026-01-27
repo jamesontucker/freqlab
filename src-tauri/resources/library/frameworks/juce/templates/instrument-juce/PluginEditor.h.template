@@ -66,25 +66,17 @@ public:
     void resized() override;
 
 private:
-    {{pascal_name}}Processor& processor;
+    {{pascal_name}}Processor& processorRef;
 
     // LookAndFeel (declare BEFORE components that use it!)
     {{pascal_name}}LookAndFeel lookAndFeel;
 
-    // UI components - main
+    // UI components
     juce::Slider gainSlider;
     juce::Label gainLabel;
 
-    // UI components - ADSR
-    juce::Slider attackSlider, decaySlider, sustainSlider, releaseSlider;
-    juce::Label attackLabel, decayLabel, sustainLabel, releaseLabel;
-
     // Attachments (declare AFTER components!)
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attackAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> decayAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sustainAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> releaseAttachment;
 
     // Helper to set up a knob
     void setupKnob(juce::Slider& slider, juce::Label& label, const juce::String& text);

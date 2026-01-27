@@ -51,6 +51,9 @@ private:
     float targetGain = 1.0f;
     float currentGain = 1.0f;
 
+    // Base output level (~-12 dB) so 0 dB gain = comfortable listening level
+    static constexpr float baseLevel = 0.25f;
+
     // Sample rate
     double sampleRate = 44100.0;
 };

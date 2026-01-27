@@ -24,7 +24,7 @@ private:
     // Send parameter values to JavaScript
     void sendParameterUpdate(const juce::String& paramId, float value);
 
-    {{pascal_name}}Processor& processor;
+    {{pascal_name}}Processor& processorRef;
 
     // WebView component
     juce::WebBrowserComponent webView{
@@ -32,42 +32,35 @@ private:
             .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
             .withNativeIntegrationEnabled()
             .withResourceProvider([this](const auto& url) { return getResource(url); })
-            .withNativeFunction("setParameter", [this](const juce::var::NativeFunctionArgs& args) {
-                if (args.numArguments >= 2)
+            .withNativeFunction("setParameter", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion complete) {
+                if (args.size() >= 2)
                 {
-                    juce::String paramId = args.arguments[0].toString();
-                    float value = static_cast<float>(args.arguments[1]);
+                    juce::String paramId = args[0].toString();
+                    float value = static_cast<float>(args[1]);
 
-                    if (auto* param = processor.apvts.getParameter(paramId))
+                    if (auto* param = processorRef.apvts.getParameter(paramId))
                     {
                         auto range = param->getNormalisableRange();
                         float normalized = range.convertTo0to1(value);
                         param->setValueNotifyingHost(normalized);
                     }
                 }
-                return juce::var();
+                complete(juce::var());
             })
-            .withNativeFunction("requestInit", [this](const juce::var::NativeFunctionArgs&) {
+            .withNativeFunction("requestInit", [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion complete) {
                 // Send all parameter values to UI
-                auto sendParam = [this](const juce::String& id) {
-                    if (auto* param = processor.apvts.getParameter(id))
-                    {
-                        auto range = param->getNormalisableRange();
-                        float displayValue = range.convertFrom0to1(param->getValue());
-                        sendParameterUpdate(id, displayValue);
-                    }
-                };
-                sendParam("gain");
-                sendParam("attack");
-                sendParam("decay");
-                sendParam("sustain");
-                sendParam("release");
-                return juce::var();
+                if (auto* param = processorRef.apvts.getParameter("gain"))
+                {
+                    auto range = param->getNormalisableRange();
+                    float displayValue = range.convertFrom0to1(param->getValue());
+                    sendParameterUpdate("gain", displayValue);
+                }
+                complete(juce::var());
             })
     };
 
-    // Track last sent values
-    float lastValues[5] = {0, 0, 0, 0, 0};
+    // Track last sent gain value
+    float lastGainValue = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR({{pascal_name}}Editor)
 };
