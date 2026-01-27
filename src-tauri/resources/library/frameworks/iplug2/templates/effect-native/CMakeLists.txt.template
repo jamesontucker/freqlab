@@ -108,3 +108,12 @@ iplug_add_plugin(${PROJECT_NAME}
     UI NONE
     DEFINES NO_IGRAPHICS=1
 )
+
+# Suppress warnings from iPlug2 upstream code (VLA extension in AUv2)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+    foreach(_target ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-clap ${PROJECT_NAME}-au)
+        if(TARGET ${_target})
+            target_compile_options(${_target} PRIVATE -Wno-vla-cxx-extension -Wno-switch)
+        endif()
+    endforeach()
+endif()

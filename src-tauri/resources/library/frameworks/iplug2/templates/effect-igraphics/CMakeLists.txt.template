@@ -104,3 +104,13 @@ iplug_add_plugin(${PROJECT_NAME}
         resource.h
     UI IGRAPHICS
 )
+
+# Suppress warnings from iPlug2 upstream code (VLA extensions in RtAudio/RtMidi/SWELL/AUv2,
+# incomplete switch in SWELL) - these are in iPlug2's own sources, not user code
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+    foreach(_target ${PROJECT_NAME}-app ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-clap ${PROJECT_NAME}-au)
+        if(TARGET ${_target})
+            target_compile_options(${_target} PRIVATE -Wno-vla-cxx-extension -Wno-switch)
+        endif()
+    endforeach()
+endif()

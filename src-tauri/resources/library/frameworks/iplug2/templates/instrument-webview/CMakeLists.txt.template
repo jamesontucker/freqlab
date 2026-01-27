@@ -107,6 +107,16 @@ iplug_add_plugin(${PROJECT_NAME}
     UI WEBVIEW
 )
 
+# Suppress warnings from iPlug2 upstream code (VLA extensions in RtAudio/RtMidi/SWELL/AUv2,
+# incomplete switch in SWELL) - these are in iPlug2's own sources, not user code
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+    foreach(_target ${PROJECT_NAME}-app ${PROJECT_NAME}-vst3 ${PROJECT_NAME}-clap ${PROJECT_NAME}-au)
+        if(TARGET ${_target})
+            target_compile_options(${_target} PRIVATE -Wno-vla-cxx-extension -Wno-switch)
+        endif()
+    endforeach()
+endif()
+
 # Hot reload support: Override OBJC_PREFIX with unique per-build suffix
 # This ensures Objective-C class names are unique for each build, preventing
 # conflicts when reloading plugins (Obj-C classes persist after dlclose)
@@ -120,8 +130,13 @@ if(APPLE)
     endif()
 
     # Override OBJC_PREFIX for CLAP target (used for hot reload in freqlab)
-    # iPlug2 uses hyphen naming: ${PROJECT_NAME}-clap
+    # Remove iPlug2's default OBJC_PREFIX first, then add our suffixed version
     if(TARGET ${PROJECT_NAME}-clap)
+        get_target_property(_clap_defs ${PROJECT_NAME}-clap COMPILE_DEFINITIONS)
+        if(_clap_defs)
+            list(FILTER _clap_defs EXCLUDE REGEX "^OBJC_PREFIX=")
+            set_target_properties(${PROJECT_NAME}-clap PROPERTIES COMPILE_DEFINITIONS "${_clap_defs}")
+        endif()
         target_compile_definitions(${PROJECT_NAME}-clap PRIVATE
             OBJC_PREFIX=v${PROJECT_NAME}_${IPLUG_BUILD_SUFFIX}
         )
