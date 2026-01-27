@@ -12,6 +12,7 @@ export function RecipesTab({ recipes, searchQuery, onAttach }: RecipesTabProps) 
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   // Get unique categories from recipes
   const categories = useMemo(() => {
@@ -34,18 +35,44 @@ export function RecipesTab({ recipes, searchQuery, onAttach }: RecipesTabProps) 
     });
   }, [recipes, selectedCategory, searchQuery]);
 
-  // Group by category when showing all
+  // Group by category when showing all, sorted alphabetically
   const groupedRecipes = useMemo(() => {
     if (selectedCategory !== 'all') {
-      return { [selectedCategory]: filteredRecipes };
+      // Sort items alphabetically by name
+      const sorted = [...filteredRecipes].sort((a, b) => a.name.localeCompare(b.name));
+      return { [selectedCategory]: sorted };
     }
-    return filteredRecipes.reduce((acc, recipe) => {
+    const grouped = filteredRecipes.reduce((acc, recipe) => {
       const cat = recipe.category;
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(recipe);
       return acc;
     }, {} as Record<string, LibraryAlgorithm[]>);
+
+    // Sort items within each category alphabetically
+    for (const cat of Object.keys(grouped)) {
+      grouped[cat].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return grouped;
   }, [filteredRecipes, selectedCategory]);
+
+  // Get sorted category names for rendering
+  const sortedCategoryNames = useMemo(() => {
+    return Object.keys(groupedRecipes).sort((a, b) => a.localeCompare(b));
+  }, [groupedRecipes]);
+
+  const toggleCategoryCollapse = useCallback((category: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -123,28 +150,48 @@ export function RecipesTab({ recipes, searchQuery, onAttach }: RecipesTabProps) 
         </div>
       ) : (
         <div className="space-y-4">
-          {Object.entries(groupedRecipes).map(([category, categoryRecipes]) => (
-            <div key={category}>
-              {selectedCategory === 'all' && (
-                <h3 className="text-sm font-medium text-text-secondary mb-2 capitalize">
-                  {category}
-                </h3>
-              )}
-              <div className="space-y-2">
-                {categoryRecipes.map((recipe) => (
-                  <RecipeCard
-                    key={`recipe-${recipe.id}`}
-                    recipe={recipe}
-                    isExpanded={expandedId === `recipe-${recipe.id}`}
-                    isCopied={copiedId === recipe.id}
-                    onToggle={() => toggleExpand(`recipe-${recipe.id}`)}
-                    onCopy={() => copyToClipboard(recipe)}
-                    onAttach={onAttach ? () => handleAttach(recipe) : undefined}
-                  />
-                ))}
+          {sortedCategoryNames.map((category) => {
+            const categoryRecipes = groupedRecipes[category];
+            const isCollapsed = collapsedCategories.has(category);
+
+            return (
+              <div key={category}>
+                {selectedCategory === 'all' && (
+                  <button
+                    onClick={() => toggleCategoryCollapse(category)}
+                    className="flex items-center gap-2 w-full text-left text-sm font-medium text-text-secondary mb-2 hover:text-text-primary transition-colors group"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span className="capitalize">{category}</span>
+                    <span className="text-text-muted text-xs">({categoryRecipes.length})</span>
+                  </button>
+                )}
+                {!isCollapsed && (
+                  <div className="space-y-2">
+                    {categoryRecipes.map((recipe) => (
+                      <RecipeCard
+                        key={`recipe-${recipe.id}`}
+                        recipe={recipe}
+                        isExpanded={expandedId === `recipe-${recipe.id}`}
+                        isCopied={copiedId === recipe.id}
+                        onToggle={() => toggleExpand(`recipe-${recipe.id}`)}
+                        onCopy={() => copyToClipboard(recipe)}
+                        onAttach={onAttach ? () => handleAttach(recipe) : undefined}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

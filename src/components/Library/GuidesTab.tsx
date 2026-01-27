@@ -21,6 +21,7 @@ export function GuidesTab({ guides, searchQuery, onAttach }: GuidesTabProps) {
   const [selectedCategory, setSelectedCategory] = useState<SkillCategory | 'all'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   // Filter out internal guides from user UI
   const visibleGuides = useMemo(() => {
@@ -47,18 +48,44 @@ export function GuidesTab({ guides, searchQuery, onAttach }: GuidesTabProps) {
     });
   }, [visibleGuides, selectedCategory, searchQuery]);
 
-  // Group guides by category
+  // Group guides by category, sorted alphabetically
   const groupedGuides = useMemo(() => {
     if (selectedCategory !== 'all') {
-      return { [selectedCategory]: filteredGuides };
+      // Sort items alphabetically by name
+      const sorted = [...filteredGuides].sort((a, b) => a.name.localeCompare(b.name));
+      return { [selectedCategory]: sorted };
     }
-    return filteredGuides.reduce((acc, guide) => {
+    const grouped = filteredGuides.reduce((acc, guide) => {
       const cat = guide.category;
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(guide);
       return acc;
     }, {} as Record<string, LibrarySkill[]>);
+
+    // Sort items within each category alphabetically
+    for (const cat of Object.keys(grouped)) {
+      grouped[cat].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return grouped;
   }, [filteredGuides, selectedCategory]);
+
+  // Get sorted category names for rendering
+  const sortedCategoryNames = useMemo(() => {
+    return Object.keys(groupedGuides).sort((a, b) => a.localeCompare(b));
+  }, [groupedGuides]);
+
+  const toggleCategoryCollapse = useCallback((category: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -135,28 +162,48 @@ export function GuidesTab({ guides, searchQuery, onAttach }: GuidesTabProps) {
         </div>
       ) : (
         <div className="space-y-4">
-          {Object.entries(groupedGuides).map(([category, categoryGuides]) => (
-            <div key={category}>
-              {selectedCategory === 'all' && (
-                <h3 className="text-sm font-medium text-text-secondary mb-2 capitalize">
-                  {CATEGORY_INFO[category as SkillCategory]?.label || category}
-                </h3>
-              )}
-              <div className="space-y-2">
-                {categoryGuides.map((guide) => (
-                  <GuideCard
-                    key={`guide-${guide.id}`}
-                    guide={guide}
-                    isExpanded={expandedId === `guide-${guide.id}`}
-                    isCopied={copiedId === guide.id}
-                    onToggle={() => toggleExpand(`guide-${guide.id}`)}
-                    onCopy={() => copyToClipboard(guide)}
-                    onAttach={onAttach ? () => handleAttach(guide) : undefined}
-                  />
-                ))}
+          {sortedCategoryNames.map((category) => {
+            const categoryGuides = groupedGuides[category];
+            const isCollapsed = collapsedCategories.has(category);
+
+            return (
+              <div key={category}>
+                {selectedCategory === 'all' && (
+                  <button
+                    onClick={() => toggleCategoryCollapse(category)}
+                    className="flex items-center gap-2 w-full text-left text-sm font-medium text-text-secondary mb-2 hover:text-text-primary transition-colors group"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span className="capitalize">{CATEGORY_INFO[category as SkillCategory]?.label || category}</span>
+                    <span className="text-text-muted text-xs">({categoryGuides.length})</span>
+                  </button>
+                )}
+                {!isCollapsed && (
+                  <div className="space-y-2">
+                    {categoryGuides.map((guide) => (
+                      <GuideCard
+                        key={`guide-${guide.id}`}
+                        guide={guide}
+                        isExpanded={expandedId === `guide-${guide.id}`}
+                        isCopied={copiedId === guide.id}
+                        onToggle={() => toggleExpand(`guide-${guide.id}`)}
+                        onCopy={() => copyToClipboard(guide)}
+                        onAttach={onAttach ? () => handleAttach(guide) : undefined}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -8,6 +8,7 @@ interface ResourcesTabProps {
 
 export function ResourcesTab({ resources, searchQuery }: ResourcesTabProps) {
   const [selectedCategory, setSelectedCategory] = useState<string | 'all'>('all');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   // Get unique categories from resources
   const categories = useMemo(() => {
@@ -29,18 +30,44 @@ export function ResourcesTab({ resources, searchQuery }: ResourcesTabProps) {
     });
   }, [resources, selectedCategory, searchQuery]);
 
-  // Group by category when showing all
+  // Group by category when showing all, sorted alphabetically
   const groupedResources = useMemo(() => {
     if (selectedCategory !== 'all') {
-      return { [selectedCategory]: filteredResources };
+      // Sort items alphabetically by name
+      const sorted = [...filteredResources].sort((a, b) => a.name.localeCompare(b.name));
+      return { [selectedCategory]: sorted };
     }
-    return filteredResources.reduce((acc, resource) => {
+    const grouped = filteredResources.reduce((acc, resource) => {
       const cat = resource.category;
       if (!acc[cat]) acc[cat] = [];
       acc[cat].push(resource);
       return acc;
     }, {} as Record<string, LibraryResource[]>);
+
+    // Sort items within each category alphabetically
+    for (const cat of Object.keys(grouped)) {
+      grouped[cat].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    return grouped;
   }, [filteredResources, selectedCategory]);
+
+  // Get sorted category names for rendering
+  const sortedCategoryNames = useMemo(() => {
+    return Object.keys(groupedResources).sort((a, b) => a.localeCompare(b));
+  }, [groupedResources]);
+
+  const toggleCategoryCollapse = useCallback((category: string) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
 
   const openUrl = useCallback((url: string) => {
     // Validate URL scheme to prevent XSS or malicious protocols
@@ -110,24 +137,44 @@ export function ResourcesTab({ resources, searchQuery }: ResourcesTabProps) {
         </div>
       ) : (
         <div className="space-y-4">
-          {Object.entries(groupedResources).map(([category, categoryResources]) => (
-            <div key={category}>
-              {selectedCategory === 'all' && (
-                <h3 className="text-sm font-medium text-text-secondary mb-2 capitalize">
-                  {category}
-                </h3>
-              )}
-              <div className="space-y-2">
-                {categoryResources.map((resource) => (
-                  <ResourceCard
-                    key={resource.id}
-                    resource={resource}
-                    onOpen={() => openUrl(resource.url)}
-                  />
-                ))}
+          {sortedCategoryNames.map((category) => {
+            const categoryResources = groupedResources[category];
+            const isCollapsed = collapsedCategories.has(category);
+
+            return (
+              <div key={category}>
+                {selectedCategory === 'all' && (
+                  <button
+                    onClick={() => toggleCategoryCollapse(category)}
+                    className="flex items-center gap-2 w-full text-left text-sm font-medium text-text-secondary mb-2 hover:text-text-primary transition-colors group"
+                  >
+                    <svg
+                      className={`w-4 h-4 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span className="capitalize">{category}</span>
+                    <span className="text-text-muted text-xs">({categoryResources.length})</span>
+                  </button>
+                )}
+                {!isCollapsed && (
+                  <div className="space-y-2">
+                    {categoryResources.map((resource) => (
+                      <ResourceCard
+                        key={resource.id}
+                        resource={resource}
+                        onOpen={() => openUrl(resource.url)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

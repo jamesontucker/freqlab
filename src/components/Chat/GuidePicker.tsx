@@ -339,7 +339,7 @@ export function GuidePicker({ isOpen, onClose, onSelect, onRemove, onOpenResourc
     });
   }, [allItems, searchQuery, selectedCategory, selectedType]);
 
-  // Group by category for display
+  // Group by category for display, sorted alphabetically
   const groupedItems = useMemo(() => {
     const groups: Record<string, LibraryItem[]> = {};
     for (const item of filteredItems) {
@@ -347,8 +347,17 @@ export function GuidePicker({ isOpen, onClose, onSelect, onRemove, onOpenResourc
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(item);
     }
+    // Sort items within each category alphabetically by name
+    for (const cat of Object.keys(groups)) {
+      groups[cat].sort((a, b) => a.name.localeCompare(b.name));
+    }
     return groups;
   }, [filteredItems]);
+
+  // Get sorted category names for rendering
+  const sortedCategoryNames = useMemo(() => {
+    return Object.keys(groupedItems).sort((a, b) => a.localeCompare(b));
+  }, [groupedItems]);
 
   const handleSelect = useCallback(
     (item: LibraryItem) => {
@@ -558,7 +567,8 @@ export function GuidePicker({ isOpen, onClose, onSelect, onRemove, onOpenResourc
           </div>
         ) : (
           <div className="p-1.5 space-y-1">
-            {Object.entries(groupedItems).map(([category, items]) => {
+            {sortedCategoryNames.map((category) => {
+              const items = groupedItems[category];
               const isCollapsed = collapsedSections.has(category);
               const toggleSection = () => {
                 setCollapsedSections(prev => {
