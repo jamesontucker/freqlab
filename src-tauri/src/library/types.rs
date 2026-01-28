@@ -91,6 +91,10 @@ pub struct BuildConfig {
     /// Glob patterns to find build artifacts (for CMake builds)
     #[serde(default)]
     pub artifact_patterns: Option<Vec<String>>,
+    /// Maps format IDs (e.g. "vst3") to CMake FORMATS names (e.g. "VST3")
+    /// Used to rewrite the FORMATS line in CMakeLists.txt when build formats change
+    #[serde(default)]
+    pub cmake_formats: Option<std::collections::HashMap<String, String>>,
 }
 
 fn default_build_system() -> String {
@@ -109,6 +113,9 @@ pub struct UiFramework {
     pub name: String,
     pub description: String,
     pub dependencies: HashMap<String, serde_json::Value>,
+    /// Output format IDs that this UI framework does NOT support (e.g. iPlug2 native can't build standalone/AUv3)
+    #[serde(default)]
+    pub unsupported_formats: Vec<String>,
 }
 
 /// Configuration for which guides are available for a framework

@@ -5,6 +5,7 @@ import { BrandingSettings } from './BrandingSettings';
 import { DawPathsSettings } from './DawPathsSettings';
 import { AudioSettings } from './AudioSettings';
 import { AISettings } from './AISettings';
+import { BuildSettings } from './BuildSettings';
 import { DevSettings } from './DevSettings';
 import { UpdateSettings } from './UpdateSettings';
 import { useUpdateStore } from '../../stores/updateStore';
@@ -15,7 +16,7 @@ interface SettingsModalProps {
   initialTab?: string;
 }
 
-type TabId = 'general' | 'audio' | 'ai' | 'branding' | 'daw-paths' | 'updates' | 'dev';
+type TabId = 'general' | 'builds' | 'audio' | 'ai' | 'branding' | 'daw-paths' | 'updates' | 'dev';
 
 interface Tab {
   id: TabId;
@@ -32,6 +33,15 @@ const tabs: Tab[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
         <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+  },
+  {
+    id: 'builds',
+    label: 'Builds',
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
       </svg>
     ),
   },
@@ -106,7 +116,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
 
   // Helper to validate tab ID
   const isValidTabId = (id: string): id is TabId => {
-    return ['general', 'audio', 'ai', 'branding', 'daw-paths', 'updates', 'dev'].includes(id);
+    return ['general', 'builds', 'audio', 'ai', 'branding', 'daw-paths', 'updates', 'dev'].includes(id);
   };
 
   // Set initial tab when modal opens
@@ -151,6 +161,7 @@ export function SettingsModal({ isOpen, onClose, initialTab }: SettingsModalProp
         {/* Content area - fixed height with scroll */}
         <div className="flex-1 min-w-0 overflow-y-auto pr-2">
           {activeTab === 'general' && <ThemePicker />}
+          {activeTab === 'builds' && <BuildSettings />}
           {activeTab === 'audio' && <AudioSettings />}
           {activeTab === 'ai' && <AISettings />}
           {activeTab === 'branding' && <BrandingSettings />}

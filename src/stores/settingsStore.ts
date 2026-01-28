@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppConfig, DawPaths, CustomThemeColors, AudioSettings, AISettings, ChatStyle, ClaudeModel, AgentVerbosity } from '../types';
+import type { AppConfig, DawPaths, DawPathConfig, CustomThemeColors, AudioSettings, AISettings, ChatStyle, ClaudeModel, AgentVerbosity } from '../types';
 
 const defaultDawPaths: DawPaths = {
-  reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
-  ableton: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
-  flStudio: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
-  logic: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP' },
-  other: { vst3: '', clap: '' },
+  reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
+  ableton: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
+  flStudio: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
+  logic: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
+  other: { vst3: '', clap: '', au: '', auv3: '', aax: '', lv2: '', standalone: '' },
 };
 
 const defaultCustomColors: CustomThemeColors = {
@@ -62,8 +62,10 @@ interface SettingsState extends AppConfig {
   setVendorUrl: (url: string) => void;
   setVendorEmail: (email: string) => void;
   setDawPaths: (paths: DawPaths) => void;
-  updateDawPath: (daw: keyof DawPaths, format: 'vst3' | 'clap', path: string) => void;
+  setBuildFormats: (formats: string[]) => void;
+  updateDawPath: (daw: keyof DawPaths, format: keyof DawPathConfig, path: string) => void;
   setShowNotifications: (show: boolean) => void;
+  setAaxSdkPath: (path: string) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -83,6 +85,8 @@ export const useSettingsStore = create<SettingsState>()(
       vendorEmail: '',
       // DAW paths defaults
       dawPaths: defaultDawPaths,
+      // AAX SDK path (empty = not configured)
+      aaxSdkPath: '',
       // Audio settings defaults
       audioSettings: defaultAudioSettings,
       appliedAudioSettings: null, // Set on first engine init
@@ -152,7 +156,9 @@ export const useSettingsStore = create<SettingsState>()(
             },
           },
         })),
+      setBuildFormats: (formats) => set({ buildFormats: formats }),
       setShowNotifications: (show) => set({ showNotifications: show }),
+      setAaxSdkPath: (path) => set({ aaxSdkPath: path }),
     }),
     {
       name: 'freqlab-settings',
@@ -179,8 +185,11 @@ export const useSettingsStore = create<SettingsState>()(
             ...(persisted.audioSettings || {}),
           },
           dawPaths: {
-            ...currentState.dawPaths,
-            ...(persisted.dawPaths || {}),
+            reaper: { ...currentState.dawPaths.reaper, ...(persisted.dawPaths?.reaper || {}) },
+            ableton: { ...currentState.dawPaths.ableton, ...(persisted.dawPaths?.ableton || {}) },
+            flStudio: { ...currentState.dawPaths.flStudio, ...(persisted.dawPaths?.flStudio || {}) },
+            logic: { ...currentState.dawPaths.logic, ...(persisted.dawPaths?.logic || {}) },
+            other: { ...currentState.dawPaths.other, ...(persisted.dawPaths?.other || {}) },
           },
           customColors: {
             ...currentState.customColors,

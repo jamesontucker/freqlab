@@ -41,6 +41,10 @@
         "standalone": {
             "extension": ".app",
             "description": "Standalone application"
+        },
+        "aax": {
+            "extension": ".aaxplugin",
+            "description": "AAX plugin (Pro Tools, requires Avid SDK)"
         }
     },
 
@@ -58,8 +62,17 @@
             "build/**/*.component",
             "build/**/*.app",
             "build/**/*.appex",
+            "build/**/*.aaxplugin",
             "build/**/*.framework"
         ],
+        "cmake_formats": {
+            "vst3": "VST3",
+            "clap": "CLAP",
+            "au": "AU",
+            "standalone": "APP",
+            "auv3": "AUV3",
+            "aax": "AAX"
+        },
         "notes": {
             "first_build": "First build downloads iPlug2 via FetchContent. This is cached in build/_deps/ for subsequent builds.",
             "cache": "Do not delete build/_deps/ unless you want to re-download dependencies. Deleting build/ is safe for clean rebuilds.",
@@ -97,7 +110,8 @@
             "id": "native",
             "name": "Native (No UI)",
             "description": "Use DAW's generic parameter interface",
-            "dependencies": {}
+            "dependencies": {},
+            "unsupported_formats": ["standalone", "auv3"]
         }
     ],
 

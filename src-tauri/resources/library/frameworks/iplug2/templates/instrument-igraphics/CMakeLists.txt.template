@@ -86,6 +86,17 @@ if(NOT EXISTS ${IPLUG_DEPS_DIR}/VST3_SDK/public.sdk)
     file(CREATE_LINK ${vst3sdk_SOURCE_DIR}/public.sdk ${IPLUG_DEPS_DIR}/VST3_SDK/public.sdk SYMBOLIC)
 endif()
 
+# AAX SDK (optional - pass -DAAX_SDK_PATH=<path> to enable AAX builds)
+if(DEFINED AAX_SDK_PATH AND EXISTS "${AAX_SDK_PATH}")
+    file(MAKE_DIRECTORY ${IPLUG_DEPS_DIR}/AAX_SDK)
+    if(NOT EXISTS ${IPLUG_DEPS_DIR}/AAX_SDK/Interfaces AND EXISTS ${AAX_SDK_PATH}/Interfaces)
+        file(CREATE_LINK ${AAX_SDK_PATH}/Interfaces ${IPLUG_DEPS_DIR}/AAX_SDK/Interfaces SYMBOLIC)
+    endif()
+    if(NOT EXISTS ${IPLUG_DEPS_DIR}/AAX_SDK/Libs AND EXISTS ${AAX_SDK_PATH}/Libs)
+        file(CREATE_LINK ${AAX_SDK_PATH}/Libs ${IPLUG_DEPS_DIR}/AAX_SDK/Libs SYMBOLIC)
+    endif()
+endif()
+
 # Set up iPlug2 CMake module
 set(IPLUG2_DIR ${iplug2_SOURCE_DIR} CACHE PATH "iPlug2 root directory" FORCE)
 include(${IPLUG2_DIR}/iPlug2.cmake)
@@ -102,6 +113,7 @@ iplug_add_plugin(${PROJECT_NAME}
         src/PluginProcessor.h
         config.h
         resource.h
+    FORMATS VST3 CLAP AU APP AUV3 AAX
     UI IGRAPHICS
 )
 

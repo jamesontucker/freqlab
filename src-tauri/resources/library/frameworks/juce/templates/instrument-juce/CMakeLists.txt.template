@@ -29,14 +29,19 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(JUCE clap-juce-extensions)
 
+# AAX SDK (optional - pass -DAAX_SDK_PATH=<path> to enable AAX builds)
+if(DEFINED AAX_SDK_PATH)
+    juce_set_aax_sdk_path("${AAX_SDK_PATH}")
+endif()
+
 # Plugin definition
 juce_add_plugin({{pascal_name}}
     COMPANY_NAME "{{vendor_name}}"
     PLUGIN_MANUFACTURER_CODE {{mfr_id}}
     PLUGIN_CODE {{plugin_code}}
 
-    # Formats - build Standalone first for fastest iteration
-    FORMATS Standalone VST3 AU
+    # Formats: CLAP added via clap-juce-extensions below. AAX requires Avid SDK (skipped if not found).
+    FORMATS Standalone VST3 AU AUv3 LV2 AAX
 
     PRODUCT_NAME "{{pascal_name}}"
 

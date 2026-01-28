@@ -13,6 +13,8 @@ pub struct ProjectMeta {
     #[serde(rename = "uiFramework")]
     pub ui_framework: Option<String>, // "webview", "egui", or "native"
     pub components: Option<Vec<String>>, // Starter components selected
+    #[serde(rename = "buildFormats")]
+    pub build_formats: Option<Vec<String>>, // e.g. ["vst3", "clap", "au"]
     pub created_at: String,
     pub updated_at: String,
     pub path: String,
@@ -36,6 +38,8 @@ pub struct CreateProjectInput {
     #[serde(rename = "vendorEmail")]
     pub vendor_email: Option<String>,
     pub components: Option<Vec<String>>, // Starter components to include
+    #[serde(rename = "buildFormats")]
+    pub build_formats: Option<Vec<String>>, // Build format selection (e.g. ["vst3", "clap"])
 }
 
 pub fn get_workspace_path() -> PathBuf {
@@ -509,6 +513,7 @@ pub async fn create_project(
         template: Some(input.template.clone()),
         ui_framework: Some(input.ui_framework.clone()),
         components: input.components.clone(),
+        build_formats: input.build_formats.clone(),
         created_at: now.clone(),
         updated_at: now,
         path: project_path.to_string_lossy().to_string(),
@@ -574,6 +579,11 @@ pub async fn create_project(
         &input.ui_framework,
         input.components.as_ref(),
     )?;
+
+    // Update CMakeLists.txt FORMATS line to match selected build formats
+    if let Some(ref formats) = input.build_formats {
+        update_cmake_formats(&app_handle, &project_path, formats)?;
+    }
 
     // Initialize git repository for version control
     // These operations now run on a blocking thread pool to avoid UI freezes
@@ -669,9 +679,11 @@ pub async fn delete_project(name: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn update_project(
+    app_handle: tauri::AppHandle,
     project_path: String,
     name: String,
     description: String,
+    build_formats: Option<Vec<String>>,
 ) -> Result<ProjectMeta, String> {
     // Validate description length
     if description.len() > 280 {
@@ -694,6 +706,11 @@ pub async fn update_project(
     // Update fields
     meta.name = name;
     meta.description = description;
+    if let Some(ref formats) = build_formats {
+        meta.build_formats = Some(formats.clone());
+        // Update CMakeLists.txt FORMATS line to match new selection
+        update_cmake_formats(&app_handle, &path, formats)?;
+    }
     meta.updated_at = chrono::Utc::now().to_rfc3339();
 
     // Write back
@@ -732,6 +749,119 @@ pub async fn open_in_editor(path: String, editor: Option<String>) -> Result<(), 
 #[tauri::command]
 pub async fn get_workspace_path_string() -> String {
     get_workspace_path().to_string_lossy().to_string()
+}
+
+/// Get the output format IDs supported by a framework, optionally filtered by UI framework.
+/// Some UI frameworks don't support all output formats (e.g. iPlug2 native can't build standalone/AUv3).
+#[tauri::command]
+pub async fn get_framework_outputs(
+    app_handle: tauri::AppHandle,
+    framework_id: String,
+    ui_framework: Option<String>,
+) -> Result<Vec<String>, String> {
+    use crate::library;
+
+    let lib = library::loader::load_library(&app_handle);
+    let framework = lib
+        .frameworks
+        .iter()
+        .find(|f| f.id == framework_id)
+        .ok_or_else(|| format!("Framework '{}' not found", framework_id))?;
+
+    let mut formats: Vec<String> = framework.outputs.keys().cloned().collect();
+
+    // Filter out formats unsupported by the specific UI framework
+    if let Some(ref ui_fw_id) = ui_framework {
+        if let Some(ui_fw) = framework.ui_frameworks.iter().find(|u| &u.id == ui_fw_id) {
+            if !ui_fw.unsupported_formats.is_empty() {
+                formats.retain(|f| !ui_fw.unsupported_formats.contains(f));
+            }
+        }
+    }
+
+    Ok(formats)
+}
+
+/// Rewrite the FORMATS line in a project's CMakeLists.txt to match the selected build formats.
+/// Uses the framework's cmake_formats mapping to convert format IDs to CMake format names.
+/// This is a no-op for cargo-based builds (nih-plug).
+pub fn update_cmake_formats(
+    app_handle: &tauri::AppHandle,
+    project_path: &std::path::Path,
+    build_formats: &[String],
+) -> Result<(), String> {
+    use crate::library;
+
+    // Read framework ID from metadata
+    let metadata_path = project_path.join(".vstworkshop/metadata.json");
+    if !metadata_path.exists() {
+        return Ok(()); // No metadata = nothing to do
+    }
+    let content = fs::read_to_string(&metadata_path)
+        .map_err(|e| format!("Failed to read metadata: {}", e))?;
+    let meta: ProjectMeta = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse metadata: {}", e))?;
+    let framework_id = meta.framework_id.as_deref().unwrap_or("nih-plug");
+
+    // Load framework config to get cmake_formats mapping
+    let lib = library::loader::load_library(app_handle);
+    let framework = lib.frameworks.iter().find(|f| f.id == framework_id);
+    let cmake_formats = match framework.and_then(|f| f.build.cmake_formats.as_ref()) {
+        Some(map) => map,
+        None => return Ok(()), // No cmake_formats = not a cmake build (e.g., nih-plug)
+    };
+
+    // Build the new FORMATS value from selected build formats
+    // Use the cmake_formats map to convert format IDs to CMake names
+    let cmake_names: Vec<&str> = build_formats
+        .iter()
+        .filter_map(|id| cmake_formats.get(id).map(|s| s.as_str()))
+        .collect();
+
+    if cmake_names.is_empty() {
+        return Ok(()); // Nothing to write
+    }
+
+    let new_formats_value = cmake_names.join(" ");
+
+    // Find and update CMakeLists.txt
+    let cmake_path = project_path.join("CMakeLists.txt");
+    if !cmake_path.exists() {
+        return Ok(());
+    }
+
+    let cmake_content = fs::read_to_string(&cmake_path)
+        .map_err(|e| format!("Failed to read CMakeLists.txt: {}", e))?;
+
+    // Replace the FORMATS line using regex-like matching
+    // Pattern: whitespace + "FORMATS" + space + format names (rest of line)
+    let mut new_content = String::new();
+    let mut found = false;
+    for line in cmake_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("FORMATS ") {
+            // Preserve leading whitespace
+            let indent = &line[..line.len() - line.trim_start().len()];
+            new_content.push_str(&format!("{}FORMATS {}", indent, new_formats_value));
+            found = true;
+        } else {
+            new_content.push_str(line);
+        }
+        new_content.push('\n');
+    }
+
+    if found {
+        fs::write(&cmake_path, new_content)
+            .map_err(|e| format!("Failed to write CMakeLists.txt: {}", e))?;
+
+        // Delete cmake cache so the next build reconfigures with new format targets
+        let cache_path = project_path.join("build/CMakeCache.txt");
+        if cache_path.exists() {
+            let _ = fs::remove_file(&cache_path);
+        }
+    }
+
+    Ok(())
 }
 
 // NOTE: Template generation functions have been removed.

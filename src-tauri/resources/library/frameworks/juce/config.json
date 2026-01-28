@@ -37,6 +37,18 @@
         "standalone": {
             "extension": ".app",
             "description": "Standalone application (macOS)"
+        },
+        "auv3": {
+            "extension": ".appex",
+            "description": "Audio Unit v3 App Extension (macOS/iOS)"
+        },
+        "aax": {
+            "extension": ".aaxplugin",
+            "description": "AAX plugin (Pro Tools, requires Avid SDK)"
+        },
+        "lv2": {
+            "extension": ".lv2",
+            "description": "LV2 plugin bundle (Ardour, Mixbus)"
         }
     },
 
@@ -52,8 +64,19 @@
             "build/*_artefacts/Release/**/*.vst3",
             "build/*_artefacts/Release/**/*.component",
             "build/*_artefacts/Release/**/*.clap",
-            "build/*_artefacts/Release/**/*.app"
+            "build/*_artefacts/Release/**/*.app",
+            "build/*_artefacts/Release/**/*.appex",
+            "build/*_artefacts/Release/**/*.aaxplugin",
+            "build/*_artefacts/Release/**/*.lv2"
         ],
+        "cmake_formats": {
+            "vst3": "VST3",
+            "au": "AU",
+            "standalone": "Standalone",
+            "auv3": "AUv3",
+            "lv2": "LV2",
+            "aax": "AAX"
+        },
         "notes": {
             "first_build": "First build downloads JUCE (~100MB) via FetchContent. This is cached in build/_deps/ for subsequent builds.",
             "cache": "Do not delete build/_deps/ unless you want to re-download dependencies. Deleting build/ is safe for clean rebuilds.",

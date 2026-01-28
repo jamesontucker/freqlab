@@ -19,7 +19,7 @@ interface ProjectState {
   createProject: (input: CreateProjectInput) => Promise<ProjectMeta>;
   selectProject: (project: ProjectMeta | null) => void;
   deleteProject: (folderName: string, projectPath: string) => Promise<void>;
-  updateProject: (projectPath: string, name: string, description: string) => Promise<void>;
+  updateProject: (projectPath: string, name: string, description: string, buildFormats?: string[]) => Promise<void>;
   setAutoBuild: (projectPath: string, enabled: boolean) => void;
   isAutoBuildEnabled: (projectPath: string) => boolean;
 }
@@ -97,12 +97,13 @@ export const useProjectStore = create<ProjectState>()(
         }
       },
 
-      updateProject: async (projectPath: string, name: string, description: string) => {
+      updateProject: async (projectPath: string, name: string, description: string, buildFormats?: string[]) => {
         try {
           const updated = await invoke<ProjectMeta>('update_project', {
             projectPath,
             name,
             description,
+            buildFormats: buildFormats ?? null,
           });
           set((state) => ({
             projects: state.projects.map((p) =>

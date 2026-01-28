@@ -32,7 +32,8 @@ export function DawPathsSettings() {
   };
 
   const hasPath = (key: keyof DawPaths) => {
-    return dawPaths[key].vst3.trim() !== '' || dawPaths[key].clap.trim() !== '';
+    const p = dawPaths[key];
+    return p.vst3.trim() !== '' || p.clap.trim() !== '' || p.au.trim() !== '' || p.standalone.trim() !== '' || p.auv3.trim() !== '' || p.aax.trim() !== '' || p.lv2.trim() !== '';
   };
 
   return (
@@ -105,6 +106,72 @@ export function DawPathsSettings() {
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        AU Path
+                      </label>
+                      <input
+                        type="text"
+                        value={dawPaths[daw.key].au}
+                        onChange={(e) => updateDawPath(daw.key, 'au', e.target.value)}
+                        placeholder="~/Library/Audio/Plug-Ins/Components"
+                        className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        Standalone Path
+                      </label>
+                      <input
+                        type="text"
+                        value={dawPaths[daw.key].standalone}
+                        onChange={(e) => updateDawPath(daw.key, 'standalone', e.target.value)}
+                        placeholder="/Applications"
+                        className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        AUv3 Path
+                      </label>
+                      <input
+                        type="text"
+                        value={dawPaths[daw.key].auv3}
+                        onChange={(e) => updateDawPath(daw.key, 'auv3', e.target.value)}
+                        placeholder="(no standard path)"
+                        className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        AAX Path
+                      </label>
+                      <input
+                        type="text"
+                        value={dawPaths[daw.key].aax}
+                        onChange={(e) => updateDawPath(daw.key, 'aax', e.target.value)}
+                        placeholder="/Library/Application Support/Avid/Audio/Plug-Ins"
+                        className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      />
+                    </div>
+
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-text-secondary mb-1.5">
+                        LV2 Path
+                      </label>
+                      <input
+                        type="text"
+                        value={dawPaths[daw.key].lv2}
+                        onChange={(e) => updateDawPath(daw.key, 'lv2', e.target.value)}
+                        placeholder="~/Library/Audio/Plug-Ins/LV2"
+                        className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                      />
+                    </div>
+
                   </div>
                 </div>
               )}
@@ -125,6 +192,10 @@ export function DawPathsSettings() {
             <ul className="list-disc list-inside space-y-0.5 text-xs">
               <li>VST3: ~/Library/Audio/Plug-Ins/VST3</li>
               <li>CLAP: ~/Library/Audio/Plug-Ins/CLAP</li>
+              <li>AU: ~/Library/Audio/Plug-Ins/Components</li>
+              <li>Standalone: /Applications</li>
+              <li>AAX: /Library/Application Support/Avid/Audio/Plug-Ins</li>
+              <li>LV2: ~/Library/Audio/Plug-Ins/LV2</li>
             </ul>
           </div>
         </div>

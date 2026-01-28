@@ -36,6 +36,11 @@ export interface PermissionStatus {
 export interface DawPathConfig {
   vst3: string;
   clap: string;
+  au: string;
+  auv3: string;
+  aax: string;
+  lv2: string;
+  standalone: string;
 }
 
 export interface DawPaths {
@@ -112,6 +117,8 @@ export interface AppConfig {
   vendorEmail: string;
   // DAW plugin paths
   dawPaths: DawPaths;
+  // AAX SDK path (empty = not configured)
+  aaxSdkPath: string;
 }
 
 export interface ProjectMeta {
@@ -122,6 +129,7 @@ export interface ProjectMeta {
   template?: PluginTemplate;
   uiFramework?: UIFramework;
   components?: string[];  // Starter components selected
+  buildFormats?: string[];  // Selected build formats (e.g., ["vst3", "clap"])
   created_at: string;
   updated_at: string;
   path: string;
@@ -157,6 +165,7 @@ export interface CreateProjectInput {
   vendorUrl?: string;
   vendorEmail?: string;
   components?: string[];  // Selected component IDs
+  buildFormats?: string[];  // Selected build formats (e.g., ["vst3", "clap"])
 }
 
 export interface FileAttachment {
@@ -257,6 +266,7 @@ export interface LibraryUIFramework {
   name: string;
   description: string;
   dependencies: Record<string, unknown>;
+  unsupported_formats?: string[];
 }
 
 export interface LibraryComponent {

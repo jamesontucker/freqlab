@@ -333,11 +333,12 @@ interface FrameworkDisplayInfo {
 }
 
 // Consistent format order for all frameworks
-const FORMAT_ORDER = ['.clap', '.vst3', '.component', '.appex', '.app'];
+const FORMAT_ORDER = ['.clap', '.vst3', '.component', '.appex', '.aaxplugin', '.lv2', '.app'];
 
 // Display names for extensions (e.g., .app -> standalone)
 const FORMAT_DISPLAY_NAMES: Record<string, string> = {
   '.app': 'standalone',
+  '.aaxplugin': 'aax',
 };
 
 function sortFormats(outputs: Record<string, { extension: string; description: string }>): Array<{ key: string; extension: string; displayName: string; description: string }> {
@@ -525,7 +526,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
   const [selectedComponents, setSelectedComponents] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { vendorName, vendorUrl, vendorEmail } = useSettingsStore();
+  const { vendorName, vendorUrl, vendorEmail, buildFormats: defaultBuildFormats } = useSettingsStore();
 
   // Framework selection
   const [frameworks, setFrameworks] = useState<LibraryFramework[]>([]);
@@ -742,6 +743,18 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
         vendorUrl: vendorUrl || '',
         vendorEmail: vendorEmail || '',
         components: selectedComponents.length > 0 ? selectedComponents : undefined,
+        // Inherit global defaults, intersected with what the framework supports
+        buildFormats: (() => {
+          const fwFormats = selectedFramework ? Object.keys(selectedFramework.outputs) : [];
+          // Filter out formats unsupported by the selected UI framework
+          const uiFw = selectedFramework?.ui_frameworks.find(u => u.id === uiFramework);
+          const unsupported = uiFw?.unsupported_formats ?? [];
+          const supported = fwFormats.filter(f => !unsupported.includes(f));
+          const filtered = defaultBuildFormats.filter(f => supported.includes(f));
+          if (!filtered.includes('clap') && supported.includes('clap')) filtered.push('clap');
+          if (!filtered.includes('vst3') && supported.includes('vst3')) filtered.push('vst3');
+          return filtered.length > 0 ? filtered : supported;
+        })(),
       });
       // Reset state
       setName('');
@@ -757,7 +770,7 @@ export function NewProjectModal({ isOpen, onClose, onSubmit }: NewProjectModalPr
     } finally {
       setIsSubmitting(false);
     }
-  }, [name, description, frameworkId, template, uiFramework, selectedComponents, vendorName, vendorUrl, vendorEmail, onSubmit, onClose]);
+  }, [name, description, frameworkId, template, uiFramework, selectedComponents, selectedFramework, defaultBuildFormats, vendorName, vendorUrl, vendorEmail, onSubmit, onClose]);
 
   const handleClose = useCallback(() => {
     if (isTourMode) {

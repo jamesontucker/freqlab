@@ -7,6 +7,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useProjectBusyStore } from '../../stores/projectBusyStore'
 import { usePreviewStore } from '../../stores/previewStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useTourStore } from '../../stores/tourStore'
 import { useTipsStore } from '../../stores/tipsStore'
 import { Tip } from '../Common/Tip'
@@ -200,9 +201,11 @@ export function ProjectActionBar({
 
         try {
             const folderName = getFolderName(project.path)
+            const aaxSdkPath = useSettingsStore.getState().aaxSdkPath
             const result = await invoke<BuildResult>('build_project', {
                 projectName: folderName,
-                version: buildVersion
+                version: buildVersion,
+                aaxSdkPath: aaxSdkPath || null,
             })
 
             if (result.success) {

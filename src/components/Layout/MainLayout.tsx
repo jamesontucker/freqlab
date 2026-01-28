@@ -25,6 +25,11 @@ import {
 interface AvailableFormats {
     vst3: boolean
     clap: boolean
+    au: boolean
+    standalone: boolean
+    auv3: boolean
+    aax: boolean
+    lv2: boolean
 }
 
 // Helper to extract folder name from project path
@@ -43,6 +48,8 @@ export function MainLayout() {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [editName, setEditName] = useState('')
     const [editDescription, setEditDescription] = useState('')
+    const [editBuildFormats, setEditBuildFormats] = useState<string[]>([])
+    const [frameworkOutputs, setFrameworkOutputs] = useState<string[]>([])
     const [isEditSaving, setIsEditSaving] = useState(false)
 
     // === REACTIVE STATE (with selectors) ===
@@ -92,7 +99,7 @@ export function MainLayout() {
                 projectName: folderName,
                 version
             })
-            setHasBuild(formats.vst3 || formats.clap)
+            setHasBuild(formats.vst3 || formats.clap || formats.au || formats.standalone || formats.auv3 || formats.aax || formats.lv2)
         } catch {
             setHasBuild(false)
         }
@@ -108,10 +115,29 @@ export function MainLayout() {
     }
 
     // Open edit modal with current project values
-    const handleOpenEditModal = useCallback(() => {
+    const handleOpenEditModal = useCallback(async () => {
         if (activeProject) {
             setEditName(activeProject.name)
             setEditDescription(activeProject.description || '')
+
+            // Load framework outputs to know which formats are supported
+            const fwId = activeProject.frameworkId || 'nih-plug'
+            const uiFw = activeProject.uiFramework || undefined
+            try {
+                const outputs = await invoke<string[]>('get_framework_outputs', { frameworkId: fwId, uiFramework: uiFw })
+                setFrameworkOutputs(outputs)
+                // If project has buildFormats set, intersect with framework outputs to avoid stale entries;
+                // otherwise default to all framework outputs
+                if (activeProject.buildFormats) {
+                    setEditBuildFormats(activeProject.buildFormats.filter(f => outputs.includes(f)))
+                } else {
+                    setEditBuildFormats(outputs)
+                }
+            } catch {
+                setFrameworkOutputs([])
+                setEditBuildFormats(activeProject.buildFormats || [])
+            }
+
             setIsEditModalOpen(true)
         }
     }, [activeProject])
@@ -122,7 +148,11 @@ export function MainLayout() {
 
         setIsEditSaving(true)
         try {
-            await updateProject(activeProject.path, editName.trim(), editDescription.trim())
+            // Ensure VST3 and CLAP are always included
+            let formatsToSave = [...editBuildFormats]
+            if (!formatsToSave.includes('clap')) formatsToSave.push('clap')
+            if (!formatsToSave.includes('vst3')) formatsToSave.push('vst3')
+            await updateProject(activeProject.path, editName.trim(), editDescription.trim(), formatsToSave)
             setIsEditModalOpen(false)
             addToast({
                 type: 'success',
@@ -394,6 +424,56 @@ export function MainLayout() {
                             </span>
                         </div>
                     </div>
+
+                    {/* Build Formats */}
+                    {frameworkOutputs.length > 0 && (
+                        <div>
+                            <label className="block text-sm font-medium text-text-secondary mb-1">
+                                Build Formats
+                            </label>
+                            <p className="text-xs text-text-muted mb-2">Select which plugin formats to include in builds</p>
+                            <div className="flex flex-wrap gap-2">
+                                {frameworkOutputs.map((fmt) => {
+                                    const isLocked = fmt === 'clap' || fmt === 'vst3'
+                                    const isChecked = isLocked || editBuildFormats.includes(fmt)
+                                    const labels: Record<string, string> = {
+                                        vst3: 'VST3', clap: 'CLAP', au: 'Audio Unit',
+                                        standalone: 'Standalone', auv3: 'AUv3',
+                                        aax: 'AAX (requires SDK)', lv2: 'LV2',
+                                    }
+                                    return (
+                                        <label
+                                            key={fmt}
+                                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                                                isChecked
+                                                    ? 'border-accent/30 bg-accent/10 text-text-primary'
+                                                    : 'border-border bg-bg-tertiary text-text-secondary hover:border-border-strong'
+                                            } ${isLocked ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                disabled={isLocked}
+                                                onChange={() => {
+                                                    if (isLocked) return
+                                                    setEditBuildFormats(prev =>
+                                                        prev.includes(fmt)
+                                                            ? prev.filter(f => f !== fmt)
+                                                            : [...prev, fmt]
+                                                    )
+                                                }}
+                                                className="w-3.5 h-3.5 rounded border-border text-accent focus:ring-accent disabled:opacity-60"
+                                            />
+                                            <span className="font-medium">{labels[fmt] || fmt}</span>
+                                            {isLocked && (
+                                                <span className="text-[10px] px-1 py-0.5 rounded bg-accent/20 text-accent">required</span>
+                                            )}
+                                        </label>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     <div className="flex gap-3 pt-2">
                         <button

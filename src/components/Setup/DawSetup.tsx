@@ -73,6 +73,10 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
 
   const defaultVst3 = '~/Library/Audio/Plug-Ins/VST3';
   const defaultClap = '~/Library/Audio/Plug-Ins/CLAP';
+  const defaultAu = '~/Library/Audio/Plug-Ins/Components';
+  const defaultStandalone = '/Applications';
+  const defaultAax = '/Library/Application Support/Avid/Audio/Plug-Ins';
+  const defaultLv2 = '~/Library/Audio/Plug-Ins/LV2';
 
   const toggleDaw = useCallback((dawKey: DawKey) => {
     setSelectedDaws(prev => {
@@ -87,6 +91,18 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
         }
         if (!dawPaths[dawKey].clap.trim()) {
           updateDawPath(dawKey, 'clap', defaultClap);
+        }
+        if (!dawPaths[dawKey].au.trim()) {
+          updateDawPath(dawKey, 'au', defaultAu);
+        }
+        if (!dawPaths[dawKey].standalone.trim()) {
+          updateDawPath(dawKey, 'standalone', defaultStandalone);
+        }
+        if (!dawPaths[dawKey].aax.trim()) {
+          updateDawPath(dawKey, 'aax', defaultAax);
+        }
+        if (!dawPaths[dawKey].lv2.trim()) {
+          updateDawPath(dawKey, 'lv2', defaultLv2);
         }
       }
       return next;
@@ -181,6 +197,10 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
                   selectedDaws.forEach(dawKey => {
                     updateDawPath(dawKey, 'vst3', defaultVst3);
                     updateDawPath(dawKey, 'clap', defaultClap);
+                    updateDawPath(dawKey, 'au', defaultAu);
+                    updateDawPath(dawKey, 'standalone', defaultStandalone);
+                    updateDawPath(dawKey, 'aax', defaultAax);
+                    updateDawPath(dawKey, 'lv2', defaultLv2);
                   });
                 }
               }}
@@ -195,6 +215,10 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
             <div className="pl-6 text-[11px] text-text-muted space-y-0.5">
               <p>VST3: <span className="text-text-secondary font-mono">{defaultVst3}</span></p>
               <p>CLAP: <span className="text-text-secondary font-mono">{defaultClap}</span></p>
+              <p>AU: <span className="text-text-secondary font-mono">{defaultAu}</span></p>
+              <p>Standalone: <span className="text-text-secondary font-mono">{defaultStandalone}</span></p>
+              <p>AAX: <span className="text-text-secondary font-mono">{defaultAax}</span></p>
+              <p>LV2: <span className="text-text-secondary font-mono">{defaultLv2}</span></p>
             </div>
           )}
 
@@ -223,6 +247,46 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
                           value={dawPaths[dawKey].clap}
                           onChange={(e) => updateDawPath(dawKey, 'clap', e.target.value)}
                           placeholder={defaultClap}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">AU Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].au}
+                          onChange={(e) => updateDawPath(dawKey, 'au', e.target.value)}
+                          placeholder={defaultAu}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">Standalone Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].standalone}
+                          onChange={(e) => updateDawPath(dawKey, 'standalone', e.target.value)}
+                          placeholder={defaultStandalone}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">AAX Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].aax}
+                          onChange={(e) => updateDawPath(dawKey, 'aax', e.target.value)}
+                          placeholder={defaultAax}
+                          className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-text-muted mb-1">LV2 Path</label>
+                        <input
+                          type="text"
+                          value={dawPaths[dawKey].lv2}
+                          onChange={(e) => updateDawPath(dawKey, 'lv2', e.target.value)}
+                          placeholder={defaultLv2}
                           className="w-full px-2 py-1.5 bg-bg-tertiary border border-border rounded-md text-xs text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent/50 focus:border-accent font-mono"
                         />
                       </div>

@@ -73,7 +73,7 @@ impl Plugin for {{pascal_name}} {
     }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
-    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::Basic;
 
     type SysExMessage = ();
     type BackgroundTask = ();

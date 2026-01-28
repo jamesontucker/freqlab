@@ -16,12 +16,22 @@ interface PublishModalProps {
 interface AvailableFormats {
   vst3: boolean;
   clap: boolean;
+  au: boolean;
+  standalone: boolean;
+  auv3: boolean;
+  aax: boolean;
+  lv2: boolean;
 }
 
 interface DawPublishTarget {
   daw: string;
   vst3_path: string;
   clap_path: string;
+  au_path: string;
+  standalone_path: string;
+  auv3_path: string;
+  aax_path: string;
+  lv2_path: string;
 }
 
 interface CopiedFile {
@@ -56,16 +66,28 @@ function getFolderName(projectPath: string): string {
   return projectPath.split('/').pop() || '';
 }
 
+const FORMAT_LABELS: Record<string, string> = {
+  vst3: 'VST3',
+  clap: 'CLAP',
+  au: 'AU',
+  standalone: 'Standalone',
+  auv3: 'AUv3',
+  aax: 'AAX',
+  lv2: 'LV2',
+};
+
 export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishModalProps) {
   const { dawPaths } = useSettingsStore();
   const [selectedDaws, setSelectedDaws] = useState<Set<keyof DawPaths>>(new Set());
   const [formats, setFormats] = useState<AvailableFormats | null>(null);
+  const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set());
   const [isPublishing, setIsPublishing] = useState(false);
   const [isPackaging, setIsPackaging] = useState(false);
   const [result, setResult] = useState<PublishResult | null>(null);
   const [packageResult, setPackageResult] = useState<PackageResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentVersion, setCurrentVersion] = useState<number>(1);
+  const [gatekeeperOpen, setGatekeeperOpen] = useState(false);
 
   // Check available formats when modal opens
   useEffect(() => {
@@ -74,6 +96,7 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
       setPackageResult(null);
       setError(null);
       setFormats(null);
+      setSelectedFormats(new Set());
 
       // First get the current version, then check available formats
       // Map version 0 (fresh project) to 1 for display and filesystem operations
@@ -88,18 +111,43 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
             version,
           });
         })
-        .then(setFormats)
+        .then((fmts) => {
+          setFormats(fmts);
+          // Default all available formats to selected
+          const available = new Set<string>();
+          if (fmts.vst3) available.add('vst3');
+          if (fmts.clap) available.add('clap');
+          if (fmts.au) available.add('au');
+          if (fmts.standalone) available.add('standalone');
+          if (fmts.auv3) available.add('auv3');
+          if (fmts.aax) available.add('aax');
+          if (fmts.lv2) available.add('lv2');
+          setSelectedFormats(available);
+        })
         .catch((err) => setError(String(err)));
     }
   }, [isOpen, project.name, project.path]);
 
+  const toggleFormat = (fmt: string) => {
+    setSelectedFormats((prev) => {
+      const next = new Set(prev);
+      if (next.has(fmt)) {
+        next.delete(fmt);
+      } else {
+        next.add(fmt);
+      }
+      return next;
+    });
+  };
+
   // Get DAWs that have at least one path configured
   const configuredDaws = Object.entries(dawPaths).filter(
-    ([, paths]) => paths.vst3.trim() !== '' || paths.clap.trim() !== ''
-  ) as [keyof DawPaths, { vst3: string; clap: string }][];
+    ([, paths]) => paths.vst3.trim() !== '' || paths.clap.trim() !== '' || paths.au.trim() !== '' || paths.standalone.trim() !== '' || paths.auv3.trim() !== '' || paths.aax.trim() !== '' || paths.lv2.trim() !== ''
+  ) as [keyof DawPaths, typeof dawPaths[keyof DawPaths]][];
 
   // Check if "other" (Custom Location) is configured
-  const isOtherConfigured = dawPaths.other.vst3.trim() !== '' || dawPaths.other.clap.trim() !== '';
+  const p = dawPaths.other;
+  const isOtherConfigured = p.vst3.trim() !== '' || p.clap.trim() !== '' || p.au.trim() !== '' || p.standalone.trim() !== '' || p.auv3.trim() !== '' || p.aax.trim() !== '' || p.lv2.trim() !== '';
 
   const handleToggleDaw = (daw: keyof DawPaths) => {
     setSelectedDaws((prev) => {
@@ -133,6 +181,11 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
         daw: DAW_LABELS[daw],
         vst3_path: dawPaths[daw].vst3,
         clap_path: dawPaths[daw].clap,
+        au_path: dawPaths[daw].au,
+        standalone_path: dawPaths[daw].standalone,
+        auv3_path: dawPaths[daw].auv3,
+        aax_path: dawPaths[daw].aax,
+        lv2_path: dawPaths[daw].lv2,
       }));
 
       // Use folder name from path, not display name
@@ -141,6 +194,7 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
         projectName: folderName,
         version: currentVersion,
         targets,
+        selectedFormats: Array.from(selectedFormats),
       });
 
       setResult(publishResult);
@@ -176,6 +230,7 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
         projectName: packageFolderName,
         version: currentVersion,
         destination,
+        selectedFormats: Array.from(selectedFormats),
       });
 
       setPackageResult(result);
@@ -188,13 +243,14 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
 
   const handleClose = () => {
     setSelectedDaws(new Set());
+    setSelectedFormats(new Set());
     setResult(null);
     setPackageResult(null);
     setError(null);
     onClose();
   };
 
-  const noFormatsAvailable = formats && !formats.vst3 && !formats.clap;
+  const noFormatsAvailable = formats && !formats.vst3 && !formats.clap && !formats.au && !formats.standalone && !formats.auv3 && !formats.aax && !formats.lv2;
   const noDawsConfigured = configuredDaws.length === 0;
 
   return (
@@ -208,9 +264,32 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
           </span>
         </div>
 
-        {/* Available formats */}
+        {/* Available formats (toggleable) */}
         <div>
-          <h4 className="text-sm font-medium text-text-secondary mb-2">Available Formats</h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium text-text-secondary">Formats to Publish</h4>
+            {formats && !noFormatsAvailable && (
+              <div className="flex gap-2 text-xs">
+                <button
+                  onClick={() => {
+                    const all = new Set<string>();
+                    Object.entries(formats).forEach(([k, v]) => { if (v) all.add(k); });
+                    setSelectedFormats(all);
+                  }}
+                  className="text-accent hover:text-accent-hover"
+                >
+                  Select All
+                </button>
+                <span className="text-text-muted">/</span>
+                <button
+                  onClick={() => setSelectedFormats(new Set())}
+                  className="text-accent hover:text-accent-hover"
+                >
+                  None
+                </button>
+              </div>
+            )}
+          </div>
           {!formats ? (
             <div className="flex items-center gap-2 text-text-muted">
               <Spinner size="sm" />
@@ -221,17 +300,26 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
               No built plugins found. Build the project first.
             </p>
           ) : (
-            <div className="flex gap-3">
-              {formats.vst3 && (
-                <span className="px-3 py-1 rounded-lg bg-accent/20 text-accent text-sm font-medium">
-                  VST3
-                </span>
-              )}
-              {formats.clap && (
-                <span className="px-3 py-1 rounded-lg bg-accent/20 text-accent text-sm font-medium">
-                  CLAP
-                </span>
-              )}
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(formats)
+                .filter(([, available]) => available)
+                .map(([fmt]) => {
+                  const isSelected = selectedFormats.has(fmt);
+                  return (
+                    <button
+                      key={fmt}
+                      type="button"
+                      onClick={() => toggleFormat(fmt)}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                        isSelected
+                          ? 'bg-accent/20 text-accent'
+                          : 'bg-bg-tertiary text-text-muted line-through'
+                      }`}
+                    >
+                      {FORMAT_LABELS[fmt] || fmt}
+                    </button>
+                  );
+                })}
             </div>
           )}
         </div>
@@ -335,16 +423,7 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
             }`}
           >
             {result.success ? (
-              <>
-                <p className="font-medium mb-1">Published successfully!</p>
-                <ul className="text-xs space-y-0.5">
-                  {result.copied.map((file, i) => (
-                    <li key={i}>
-                      {file.format} &rarr; {file.daw}
-                    </li>
-                  ))}
-                </ul>
-              </>
+              <p className="font-medium">Published successfully!</p>
             ) : (
               <>
                 <p className="font-medium mb-1">Publish completed with errors:</p>
@@ -371,25 +450,34 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
           </div>
         )}
 
-        {/* Gatekeeper Info */}
-        <div className="p-3 rounded-lg bg-bg-tertiary border border-border">
-          <div className="flex items-start gap-2">
-            <svg className="w-4 h-4 text-accent flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        {/* Gatekeeper Info (collapsible) */}
+        <div className="rounded-lg bg-bg-tertiary border border-border">
+          <button
+            type="button"
+            onClick={() => setGatekeeperOpen((v) => !v)}
+            className="w-full flex items-center gap-2 p-3 text-left"
+          >
+            <svg className="w-4 h-4 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
             </svg>
-            <div className="text-xs">
-              <p className="text-text-primary font-medium">macOS Gatekeeper</p>
-              <p className="text-text-secondary mt-0.5">
+            <span className="text-xs flex-1"><span className="text-text-primary font-medium">macOS Gatekeeper</span> <span className="text-text-muted">&mdash; quarantine is auto-cleared on publish</span></span>
+            <svg className={`w-3.5 h-3.5 text-text-muted transition-transform ${gatekeeperOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+            </svg>
+          </button>
+          {gatekeeperOpen && (
+            <div className="px-3 pb-3 text-xs">
+              <p className="text-text-secondary">
                 Quarantine attributes are automatically cleared when publishing, so plugins should load without Gatekeeper issues.
               </p>
               <p className="text-text-muted mt-1">
                 If you still have issues, run in Terminal:
               </p>
               <code className="block mt-1 px-2 py-1 bg-bg-primary rounded text-[11px] text-text-primary font-mono">
-                xattr -cr ~/Library/Audio/Plug-Ins/VST3/ ~/Library/Audio/Plug-Ins/CLAP/
+                xattr -cr ~/Library/Audio/Plug-Ins/VST3/ ~/Library/Audio/Plug-Ins/CLAP/ ~/Library/Audio/Plug-Ins/Components/
               </code>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -399,34 +487,30 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
             onClick={handleClose}
             className="flex-1 py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated text-text-secondary hover:text-text-primary font-medium rounded-xl border border-border transition-all duration-200"
           >
-            {result || packageResult ? 'Close' : 'Cancel'}
+            Close
           </button>
-          {!result && !packageResult && (
-            <>
-              <button
-                type="button"
-                onClick={handlePackage}
-                disabled={isPublishing || isPackaging || noFormatsAvailable || !formats}
-                className="py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated disabled:bg-bg-tertiary disabled:text-text-muted text-text-primary font-medium rounded-xl border border-border transition-all duration-200 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                title="Package plugins into a zip file"
-              >
-                {isPackaging && <Spinner size="sm" />}
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-                </svg>
-                Package
-              </button>
-              <button
-                type="button"
-                onClick={handlePublish}
-                disabled={isPublishing || isPackaging || noFormatsAvailable || !formats || selectedDaws.size === 0}
-                className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-xl transition-all duration-200 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none flex items-center justify-center gap-2"
-              >
-                {isPublishing && <Spinner size="sm" />}
-                Publish
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={handlePackage}
+            disabled={isPublishing || isPackaging || noFormatsAvailable || !formats || selectedFormats.size === 0}
+            className="py-2.5 px-4 bg-bg-tertiary hover:bg-bg-elevated disabled:bg-bg-tertiary disabled:text-text-muted text-text-primary font-medium rounded-xl border border-border transition-all duration-200 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            title="Package plugins into a zip file"
+          >
+            {isPackaging && <Spinner size="sm" />}
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+            </svg>
+            Package
+          </button>
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={isPublishing || isPackaging || noFormatsAvailable || !formats || selectedDaws.size === 0 || selectedFormats.size === 0}
+            className="flex-1 py-2.5 px-4 bg-accent hover:bg-accent-hover disabled:bg-bg-tertiary disabled:text-text-muted text-white font-medium rounded-xl transition-all duration-200 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-accent/25 disabled:shadow-none flex items-center justify-center gap-2"
+          >
+            {isPublishing && <Spinner size="sm" />}
+            Publish
+          </button>
         </div>
       </div>
     </Modal>
