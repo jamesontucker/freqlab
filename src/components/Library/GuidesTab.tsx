@@ -221,7 +221,7 @@ interface GuideCardProps {
 }
 
 function GuideCard({ guide, isExpanded, isCopied, onToggle, onCopy, onAttach }: GuideCardProps) {
-  const categoryInfo = CATEGORY_INFO[guide.category];
+  const categoryInfo = CATEGORY_INFO[guide.category as SkillCategory];
 
   return (
     <div className="border border-border rounded-lg overflow-hidden bg-bg-tertiary/50">

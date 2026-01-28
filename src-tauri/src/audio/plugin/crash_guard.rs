@@ -152,7 +152,7 @@ mod unix {
             // Set the signal handler
             // We use sa_sigaction field but WITHOUT SA_SIGINFO flag,
             // which means the kernel will call it as a simple 1-arg handler
-            action.sa_sigaction = crash_signal_handler as usize;
+            action.sa_sigaction = crash_signal_handler as *const () as usize;
             action.sa_flags = 0; // No SA_SIGINFO - use simple 1-arg handler
             libc::sigemptyset(&mut action.sa_mask);
 
