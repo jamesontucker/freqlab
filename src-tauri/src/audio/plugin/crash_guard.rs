@@ -248,8 +248,22 @@ mod windows {
     where
         F: FnOnce() -> T,
     {
-        match microseh::try_seh(f) {
-            Ok(result) => CrashGuardResult::Ok(result),
+        // microseh::try_seh expects FnMut() -> (), so we capture the result via Option
+        let mut result: Option<T> = None;
+        let mut f_option = Some(f);
+
+        let seh_result = microseh::try_seh(|| {
+            // Take the closure out of the Option (this makes it FnOnce-compatible)
+            if let Some(func) = f_option.take() {
+                result = Some(func());
+            }
+        });
+
+        match seh_result {
+            Ok(()) => {
+                // Safe to unwrap - if SEH succeeded, closure ran and set result
+                CrashGuardResult::Ok(result.expect("closure should have set result"))
+            }
             Err(exception) => {
                 log::error!(
                     "Crash guard caught SEH exception: {}",

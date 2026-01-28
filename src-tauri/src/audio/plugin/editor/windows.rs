@@ -7,7 +7,7 @@ use super::{get_gui_extension, get_gui_size};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::UpdateWindow;
+use windows::Win32::Graphics::Gdi::{UpdateWindow, HBRUSH};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Window class name for plugin editor windows
@@ -71,8 +71,7 @@ fn ensure_window_class_registered() -> Result<(), String> {
         hIcon: HICON::default(),
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }
             .map_err(|e| format!("LoadCursorW failed: {}", e))?,
-        hbrBackground: unsafe { windows::Win32::Graphics::Gdi::GetStockObject(windows::Win32::Graphics::Gdi::BLACK_BRUSH) }
-            .into(),
+        hbrBackground: HBRUSH(unsafe { windows::Win32::Graphics::Gdi::GetStockObject(windows::Win32::Graphics::Gdi::BLACK_BRUSH) }.0),
         lpszMenuName: PCWSTR::null(),
         lpszClassName: PCWSTR(class_name.as_ptr()),
         hIconSm: HICON::default(),
