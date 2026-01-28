@@ -188,7 +188,7 @@ export const SampleInputControls = memo(function SampleInputControls() {
             }`}
           >
             <div className="flex-1 px-2.5 py-2 rounded-lg bg-accent/10 border border-accent/30 text-accent text-xs truncate">
-              {isDraggingOver ? 'Drop to replace' : inputSource.customPath.split('/').pop()}
+              {isDraggingOver ? 'Drop to replace' : inputSource.customPath.split(/[/\\]/).pop()}
             </div>
             <button
               onClick={handleLoadCustomFile}

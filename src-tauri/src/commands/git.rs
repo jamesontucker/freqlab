@@ -60,7 +60,7 @@ target/
 .DS_Store
 
 # App state (chat history, sessions) - not source code
-.vstworkshop/
+.freqlab/
 
 # Claude working files - not versioned source code
 .claude/
@@ -187,7 +187,7 @@ fn revert_to_commit_sync(
     }
 
     // Checkout only source files from the target commit with force flag
-    // Exclude .vstworkshop/ which contains chat history and session state
+    // Exclude .freqlab/ which contains chat history and session state
     let checkout_output = git_command()
         .current_dir(project_path)
         .args([
@@ -235,7 +235,7 @@ fn revert_to_commit_sync(
 }
 
 /// Revert files to a specific commit (non-destructive - creates new commit)
-/// Only reverts source code files, not app state (.vstworkshop/)
+/// Only reverts source code files, not app state (.freqlab/)
 /// Runs on blocking thread pool to avoid UI freezes
 #[tauri::command]
 pub async fn revert_to_commit(
@@ -252,14 +252,14 @@ pub async fn revert_to_commit(
 
 /// Ensure non-source files are not tracked by git (for existing projects)
 /// This adds patterns to .gitignore and removes them from tracking if already tracked
-pub fn ensure_vstworkshop_ignored(path: &str) -> Result<(), String> {
+pub fn ensure_freqlab_ignored(path: &str) -> Result<(), String> {
     let gitignore_path = format!("{}/.gitignore", path);
     let mut content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
     let mut updated = false;
 
     // Patterns that should be ignored (not versioned as source code)
     let ignore_patterns = [
-        (".vstworkshop/", "# App state (chat history, sessions) - not source code"),
+        (".freqlab/", "# App state (chat history, sessions) - not source code"),
         (".claude/", "# Claude working files - not versioned source code"),
         ("CLAUDE.md", ""),
         ("docs/", ""),
@@ -288,7 +288,7 @@ pub fn ensure_vstworkshop_ignored(path: &str) -> Result<(), String> {
     }
 
     // Remove these from git tracking if they're tracked
-    let paths_to_untrack = [".vstworkshop/", ".claude/", "CLAUDE.md", "docs/", "plans/"];
+    let paths_to_untrack = [".freqlab/", ".claude/", "CLAUDE.md", "docs/", "plans/"];
     for untrack_path in &paths_to_untrack {
         let _ = git_command()
             .current_dir(path)

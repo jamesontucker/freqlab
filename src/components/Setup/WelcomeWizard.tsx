@@ -5,6 +5,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useTourStore } from '../../stores/tourStore'
 import { Modal } from '../Common/Modal'
 import { CURRENT_LICENSE_VERSION } from '../../constants/license'
+import { IS_MAC } from '../../lib/platform'
 
 type WizardStep = 'welcome' | 'prerequisites' | 'daw-setup' | 'complete'
 
@@ -86,7 +87,7 @@ export function WelcomeWizard() {
                                 <div>
                                     <h1 className="text-2xl font-bold gradient-text">freqlab</h1>
                                     <p className="text-sm text-text-secondary mt-1">
-                                        Audio plugin creation engine for macOS
+                                        Audio plugin creation engine
                                     </p>
                                 </div>
                             </div>
@@ -428,17 +429,19 @@ export function WelcomeWizard() {
                             </div>
 
                             {/* macOS file access note */}
+                            {IS_MAC && (
                             <div className="p-3 rounded-lg bg-bg-tertiary/30 border border-border-subtle">
                                 <div className="flex items-start gap-2">
                                     <svg className="w-4 h-4 text-text-muted flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                                     </svg>
                                     <p className="text-xs text-text-muted leading-relaxed">
-                                        <span className="font-medium text-text-secondary">macOS permissions:</span> If you see repeated "access data from other apps" prompts, enable <span className="text-text-secondary">freqlab</span> in{' '}
+                                        <span className="font-medium text-text-secondary">macOS permissions:</span> If you see repeated &quot;access data from other apps&quot; prompts, enable <span className="text-text-secondary">freqlab</span> in{' '}
                                         <span className="text-text-secondary">System Settings → Privacy & Security → Full Disk Access</span>.
                                     </p>
                                 </div>
                             </div>
+                            )}
 
                             {/* CTAs */}
                             <div className="space-y-2">

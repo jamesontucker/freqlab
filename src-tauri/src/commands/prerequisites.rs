@@ -26,14 +26,28 @@ fn unregister_child_pid(pid: u32) {
 pub fn cleanup_child_processes() {
     if let Ok(pids) = ACTIVE_CHILD_PIDS.lock() {
         for &pid in pids.iter() {
-            // Send SIGTERM first, then SIGKILL
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+            #[cfg(unix)]
+            {
+                // Send SIGTERM first, then SIGKILL
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGKILL);
+                }
             }
-            // Give it a moment then force kill
-            std::thread::sleep(Duration::from_millis(100));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
+
+            #[cfg(windows)]
+            {
+                // On Windows, use TerminateProcess via the standard library
+                // std::process::Child::kill() uses TerminateProcess internally,
+                // but we only have PIDs here, so we use a simple taskkill command
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
             }
         }
     }
@@ -100,6 +114,39 @@ pub struct DiskSpaceBreakdown {
     pub total_required_gb: f64,
 }
 
+/// Get the platform-appropriate command for locating binaries on PATH
+fn which_cmd() -> &'static str {
+    if cfg!(windows) { "where" } else { "which" }
+}
+
+/// Check if Visual Studio Build Tools with C++ workload are installed (Windows only).
+/// Returns the display name if found, None otherwise.
+#[cfg(target_os = "windows")]
+fn find_vs_build_tools() -> Option<String> {
+    let vswhere_path = format!(
+        r"{}\Microsoft Visual Studio\Installer\vswhere.exe",
+        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".to_string())
+    );
+
+    if !std::path::Path::new(&vswhere_path).exists() {
+        return None;
+    }
+
+    let output = run_command_with_timeout(
+        &vswhere_path,
+        &["-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "displayName"],
+        10,
+    )?;
+
+    if output.status.success() {
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
+}
+
 fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
     use std::process::Stdio;
 
@@ -133,18 +180,82 @@ fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Opti
     }
 }
 
+/// Check for build tools: Xcode CLI on macOS, Visual Studio Build Tools on Windows
 fn check_xcode() -> CheckResult {
-    match run_command_with_timeout("xcode-select", &["-p"], 5) {
-        Some(output) if output.status.success() => CheckResult {
-            status: CheckStatus::Installed,
-            version: Some("Installed".to_string()),
-            message: None,
-        },
-        _ => CheckResult {
+    #[cfg(target_os = "macos")]
+    {
+        match run_command_with_timeout("xcode-select", &["-p"], 5) {
+            Some(output) if output.status.success() => CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("Installed".to_string()),
+                message: None,
+            },
+            _ => CheckResult {
+                status: CheckStatus::NotInstalled,
+                version: None,
+                message: Some("Run: xcode-select --install".to_string()),
+            },
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Check for Visual Studio Build Tools using vswhere.exe
+        if let Some(name) = find_vs_build_tools() {
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some(name),
+                message: None,
+            };
+        }
+
+        // Fallback: check if cl.exe is accessible
+        if run_command_with_timeout("where", &["cl.exe"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("MSVC compiler found".to_string()),
+                message: None,
+            };
+        }
+
+        CheckResult {
             status: CheckStatus::NotInstalled,
             version: None,
-            message: Some("Run: xcode-select --install".to_string()),
-        },
+            message: Some("Install Visual Studio Build Tools with C++ workload".to_string()),
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // Linux: check for gcc or clang
+        if run_command_with_timeout("gcc", &["--version"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("GCC installed".to_string()),
+                message: None,
+            };
+        }
+        if run_command_with_timeout("clang", &["--version"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return CheckResult {
+                status: CheckStatus::Installed,
+                version: Some("Clang installed".to_string()),
+                message: None,
+            };
+        }
+        CheckResult {
+            status: CheckStatus::NotInstalled,
+            version: None,
+            message: Some("Install build-essential or equivalent".to_string()),
+        }
     }
 }
 
@@ -191,8 +302,8 @@ fn check_cmake() -> CheckResult {
 }
 
 fn check_claude_cli() -> CheckResult {
-    // Check if claude binary exists in PATH
-    match run_command_with_timeout("which", &["claude"], 3) {
+    // Use platform-appropriate command to find claude binary
+    match run_command_with_timeout(which_cmd(), &["claude"], 3) {
         Some(output) if output.status.success() => {
             CheckResult {
                 status: CheckStatus::Installed,
@@ -200,17 +311,24 @@ fn check_claude_cli() -> CheckResult {
                 message: None,
             }
         }
-        _ => CheckResult {
-            status: CheckStatus::NotInstalled,
-            version: None,
-            message: Some("Run: curl -fsSL https://claude.ai/install.sh | bash".to_string()),
-        },
+        _ => {
+            let install_hint = if cfg!(windows) {
+                "Download from https://claude.ai/download".to_string()
+            } else {
+                "Run: curl -fsSL https://claude.ai/install.sh | bash".to_string()
+            };
+            CheckResult {
+                status: CheckStatus::NotInstalled,
+                version: None,
+                message: Some(install_hint),
+            }
+        }
     }
 }
 
 fn check_claude_auth() -> CheckResult {
-    // First check if claude is installed using 'which'
-    let cli_check = run_command_with_timeout("which", &["claude"], 3);
+    // First check if claude is installed
+    let cli_check = run_command_with_timeout(which_cmd(), &["claude"], 3);
     if cli_check.is_none() || !cli_check.as_ref().unwrap().status.success() {
         return CheckResult {
             status: CheckStatus::NotInstalled,
@@ -219,25 +337,50 @@ fn check_claude_auth() -> CheckResult {
         };
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = super::get_home_dir();
 
-    // Primary check: Look for Claude credentials in macOS keychain
-    // This is the most reliable indicator since Claude stores OAuth tokens here
-    if let Some(output) = run_command_with_timeout(
-        "security",
-        &["find-generic-password", "-s", "Claude Code-credentials"],
-        3,
-    ) {
-        if output.status.success() {
-            return CheckResult {
-                status: CheckStatus::Installed,
-                version: None,
-                message: Some("Authenticated".to_string()),
-            };
+    // Platform-specific credential store check
+    #[cfg(target_os = "macos")]
+    {
+        // Primary check: Look for Claude credentials in macOS keychain
+        if let Some(output) = run_command_with_timeout(
+            "security",
+            &["find-generic-password", "-s", "Claude Code-credentials"],
+            3,
+        ) {
+            if output.status.success() {
+                return CheckResult {
+                    status: CheckStatus::Installed,
+                    version: None,
+                    message: Some("Authenticated".to_string()),
+                };
+            }
         }
     }
 
-    // Fallback to file-based checks for edge cases
+    // Windows: Claude stores credentials in Windows Credential Manager,
+    // but checking it requires the wincred crate or cmdkey.exe.
+    // We rely on file-based checks which work cross-platform.
+    #[cfg(target_os = "windows")]
+    {
+        // Try cmdkey to check for Claude credentials
+        if let Some(output) = run_command_with_timeout(
+            "cmdkey",
+            &["/list:Claude*"],
+            3,
+        ) {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if output.status.success() && text.contains("Claude") {
+                return CheckResult {
+                    status: CheckStatus::Installed,
+                    version: None,
+                    message: Some("Authenticated".to_string()),
+                };
+            }
+        }
+    }
+
+    // Fallback to file-based checks (works on all platforms)
     if check_auth_files(&home) {
         return CheckResult {
             status: CheckStatus::Installed,
@@ -309,33 +452,25 @@ pub async fn check_prerequisites() -> PrerequisiteStatus {
 #[tauri::command]
 pub async fn check_disk_space() -> Result<DiskSpaceInfo, String> {
     tokio::task::spawn_blocking(|| {
-        // Get available disk space using statvfs
-        let path = std::ffi::CString::new("/").unwrap();
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-
-        let result = unsafe { libc::statvfs(path.as_ptr(), &mut stat) };
-        if result != 0 {
-            return Err("Failed to check disk space".to_string());
-        }
-
-        let available_bytes = stat.f_bavail as u64 * stat.f_frsize as u64;
-        let available_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let available_gb = get_available_disk_space_gb()?;
 
         // Calculate requirements based on what's missing
-        let xcode_needed = check_xcode().status != CheckStatus::Installed;
+        let build_tools_needed = check_xcode().status != CheckStatus::Installed;
         let rust_needed = check_rust().status != CheckStatus::Installed;
         let claude_cli_needed = check_claude_cli().status != CheckStatus::Installed;
 
-        // Xcode CLI Tools: ~3-4 GB (not full Xcode which is 10-20 GB)
-        let xcode_gb = if xcode_needed { 4.0 } else { 0.0 };
+        // Build tools: Xcode CLI ~4GB on macOS, VS Build Tools ~6GB on Windows
+        let build_tools_gb = if build_tools_needed {
+            if cfg!(target_os = "macos") { 4.0 } else { 6.0 }
+        } else {
+            0.0
+        };
         // Rust toolchain: ~1.5 GB
         let rust_gb = if rust_needed { 1.5 } else { 0.0 };
         // Claude Code native binary: ~100 MB
         let claude_cli_gb = if claude_cli_needed { 0.1 } else { 0.0 };
 
-        let total = xcode_gb + rust_gb + claude_cli_gb;
-
-        // Add 2GB buffer for safety
+        let total = build_tools_gb + rust_gb + claude_cli_gb;
         let required_with_buffer = total + 2.0;
 
         Ok(DiskSpaceInfo {
@@ -343,7 +478,7 @@ pub async fn check_disk_space() -> Result<DiskSpaceInfo, String> {
             required_gb: required_with_buffer,
             sufficient: available_gb >= required_with_buffer,
             breakdown: DiskSpaceBreakdown {
-                xcode_gb,
+                xcode_gb: build_tools_gb,
                 rust_gb,
                 claude_cli_gb,
                 total_required_gb: total,
@@ -354,13 +489,45 @@ pub async fn check_disk_space() -> Result<DiskSpaceInfo, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Get available disk space in GB (platform-specific)
+fn get_available_disk_space_gb() -> Result<f64, String> {
+    #[cfg(unix)]
+    {
+        let path = std::ffi::CString::new("/").unwrap();
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::statvfs(path.as_ptr(), &mut stat) };
+        if result != 0 {
+            return Err("Failed to check disk space".to_string());
+        }
+        let available_bytes = stat.f_bavail as u64 * stat.f_frsize as u64;
+        Ok(available_bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+
+    #[cfg(windows)]
+    {
+        // Use wmic or PowerShell to get free disk space
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-Command", "(Get-PSDrive C).Free"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("Failed to check disk space: {}", e))?;
+
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Ok(bytes) = text.parse::<u64>() {
+                return Ok(bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+            }
+        }
+        Err("Failed to check disk space".to_string())
+    }
+}
+
 // ============================================================================
 // Installation Commands
 // ============================================================================
 
-/// Install Xcode Command Line Tools silently via softwareupdate
-/// Uses the trigger file trick to make CLT appear in softwareupdate list
-/// Then installs with admin privileges - user only sees password prompt
+/// Install build tools: Xcode CLI on macOS, Visual Studio Build Tools on Windows
 #[tauri::command]
 pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -370,6 +537,13 @@ pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
         },
     );
 
+    #[cfg(target_os = "windows")]
+    {
+        return install_build_tools_windows(window).await;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
     // First check if already installed
     if let Some(output) = run_command_with_timeout("xcode-select", &["-p"], 5) {
         if output.status.success() {
@@ -532,9 +706,96 @@ pub async fn install_xcode(window: tauri::Window) -> Result<bool, String> {
         },
     );
     install_xcode_gui_fallback(window).await
+    } // #[cfg(not(target_os = "windows"))]
+}
+
+/// Install Visual Studio Build Tools on Windows (silent/unattended)
+#[cfg(target_os = "windows")]
+async fn install_build_tools_windows(window: tauri::Window) -> Result<bool, String> {
+    // Check if already installed via vswhere
+    if let Some(name) = find_vs_build_tools() {
+        let _ = window.emit("install-stream", InstallEvent::Output {
+            line: format!("Already installed: {}", name),
+        });
+        let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+        return Ok(true);
+    }
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Downloading Visual Studio Build Tools installer...".to_string(),
+    });
+
+    let temp_dir = std::env::temp_dir();
+    let installer_path = temp_dir.join("vs_BuildTools.exe");
+    let download_url = "https://aka.ms/vs/17/release/vs_BuildTools.exe";
+
+    // Download the installer using PowerShell
+    let download_cmd = format!(
+        "Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+        download_url,
+        installer_path.to_str().unwrap_or_default()
+    );
+
+    let mut child = tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &download_cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to download installer: {}", e))?;
+
+    if !stream_and_wait(&mut child, &window).await {
+        let _ = window.emit("install-stream", InstallEvent::Output {
+            line: "Failed to download Build Tools installer.".to_string(),
+        });
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        return Err("Download failed".to_string());
+    }
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Installing Visual Studio Build Tools (this may take several minutes)...".to_string(),
+    });
+    let _ = window.emit("install-stream", InstallEvent::ActionRequired {
+        action: "uac".to_string(),
+        message: "Click 'Yes' on the Windows security prompt to allow installation".to_string(),
+    });
+
+    // Run the installer silently with the C++ workload
+    // --quiet: no UI, --wait: block until done, --norestart: don't reboot
+    let mut child = tokio::process::Command::new(installer_path.to_str().unwrap_or_default())
+        .args([
+            "--quiet", "--wait", "--norestart",
+            "--add", "Microsoft.VisualStudio.Workload.VCTools",
+            "--includeRecommended",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to start installer: {}", e))?;
+
+    let success = stream_and_wait(&mut child, &window).await;
+
+    // Clean up installer
+    let _ = std::fs::remove_file(&installer_path);
+
+    if success {
+        let _ = window.emit("install-stream", InstallEvent::Output {
+            line: "Visual Studio Build Tools installed successfully!".to_string(),
+        });
+        let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+        Ok(true)
+    } else {
+        let _ = window.emit("install-stream", InstallEvent::Output {
+            line: "Build Tools installation failed. You may need to install manually from https://visualstudio.microsoft.com/visual-cpp-build-tools/".to_string(),
+        });
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        Err("Installation failed".to_string())
+    }
 }
 
 /// Fallback to GUI-based Xcode CLT installer
+#[cfg(not(target_os = "windows"))]
 async fn install_xcode_gui_fallback(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
         "install-stream",
@@ -646,17 +907,52 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
         },
     );
 
-    // Use -y for non-interactive
-    let install_script = r#"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"#;
+    #[cfg(unix)]
+    let mut child = {
+        // Use -y for non-interactive
+        let install_script = r#"curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"#;
+        tokio::process::Command::new("/bin/bash")
+            .args(["-c", install_script])
+            .env("PATH", super::get_extended_path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to start Rust installer: {}", e))?
+    };
 
-    let mut child = tokio::process::Command::new("/bin/bash")
-        .args(["-c", install_script])
-        .env("PATH", super::get_extended_path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("Failed to start Rust installer: {}", e))?;
+    #[cfg(windows)]
+    let mut child = {
+        // Download rustup-init.exe and run it silently
+        let temp_dir = std::env::temp_dir();
+        let rustup_path = temp_dir.join("rustup-init.exe");
+        let download_cmd = format!(
+            "Invoke-WebRequest -Uri 'https://win.rustup.rs/x86_64' -OutFile '{}'",
+            rustup_path.to_str().unwrap_or_default()
+        );
+        // Download first
+        let dl = tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &download_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to download rustup: {}", e))?;
+        let mut dl = dl;
+        if !stream_and_wait(&mut dl, &window).await {
+            let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+            return Err("Failed to download rustup-init.exe".to_string());
+        }
+        // Run rustup-init.exe silently
+        tokio::process::Command::new(rustup_path.to_str().unwrap_or_default())
+            .args(["-y", "--default-toolchain", "stable", "--profile", "default"])
+            .env("PATH", super::get_extended_path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to start Rust installer: {}", e))?
+    };
 
     let success = stream_and_wait(&mut child, &window).await;
 
@@ -711,7 +1007,7 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
     );
 
     // Check if already installed
-    if let Some(output) = run_command_with_timeout("which", &["claude"], 3) {
+    if let Some(output) = run_command_with_timeout(which_cmd(), &["claude"], 3) {
         if output.status.success() {
             let _ = window.emit(
                 "install-stream",
@@ -731,18 +1027,42 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
         },
     );
 
-    // Use the native installer - no Node.js required!
-    // This installs to ~/.claude/bin/claude or ~/.local/bin/claude
-    let install_script = "curl -fsSL https://claude.ai/install.sh | bash";
+    #[cfg(unix)]
+    let mut child = {
+        // Use the native installer - no Node.js required!
+        let install_script = "curl -fsSL https://claude.ai/install.sh | bash";
+        tokio::process::Command::new("/bin/bash")
+            .args(["-c", install_script])
+            .env("PATH", super::get_extended_path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to start installer: {}", e))?
+    };
 
-    let mut child = tokio::process::Command::new("/bin/bash")
-        .args(["-c", install_script])
-        .env("PATH", super::get_extended_path())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("Failed to start installer: {}", e))?;
+    #[cfg(windows)]
+    let mut child = {
+        // Download and run the Windows installer via PowerShell
+        let install_script = r#"
+            $ErrorActionPreference = 'Stop'
+            $installerUrl = 'https://claude.ai/install.ps1'
+            try {
+                Invoke-Expression (Invoke-WebRequest -Uri $installerUrl -UseBasicParsing).Content
+            } catch {
+                Write-Error "Failed to install Claude Code: $_"
+                exit 1
+            }
+        "#;
+        tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_script])
+            .env("PATH", super::get_extended_path())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to start installer: {}", e))?
+    };
 
     let success = stream_and_wait(&mut child, &window).await;
 
@@ -750,71 +1070,10 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
         // Verify Claude CLI is accessible and actually works
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Check both possible install locations
-        let home = std::env::var("HOME").unwrap_or_default();
-        let claude_paths = [
-            format!("{}/.claude/bin/claude", home),
-            format!("{}/.local/bin/claude", home),
-        ];
-
-        // Find which path has the binary
-        let found_path = claude_paths.iter().find(|p| std::path::Path::new(p).exists());
-
-        // Verify the binary actually runs by checking --version
-        let verified = if let Some(path) = found_path {
-            // Try to run the binary with --version to verify it works
-            run_command_with_timeout(path, &["--version"], 5)
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        } else {
-            // Fallback to which + version check
-            if let Some(which_output) = run_command_with_timeout("which", &["claude"], 3) {
-                if which_output.status.success() {
-                    let path = String::from_utf8_lossy(&which_output.stdout).trim().to_string();
-                    if !path.is_empty() {
-                        run_command_with_timeout(&path, &["--version"], 5)
-                            .map(|o| o.status.success())
-                            .unwrap_or(false)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-
-        if verified {
+        // Use find_claude_binary() for platform-aware path resolution and verification
+        if find_claude_binary().is_some() {
             // Pre-create config files to skip interactive onboarding wizard
-            let home = std::env::var("HOME").unwrap_or_default();
-            let claude_dir = std::path::Path::new(&home).join(".claude");
-
-            if !claude_dir.exists() {
-                let _ = std::fs::create_dir_all(&claude_dir);
-            }
-
-            // Create ~/.claude.json with onboarding flags BEFORE Claude is ever run
-            let claude_json = std::path::Path::new(&home).join(".claude.json");
-            if !claude_json.exists() {
-                let default_config = r#"{
-  "hasCompletedOnboarding": true,
-  "lastOnboardingVersion": "2.1.5",
-  "numStartups": 1,
-  "installMethod": "native",
-  "autoUpdates": false,
-  "hasSeenTasksHint": true
-}"#;
-                let _ = std::fs::write(&claude_json, default_config);
-            }
-
-            // Create ~/.claude/settings.json with default settings (opus model)
-            let settings_file = claude_dir.join("settings.json");
-            if !settings_file.exists() {
-                let default_settings = r#"{"model": "opus"}"#;
-                let _ = std::fs::write(&settings_file, default_settings);
-            }
+            ensure_claude_config(&super::get_home_dir());
 
             let _ = window.emit(
                 "install-stream",
@@ -824,22 +1083,6 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
             );
             let _ = window.emit("install-stream", InstallEvent::Done { success: true });
             Ok(true)
-        } else if found_path.is_some() {
-            // Binary exists but didn't run - might be permissions issue
-            let _ = window.emit(
-                "install-stream",
-                InstallEvent::Output {
-                    line: "Claude Code was installed but couldn't be verified.".to_string(),
-                },
-            );
-            let _ = window.emit(
-                "install-stream",
-                InstallEvent::Output {
-                    line: "This may be a permissions issue. Try closing and reopening the app.".to_string(),
-                },
-            );
-            let _ = window.emit("install-stream", InstallEvent::Done { success: false });
-            Err("Claude installed but verification failed".to_string())
         } else {
             let _ = window.emit(
                 "install-stream",
@@ -875,33 +1118,36 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
                 line: "You can also try installing manually:".to_string(),
             },
         );
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
-                line: "1. Open Terminal".to_string(),
-            },
-        );
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
-                line: "2. Run: curl -fsSL https://claude.ai/install.sh | bash".to_string(),
-            },
-        );
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
+        if cfg!(windows) {
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "1. Visit https://claude.ai/download".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "2. Download and run the Windows installer".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Output {
                 line: "3. Come back here and click Recheck".to_string(),
-            },
-        );
+            });
+        } else {
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "1. Open Terminal".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "2. Run: curl -fsSL https://claude.ai/install.sh | bash".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "3. Come back here and click Recheck".to_string(),
+            });
+        }
         let _ = window.emit("install-stream", InstallEvent::Done { success: false });
         Err("Failed to install Claude Code".to_string())
     }
 }
 
-/// Start Claude authentication - opens Terminal with clear instructions
-/// Claude requires a real TTY for /login, so we use Terminal.app
-/// We try auto-typing first, fall back to manual instructions if blocked
-/// Auto-closes Terminal when auth completes successfully
+/// Start Claude authentication - opens a terminal with login instructions
+/// macOS: Opens Terminal.app with auto-typed /login command
+/// Windows: Opens cmd.exe with claude /login
+/// Claude requires a real TTY for /login
 #[tauri::command]
 pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -926,28 +1172,17 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     };
 
     // Ensure config files exist (should already be created during install, but double-check)
-    let home = std::env::var("HOME").unwrap_or_default();
-    let claude_dir = std::path::Path::new(&home).join(".claude");
-    let claude_json = std::path::Path::new(&home).join(".claude.json");
+    let home = super::get_home_dir();
+    ensure_claude_config(&home);
 
-    // If config doesn't exist yet (e.g., Claude was pre-installed), create it now
-    if !claude_json.exists() {
-        let _ = std::fs::create_dir_all(&claude_dir);
-        let default_config = r#"{
-  "hasCompletedOnboarding": true,
-  "lastOnboardingVersion": "2.1.5",
-  "numStartups": 1,
-  "installMethod": "native",
-  "autoUpdates": false,
-  "hasSeenTasksHint": true
-}"#;
-        let _ = std::fs::write(&claude_json, default_config);
-        let settings_file = claude_dir.join("settings.json");
-        if !settings_file.exists() {
-            let _ = std::fs::write(&settings_file, r#"{"model": "opus"}"#);
-        }
+    // Platform-specific terminal opening for Claude auth
+    #[cfg(target_os = "windows")]
+    {
+        return start_claude_auth_windows(window, claude_path, home).await;
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
     let _ = window.emit(
         "install-stream",
         InstallEvent::Output {
@@ -1200,15 +1435,123 @@ pub async fn start_claude_auth(window: tauri::Window) -> Result<bool, String> {
     );
     let _ = window.emit("install-stream", InstallEvent::Done { success: false });
     Err("Sign-in timed out".to_string())
+    } // #[cfg(not(target_os = "windows"))]
+}
+
+/// Windows-specific Claude auth flow: opens cmd.exe with claude login
+#[cfg(target_os = "windows")]
+async fn start_claude_auth_windows(
+    window: tauri::Window,
+    claude_path: String,
+    home: String,
+) -> Result<bool, String> {
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Opening command prompt for sign-in...".to_string(),
+    });
+
+    // Write a temporary batch file to avoid nested cmd.exe quoting issues
+    // (paths with spaces in usernames can break inline cmd /K "..." quoting)
+    let temp_dir = std::env::temp_dir();
+    let bat_path = temp_dir.join("freqlab_claude_signin.bat");
+    let bat_content = format!(
+        "@echo off\r\necho.\r\necho ======================================\r\necho    CLAUDE SIGN-IN\r\necho ======================================\r\necho.\r\necho  1. Wait for login method prompt\r\necho  2. Press ENTER (Claude account)\r\necho  3. Sign in and approve in browser\r\necho  4. Close this window when done\r\necho.\r\necho ======================================\r\necho.\r\n\"{}\"",
+        claude_path
+    );
+    std::fs::write(&bat_path, &bat_content)
+        .map_err(|e| format!("Failed to write temp batch file: {}", e))?;
+
+    let _ = tokio::process::Command::new("cmd")
+        .args(["/C", &format!("start \"FreqLab Claude Sign-In\" cmd /K \"{}\"", bat_path.display())])
+        .env("PATH", super::get_extended_path())
+        .spawn()
+        .map_err(|e| format!("Failed to open command prompt: {}", e))?;
+
+    // Brief delay for window to open
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let _ = window.emit("install-stream", InstallEvent::ActionRequired {
+        action: "browser_auth".to_string(),
+        message: "In the command window, type /login and press Enter, then sign in via browser".to_string(),
+    });
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Waiting for sign-in to complete...".to_string(),
+    });
+
+    // Poll for authentication completion
+    let max_attempts = 150; // 5 minutes at 2 seconds each
+    for attempt in 0..max_attempts {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        if is_claude_authenticated(&home) {
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "Sign-in successful!".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+            return Ok(true);
+        }
+
+        if attempt > 0 && attempt % 15 == 0 {
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "Still waiting for sign-in...".to_string(),
+            });
+        }
+    }
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Sign-in timed out. Click Recheck after signing in.".to_string(),
+    });
+    let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+    Err("Sign-in timed out".to_string())
+}
+
+/// Ensure Claude config files exist for non-interactive onboarding.
+/// Creates `~/.claude/` dir, `~/.claude.json` with onboarding flags,
+/// and `~/.claude/settings.json` with default settings if they don't exist.
+fn ensure_claude_config(home: &str) {
+    let claude_dir = std::path::Path::new(home).join(".claude");
+    let claude_json = std::path::Path::new(home).join(".claude.json");
+
+    if !claude_dir.exists() {
+        let _ = std::fs::create_dir_all(&claude_dir);
+    }
+
+    if !claude_json.exists() {
+        let default_config = r#"{
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.5",
+  "numStartups": 1,
+  "installMethod": "native",
+  "autoUpdates": false,
+  "hasSeenTasksHint": true
+}"#;
+        let _ = std::fs::write(&claude_json, default_config);
+    }
+
+    let settings_file = claude_dir.join("settings.json");
+    if !settings_file.exists() {
+        let _ = std::fs::write(&settings_file, r#"{"model": "opus"}"#);
+    }
 }
 
 /// Find the Claude binary in known locations and verify it works
 fn find_claude_binary() -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let possible_paths = [
+    let home = super::get_home_dir();
+
+    #[cfg(unix)]
+    let possible_paths = vec![
         format!("{}/.claude/bin/claude", home),
         format!("{}/.local/bin/claude", home),
         "/usr/local/bin/claude".to_string(),
+    ];
+
+    #[cfg(windows)]
+    let possible_paths = vec![
+        format!(r"{}\.claude\bin\claude.exe", home),
+        format!(r"{}\Programs\Claude\bin\claude.exe",
+            std::env::var("LOCALAPPDATA").unwrap_or_default()),
+        format!(r"{}\Claude\bin\claude.exe",
+            std::env::var("APPDATA").unwrap_or_default()),
     ];
 
     for path in possible_paths {
@@ -1223,8 +1566,8 @@ fn find_claude_binary() -> Option<String> {
         }
     }
 
-    // Try which command as fallback
-    if let Some(output) = run_command_with_timeout("which", &["claude"], 3) {
+    // Try which/where command as fallback
+    if let Some(output) = run_command_with_timeout(which_cmd(), &["claude"], 3) {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
@@ -1242,22 +1585,39 @@ fn find_claude_binary() -> Option<String> {
     None
 }
 
-/// Check if Claude is authenticated by looking for keychain credentials
-/// Claude stores auth tokens in macOS keychain under "Claude Code-credentials"
+/// Check if Claude is authenticated by looking for credential store entries
 fn is_claude_authenticated(home: &str) -> bool {
-    // Primary check: Look for Claude credentials in macOS keychain
-    // This is the most reliable indicator since Claude stores OAuth tokens here
-    if let Some(output) = run_command_with_timeout(
-        "security",
-        &["find-generic-password", "-s", "Claude Code-credentials"],
-        3,
-    ) {
-        if output.status.success() {
-            return true;
+    // Platform-specific credential store check
+    #[cfg(target_os = "macos")]
+    {
+        // Primary check: macOS keychain under "Claude Code-credentials"
+        if let Some(output) = run_command_with_timeout(
+            "security",
+            &["find-generic-password", "-s", "Claude Code-credentials"],
+            3,
+        ) {
+            if output.status.success() {
+                return true;
+            }
         }
     }
 
-    // Fallback to file-based checks for edge cases
+    #[cfg(target_os = "windows")]
+    {
+        // Check Windows Credential Manager
+        if let Some(output) = run_command_with_timeout(
+            "cmdkey",
+            &["/list:Claude*"],
+            3,
+        ) {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if output.status.success() && text.contains("Claude") {
+                return true;
+            }
+        }
+    }
+
+    // Fallback to file-based checks (works on all platforms)
     check_auth_files(home)
 }
 
@@ -1382,35 +1742,55 @@ pub struct PermissionStatus {
 }
 
 /// Check if we have Accessibility permission
-/// Uses AXIsProcessTrusted via FFI
+/// macOS-only: uses AXIsProcessTrusted via FFI
+/// Other platforms: accessibility is not gated, so always returns true
 #[tauri::command]
 pub async fn check_permissions() -> PermissionStatus {
-    tokio::task::spawn_blocking(|| {
-        // Check accessibility using macOS API
-        #[link(name = "ApplicationServices", kind = "framework")]
-        extern "C" {
-            fn AXIsProcessTrusted() -> bool;
-        }
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(|| {
+            #[link(name = "ApplicationServices", kind = "framework")]
+            extern "C" {
+                fn AXIsProcessTrusted() -> bool;
+            }
 
-        let accessibility = unsafe { AXIsProcessTrusted() };
+            let accessibility = unsafe { AXIsProcessTrusted() };
 
+            PermissionStatus {
+                accessibility,
+                admin_primed: false,
+            }
+        })
+        .await
+        .unwrap_or(PermissionStatus {
+            accessibility: false,
+            admin_primed: false,
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows and Linux don't have an Accessibility permission gate
         PermissionStatus {
-            accessibility,
-            admin_primed: false, // Can't check this - it's session-based
+            accessibility: true,
+            admin_primed: false,
         }
-    })
-    .await
-    .unwrap_or(PermissionStatus {
-        accessibility: false,
-        admin_primed: false,
-    })
+    }
 }
 
 /// Request Accessibility permission using the proper macOS API
 /// This triggers the system dialog AND adds the app to the Accessibility list
 /// Returns true if permission was already granted, false if user needs to grant it
+/// On non-macOS platforms, always returns Ok(true) since there's no equivalent gate.
 #[tauri::command]
 pub async fn request_accessibility_permission() -> Result<bool, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows/Linux don't have an Accessibility permission gate
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
     tokio::task::spawn_blocking(|| {
         // Use AXIsProcessTrustedWithOptions with prompt flag
         // This is the CORRECT way to request accessibility - it:
@@ -1527,55 +1907,68 @@ pub async fn request_accessibility_permission() -> Result<bool, String> {
 }
 
 /// Prime admin privileges by running a simple command with admin rights
-/// This caches credentials for ~5 minutes, so subsequent admin operations won't prompt
+/// macOS: caches sudo credentials for ~5 minutes via osascript
+/// Windows: UAC handles elevation per-operation, no priming needed
 #[tauri::command]
 pub async fn prime_admin_privileges(window: tauri::Window) -> Result<bool, String> {
-    let _ = window.emit(
-        "install-stream",
-        InstallEvent::Start {
-            step: "admin_prime".to_string(),
-        },
-    );
-
-    let _ = window.emit(
-        "install-stream",
-        InstallEvent::ActionRequired {
-            action: "password".to_string(),
-            message: "Enter your Mac password to authorize installations".to_string(),
-        },
-    );
-
-    // Run a simple command with admin privileges to cache credentials
-    let script = r#"do shell script "echo 'FreqLab authorized'" with administrator privileges"#;
-
-    let result = tokio::process::Command::new("osascript")
-        .args(["-e", script])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to request admin privileges: {}", e))?;
-
-    if result.status.success() {
-        let _ = window.emit(
-            "install-stream",
-            InstallEvent::Output {
-                line: "Admin access granted! Password cached for this session.".to_string(),
-            },
-        );
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Windows uses UAC per-operation elevation — no priming needed
         let _ = window.emit("install-stream", InstallEvent::Done { success: true });
-        Ok(true)
-    } else {
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
         let _ = window.emit(
             "install-stream",
-            InstallEvent::Output {
-                line: "Admin access not granted. You may be prompted again during installation.".to_string(),
+            InstallEvent::Start {
+                step: "admin_prime".to_string(),
             },
         );
-        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
-        Ok(false)
+
+        let _ = window.emit(
+            "install-stream",
+            InstallEvent::ActionRequired {
+                action: "password".to_string(),
+                message: "Enter your Mac password to authorize installations".to_string(),
+            },
+        );
+
+        // Run a simple command with admin privileges to cache credentials
+        let script = r#"do shell script "echo 'FreqLab authorized'" with administrator privileges"#;
+
+        let result = tokio::process::Command::new("osascript")
+            .args(["-e", script])
+            .output()
+            .await
+            .map_err(|e| format!("Failed to request admin privileges: {}", e))?;
+
+        if result.status.success() {
+            let _ = window.emit(
+                "install-stream",
+                InstallEvent::Output {
+                    line: "Admin access granted! Password cached for this session.".to_string(),
+                },
+            );
+            let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+            Ok(true)
+        } else {
+            let _ = window.emit(
+                "install-stream",
+                InstallEvent::Output {
+                    line: "Admin access not granted. You may be prompted again during installation.".to_string(),
+                },
+            );
+            let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+            Ok(false)
+        }
     }
 }
 
-/// Install CMake - tries Homebrew first, falls back to direct download
+/// Install CMake - platform-specific installation
+/// macOS: tries Homebrew first, falls back to direct download
+/// Windows: downloads MSI installer and runs it silently
 #[tauri::command]
 pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
     let _ = window.emit(
@@ -1604,7 +1997,12 @@ pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
         }
     }
 
-    // Check if Homebrew is available - use it if so (faster, handles updates)
+    #[cfg(target_os = "windows")]
+    {
+        return install_cmake_windows(window).await;
+    }
+
+    // macOS/Linux: Check if Homebrew is available - use it if so (faster, handles updates)
     if run_command_with_timeout("which", &["brew"], 3)
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -1852,6 +2250,88 @@ pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
             line: "CMake installed but may need a terminal restart to be in PATH".to_string(),
         },
     );
+    let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+    Ok(true)
+}
+
+/// Install CMake on Windows via MSI installer (silent)
+#[cfg(target_os = "windows")]
+async fn install_cmake_windows(window: tauri::Window) -> Result<bool, String> {
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Downloading CMake installer for Windows...".to_string(),
+    });
+
+    let cmake_version = "3.28.1";
+    let temp_dir = std::env::temp_dir();
+    let msi_path = temp_dir.join(format!("cmake-{}-windows-x86_64.msi", cmake_version));
+    let download_url = format!(
+        "https://github.com/Kitware/CMake/releases/download/v{}/cmake-{}-windows-x86_64.msi",
+        cmake_version, cmake_version
+    );
+
+    // Download the MSI
+    let download_cmd = format!(
+        "Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+        download_url,
+        msi_path.to_str().unwrap_or_default()
+    );
+
+    let mut child = tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &download_cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to download CMake: {}", e))?;
+
+    if !stream_and_wait(&mut child, &window).await {
+        let _ = window.emit("install-stream", InstallEvent::Output {
+            line: "Failed to download CMake installer.".to_string(),
+        });
+        let _ = window.emit("install-stream", InstallEvent::Done { success: false });
+        return Err("Download failed".to_string());
+    }
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "Installing CMake (may require administrator access)...".to_string(),
+    });
+
+    // Install silently with msiexec, add to system PATH
+    let install_cmd = format!(
+        "msiexec /i \"{}\" /qn ADD_CMAKE_TO_PATH=System ALLUSERS=1 REBOOT=ReallySuppress",
+        msi_path.to_str().unwrap_or_default()
+    );
+
+    let mut child = tokio::process::Command::new("cmd")
+        .args(["/C", &install_cmd])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("Failed to start CMake installer: {}", e))?;
+
+    let success = stream_and_wait(&mut child, &window).await;
+
+    // Clean up
+    let _ = std::fs::remove_file(&msi_path);
+
+    if success {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if run_command_with_timeout("cmake", &["--version"], 5)
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            let _ = window.emit("install-stream", InstallEvent::Output {
+                line: "CMake installed successfully!".to_string(),
+            });
+            let _ = window.emit("install-stream", InstallEvent::Done { success: true });
+            return Ok(true);
+        }
+    }
+
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "CMake installed but may need a restart to appear in PATH. Click Recheck after restarting.".to_string(),
+    });
     let _ = window.emit("install-stream", InstallEvent::Done { success: true });
     Ok(true)
 }

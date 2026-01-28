@@ -25,9 +25,9 @@ interface BuildStreamEvent {
 }
 
 // Helper to extract folder name from project path
-// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+// e.g., "/Users/x/Freqlab/projects/my_plugin" -> "my_plugin"
 function getFolderName(projectPath: string): string {
-  return projectPath.split('/').pop() || '';
+  return projectPath.split(/[/\\]/).pop() || '';
 }
 
 // Output Volume Control - styled to match Input/Output sections

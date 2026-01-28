@@ -6,7 +6,7 @@ import { open } from '@tauri-apps/plugin-shell';
 import { useUpdateStore } from '../../stores/updateStore';
 import { useToastStore } from '../../stores/toastStore';
 
-const RELEASES_URL = 'https://github.com/jamesontucker/freqlab/releases/latest';
+const RELEASES_URL = 'https://github.com/Nanoshrine-Interactive/freqlab-private/releases/latest';
 
 export function UpdateSettings() {
   const {

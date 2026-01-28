@@ -22,7 +22,7 @@ pub fn generate_project_glossary(app_handle: &tauri::AppHandle, project_path: &P
     let library = loader::load_library(app_handle);
 
     // Try to read project metadata for context
-    let meta_path = project_path.join(".vstworkshop/metadata.json");
+    let meta_path = project_path.join(".freqlab/metadata.json");
     let project_context = if meta_path.exists() {
         match fs::read_to_string(&meta_path) {
             Ok(meta_content) => {

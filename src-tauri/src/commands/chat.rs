@@ -49,7 +49,7 @@ pub struct ChatState {
 
 fn get_chat_file_path(project_path: &str) -> PathBuf {
     PathBuf::from(project_path)
-        .join(".vstworkshop")
+        .join(".freqlab")
         .join("chat.json")
 }
 

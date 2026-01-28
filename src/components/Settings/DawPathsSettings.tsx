@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { DawPaths } from '../../types';
+import { getPlatformDefaults } from '../../lib/platform';
 
 interface DawConfig {
   key: keyof DawPaths;
@@ -18,6 +19,8 @@ const daws: DawConfig[] = [
 export function DawPathsSettings() {
   const { dawPaths, updateDawPath } = useSettingsStore();
   const [expandedDaws, setExpandedDaws] = useState<Set<keyof DawPaths>>(new Set());
+  const defaults = getPlatformDefaults();
+  const refPaths = defaults.dawPaths.reaper;
 
   const toggleDaw = (key: keyof DawPaths) => {
     setExpandedDaws((prev) => {
@@ -89,7 +92,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].vst3}
                         onChange={(e) => updateDawPath(daw.key, 'vst3', e.target.value)}
-                        placeholder="~/Library/Audio/Plug-Ins/VST3"
+                        placeholder={refPaths.vst3 || 'VST3 path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -102,7 +105,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].clap}
                         onChange={(e) => updateDawPath(daw.key, 'clap', e.target.value)}
-                        placeholder="~/Library/Audio/Plug-Ins/CLAP"
+                        placeholder={refPaths.clap || 'CLAP path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -115,7 +118,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].au}
                         onChange={(e) => updateDawPath(daw.key, 'au', e.target.value)}
-                        placeholder="~/Library/Audio/Plug-Ins/Components"
+                        placeholder={refPaths.au || 'AU path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -128,7 +131,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].standalone}
                         onChange={(e) => updateDawPath(daw.key, 'standalone', e.target.value)}
-                        placeholder="/Applications"
+                        placeholder={refPaths.standalone || 'Standalone path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -154,7 +157,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].aax}
                         onChange={(e) => updateDawPath(daw.key, 'aax', e.target.value)}
-                        placeholder="/Library/Application Support/Avid/Audio/Plug-Ins"
+                        placeholder={refPaths.aax || 'AAX path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -167,7 +170,7 @@ export function DawPathsSettings() {
                         type="text"
                         value={dawPaths[daw.key].lv2}
                         onChange={(e) => updateDawPath(daw.key, 'lv2', e.target.value)}
-                        placeholder="~/Library/Audio/Plug-Ins/LV2"
+                        placeholder={refPaths.lv2 || 'LV2 path'}
                         className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                       />
                     </div>
@@ -187,15 +190,15 @@ export function DawPathsSettings() {
           </svg>
           <div className="text-sm text-text-muted">
             <p className="mb-1">
-              <strong className="text-text-secondary">Tip:</strong> Most DAWs on macOS use the system plugin folders:
+              <strong className="text-text-secondary">Tip:</strong> {defaults.pluginFolderDescription}:
             </p>
             <ul className="list-disc list-inside space-y-0.5 text-xs">
-              <li>VST3: ~/Library/Audio/Plug-Ins/VST3</li>
-              <li>CLAP: ~/Library/Audio/Plug-Ins/CLAP</li>
-              <li>AU: ~/Library/Audio/Plug-Ins/Components</li>
-              <li>Standalone: /Applications</li>
-              <li>AAX: /Library/Application Support/Avid/Audio/Plug-Ins</li>
-              <li>LV2: ~/Library/Audio/Plug-Ins/LV2</li>
+              {refPaths.vst3 && <li>VST3: {refPaths.vst3}</li>}
+              {refPaths.clap && <li>CLAP: {refPaths.clap}</li>}
+              {refPaths.au && <li>AU: {refPaths.au}</li>}
+              {refPaths.standalone && <li>Standalone: {refPaths.standalone}</li>}
+              {refPaths.aax && <li>AAX: {refPaths.aax}</li>}
+              {refPaths.lv2 && <li>LV2: {refPaths.lv2}</li>}
             </ul>
           </div>
         </div>

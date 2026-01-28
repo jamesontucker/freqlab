@@ -5,6 +5,7 @@ import { Modal } from '../Common/Modal';
 import { Spinner } from '../Common/Spinner';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { ProjectMeta, DawPaths } from '../../types';
+import { IS_MAC } from '../../lib/platform';
 
 interface PublishModalProps {
   isOpen: boolean;
@@ -61,9 +62,9 @@ const DAW_LABELS: Record<keyof DawPaths, string> = {
 };
 
 // Helper to extract folder name from project path
-// e.g., "/Users/x/VSTWorkshop/projects/my_plugin" -> "my_plugin"
+// e.g., "/Users/x/Freqlab/projects/my_plugin" -> "my_plugin"
 function getFolderName(projectPath: string): string {
-  return projectPath.split('/').pop() || '';
+  return projectPath.split(/[/\\]/).pop() || '';
 }
 
 const FORMAT_LABELS: Record<string, string> = {
@@ -450,7 +451,8 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
           </div>
         )}
 
-        {/* Gatekeeper Info (collapsible) */}
+        {/* Gatekeeper Info (macOS only, collapsible) */}
+        {IS_MAC && (
         <div className="rounded-lg bg-bg-tertiary border border-border">
           <button
             type="button"
@@ -479,6 +481,7 @@ export function PublishModal({ isOpen, onClose, project, onSuccess }: PublishMod
             </div>
           )}
         </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-3 pt-2">

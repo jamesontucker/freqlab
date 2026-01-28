@@ -14,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_os::init())
         .setup(|app| {
             // Register updater plugin (desktop only)
             #[cfg(desktop)]
@@ -66,6 +67,8 @@ pub fn run() {
             commands::build::clear_build_cache,
             commands::build::get_project_build_cache_info,
             commands::build::clear_project_build_cache,
+            commands::build::get_rust_cache_info,
+            commands::build::clear_rust_cache,
             commands::git::revert_to_commit,
             commands::chat::save_chat_history,
             commands::chat::load_chat_history,

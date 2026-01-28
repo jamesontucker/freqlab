@@ -90,7 +90,7 @@ struct ClaudeMessage {
 /// Get the session file path for a project
 fn get_session_file(project_path: &str) -> PathBuf {
     PathBuf::from(project_path)
-        .join(".vstworkshop")
+        .join(".freqlab")
         .join("claude_session.txt")
 }
 
@@ -403,7 +403,7 @@ Say what you did in 1-2 sentences max. Don't narrate your process.
 - ✅ [Do the work silently, then] "Added the filter with cutoff and resonance controls."
 
 ## 4. INTERNAL FILES ARE SECRET
-Never mention CLAUDE.md, .vstworkshop/, or metadata files to the user. Update them silently.
+Never mention CLAUDE.md, .freqlab/, or metadata files to the user. Update them silently.
 
 ## 5. ALWAYS CHECK YOUR SKILLS
 Before implementing ANY audio feature, you MUST check if a relevant skill exists in `.claude/commands/`.
@@ -462,7 +462,7 @@ When the user requests a feature:
 /// Load project metadata to get components and other info
 fn load_project_metadata(project_path: &str) -> Option<super::projects::ProjectMeta> {
     let metadata_path = PathBuf::from(project_path)
-        .join(".vstworkshop")
+        .join(".freqlab")
         .join("metadata.json");
 
     let content = fs::read_to_string(metadata_path).ok()?;
@@ -488,9 +488,9 @@ pub async fn send_to_claude(
         super::git::commit_changes(&project_path, "Initialize git for version control").await?;
     }
 
-    // Ensure .vstworkshop/ is not tracked by git (fixes existing projects)
+    // Ensure .freqlab/ is not tracked by git (fixes existing projects)
     // This prevents chat.json from being reverted when doing git checkout
-    if let Err(e) = super::git::ensure_vstworkshop_ignored(&project_path) {
+    if let Err(e) = super::git::ensure_freqlab_ignored(&project_path) {
         eprintln!("[WARN] Failed to update gitignore: {}", e);
     }
 

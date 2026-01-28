@@ -3,7 +3,7 @@
 //! Loads .clap bundles, creates plugin instances, and processes audio.
 
 use super::clap_sys::*;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::editor;
 use crate::audio::midi::{MidiEvent, MidiEventQueue};
 use libloading::{Library, Symbol};
@@ -108,7 +108,7 @@ pub struct PluginInstance {
     state_apply_count: AtomicU32,
 
     // Direct editor window state (for in-process hosting by editor_host binary)
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     editor_window: Option<*mut std::ffi::c_void>,
 
     // MIDI event handling
@@ -171,11 +171,45 @@ pub fn cleanup_temp_bundles() {
             let path = entry.path();
             if path.extension().map(|e| e == "clap").unwrap_or(false) {
                 log::info!("Removing stale temp bundle: {:?}", path);
-                if let Err(e) = std::fs::remove_dir_all(&path) {
+                let result = if path.is_file() {
+                    std::fs::remove_file(&path)
+                } else {
+                    std::fs::remove_dir_all(&path)
+                };
+                if let Err(e) = result {
                     log::warn!("Failed to remove temp bundle {:?}: {}", path, e);
                 }
             }
         }
+    }
+}
+
+/// Get a human-readable name for a crash guard signal/exception code
+fn crash_signal_name(code: i32) -> &'static str {
+    #[cfg(unix)]
+    {
+        match code {
+            libc::SIGABRT => "SIGABRT (abort/panic)",
+            libc::SIGSEGV => "SIGSEGV (segmentation fault)",
+            libc::SIGBUS => "SIGBUS (bus error)",
+            _ => "unknown signal",
+        }
+    }
+    #[cfg(windows)]
+    {
+        // SEH exception codes from Windows
+        match code as u32 {
+            0xC0000005 => "ACCESS_VIOLATION",
+            0xC000001D => "ILLEGAL_INSTRUCTION",
+            0xC0000094 => "INTEGER_DIVIDE_BY_ZERO",
+            0xC00000FD => "STACK_OVERFLOW",
+            _ => "unknown SEH exception",
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = code;
+        "unknown signal"
     }
 }
 
@@ -460,7 +494,7 @@ impl PluginInstance {
             editor_open: false,
             state_receiver: None,
             state_apply_count: AtomicU32::new(0),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             editor_window: None,
             midi_queue: Arc::new(MidiEventQueue::new(1024)),
             midi_context: MidiEventContext::new(),
@@ -491,8 +525,14 @@ impl PluginInstance {
     ///
     /// **Unique path (nih-plug)**: Uses timestamp-based unique paths. Works fine for
     /// nih-plug plugins and allows proper cleanup on drop.
+    ///
+    /// Platform behavior:
+    /// - macOS: .clap bundles are directories — uses recursive directory copy
+    /// - Windows/Linux: .clap files are flat DSOs — uses simple file copy
     fn copy_to_temp(bundle_path: &Path, options: &PluginLoadOptions) -> Result<(PathBuf, Option<PathBuf>), String> {
         use std::time::{SystemTime, UNIX_EPOCH};
+
+        let is_flat_file = bundle_path.is_file();
 
         let bundle_name = bundle_path
             .file_stem()
@@ -516,8 +556,7 @@ impl PluginInstance {
             // This ensures we get a fresh dylib (new inode) that macOS won't cache
             if path.exists() {
                 log::info!("Removing old temp bundle: {:?}", path);
-                std::fs::remove_dir_all(&path)
-                    .map_err(|e| format!("Failed to remove old temp bundle: {}", e))?;
+                Self::remove_bundle(&path)?;
             }
 
             // Don't delete on drop - bundle should persist for NSBundle's cache
@@ -532,7 +571,7 @@ impl PluginInstance {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.starts_with(&prefix) && name.ends_with(".clap") {
                         log::info!("Cleaning up old temp bundle: {:?}", entry.path());
-                        let _ = std::fs::remove_dir_all(entry.path());
+                        let _ = Self::remove_bundle(&entry.path());
                     }
                 }
             }
@@ -551,13 +590,19 @@ impl PluginInstance {
         };
 
         log::info!(
-            "Copying plugin bundle to temp: {:?} -> {:?}",
+            "Copying plugin bundle to temp: {:?} -> {:?} (flat_file={})",
             bundle_path,
-            temp_bundle_path
+            temp_bundle_path,
+            is_flat_file
         );
 
-        // Copy the entire bundle directory
-        Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
+        // Copy: flat file copy for Windows/Linux DSOs, recursive for macOS bundles
+        if is_flat_file {
+            std::fs::copy(bundle_path, &temp_bundle_path)
+                .map_err(|e| format!("Failed to copy plugin file: {}", e))?;
+        } else {
+            Self::copy_dir_all(bundle_path, &temp_bundle_path)?;
+        }
 
         log::info!("Using bundle path: {:?}", temp_bundle_path);
 
@@ -568,6 +613,19 @@ impl PluginInstance {
             None
         };
         Ok((temp_bundle_path, delete_path))
+    }
+
+    /// Remove a bundle — handles both flat files and directory bundles
+    fn remove_bundle(path: &Path) -> Result<(), String> {
+        if path.is_file() {
+            std::fs::remove_file(path)
+                .map_err(|e| format!("Failed to remove temp file {:?}: {}", path, e))
+        } else if path.is_dir() {
+            std::fs::remove_dir_all(path)
+                .map_err(|e| format!("Failed to remove temp bundle {:?}: {}", path, e))
+        } else {
+            Ok(())
+        }
     }
 
     /// Recursively copy a directory
@@ -597,50 +655,89 @@ impl PluginInstance {
     }
 
     /// Resolve the dylib path inside a .clap bundle
+    ///
+    /// Platform behavior:
+    /// - macOS: .clap bundles are directories like .app bundles (Contents/MacOS/binary)
+    /// - Windows/Linux: .clap files are flat DSOs (renamed DLLs or .so files)
     fn resolve_dylib_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
-        // On macOS, .clap bundles are like .app bundles:
-        // MyPlugin.clap/Contents/MacOS/MyPlugin
+        // On Windows and Linux, .clap files are flat DSOs — the file IS the plugin
+        #[cfg(not(target_os = "macos"))]
+        {
+            // If it's a file, it's the plugin binary directly
+            if bundle_path.is_file() {
+                return Ok(bundle_path.to_path_buf());
+            }
 
-        let macos_dir = bundle_path.join("Contents").join("MacOS");
-
-        // First try: use the bundle name (standard case)
-        let bundle_name = bundle_path
-            .file_stem()
-            .ok_or("Invalid bundle path")?
-            .to_string_lossy();
-
-        let dylib_path = macos_dir.join(bundle_name.as_ref());
-        if dylib_path.exists() {
-            return Ok(dylib_path);
-        }
-
-        // Second try: scan the MacOS directory for any executable
-        // This handles temp bundles where the bundle name differs from the dylib name
-        if macos_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&macos_dir) {
-                for entry in entries.flatten() {
+            // If it's a directory, scan for a DLL/SO/CLAP file inside
+            if bundle_path.is_dir() {
+                for entry in std::fs::read_dir(bundle_path)
+                    .map_err(|e| format!("Failed to read bundle directory: {}", e))?
+                    .flatten()
+                {
                     let path = entry.path();
-                    // Skip obvious non-executables
-                    if path.extension().is_some() {
-                        continue; // executables typically have no extension on macOS
-                    }
                     if path.is_file() {
-                        log::info!("Found dylib via scan: {:?}", path);
-                        return Ok(path);
+                        if let Some(ext) = path.extension() {
+                            let ext = ext.to_string_lossy().to_lowercase();
+                            if ext == "dll" || ext == "so" || ext == "clap" {
+                                log::info!("Found plugin binary via scan: {:?}", path);
+                                return Ok(path);
+                            }
+                        }
                     }
                 }
             }
+
+            return Err(format!(
+                "Could not find plugin binary: {:?}",
+                bundle_path
+            ));
         }
 
-        // Fallback: try the bundle path directly (for non-bundle dylibs)
-        if bundle_path.is_file() {
-            return Ok(bundle_path.to_path_buf());
-        }
+        // On macOS, .clap bundles are like .app bundles:
+        // MyPlugin.clap/Contents/MacOS/MyPlugin
+        #[cfg(target_os = "macos")]
+        {
+            let macos_dir = bundle_path.join("Contents").join("MacOS");
 
-        Err(format!(
-            "Could not find plugin binary in bundle: {:?}",
-            bundle_path
-        ))
+            // First try: use the bundle name (standard case)
+            let bundle_name = bundle_path
+                .file_stem()
+                .ok_or("Invalid bundle path")?
+                .to_string_lossy();
+
+            let dylib_path = macos_dir.join(bundle_name.as_ref());
+            if dylib_path.exists() {
+                return Ok(dylib_path);
+            }
+
+            // Second try: scan the MacOS directory for any executable
+            // This handles temp bundles where the bundle name differs from the dylib name
+            if macos_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&macos_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        // Skip obvious non-executables
+                        if path.extension().is_some() {
+                            continue; // executables typically have no extension on macOS
+                        }
+                        if path.is_file() {
+                            log::info!("Found dylib via scan: {:?}", path);
+                            return Ok(path);
+                        }
+                    }
+                }
+            }
+
+            // Fallback: try the bundle path directly (for non-bundle dylibs)
+            if bundle_path.is_file() {
+                return Ok(bundle_path.to_path_buf());
+            }
+
+            Err(format!(
+                "Could not find plugin binary in bundle: {:?}",
+                bundle_path
+            ))
+        }
     }
 
     /// Activate the plugin for audio processing
@@ -850,12 +947,7 @@ impl PluginInstance {
                 // Plugin crashed - mark as crashed and output silence
                 self.crashed = true;
 
-                let signal_name = match signal {
-                    libc::SIGABRT => "SIGABRT (abort/panic)",
-                    libc::SIGSEGV => "SIGSEGV (segmentation fault)",
-                    libc::SIGBUS => "SIGBUS (bus error)",
-                    _ => "unknown signal",
-                };
+                let signal_name = crash_signal_name(signal);
 
                 log::error!(
                     "Plugin '{}' crashed during process! Signal: {} ({}). Plugin has been disabled - reload to retry.",
@@ -1170,8 +1262,8 @@ impl PluginInstance {
     /// This is the correct architecture: the plugin's GUI runs in the same process as audio,
     /// sharing the same atomic parameters. No IPC or state sync needed.
     ///
-    /// Position is (x, y) in macOS screen coordinates. Pass None to center the window.
-    #[cfg(target_os = "macos")]
+    /// Position is (x, y) in screen coordinates. Pass None to center the window.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn open_editor_at(&mut self, position: Option<(f64, f64)>) -> Result<(), String> {
         log::info!("open_editor_at: Called, editor_open={}, position={:?}", self.editor_open, position);
 
@@ -1211,19 +1303,19 @@ impl PluginInstance {
     }
 
     /// Open the plugin's editor window centered (IN-PROCESS)
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn open_editor(&mut self) -> Result<(), String> {
         self.open_editor_at(None)
     }
 
-    /// Open the plugin's editor window (stub for non-macOS)
-    #[cfg(not(target_os = "macos"))]
+    /// Open the plugin's editor window (stub for unsupported platforms)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn open_editor_at(&mut self, _position: Option<(f64, f64)>) -> Result<(), String> {
         Err("Plugin editor not supported on this platform".to_string())
     }
 
-    /// Open the plugin's editor window (stub for non-macOS)
-    #[cfg(not(target_os = "macos"))]
+    /// Open the plugin's editor window (stub for unsupported platforms)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn open_editor(&mut self) -> Result<(), String> {
         Err("Plugin editor not supported on this platform".to_string())
     }
@@ -1236,7 +1328,7 @@ impl PluginInstance {
 
     /// Close the plugin's editor window (IN-PROCESS)
     /// Note: Position is NOT saved here - caller (AudioEngineHandle) should save it
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn close_editor(&mut self) {
         if !self.editor_open {
             return;
@@ -1248,17 +1340,20 @@ impl PluginInstance {
         // Note: Position saving is handled by AudioEngineHandle to survive plugin reload
         self.close_editor_window();
 
-        // Give the main thread run loop time to process WKWebView cleanup callbacks
+        // On macOS, give the main thread run loop time to process WKWebView cleanup callbacks
         // This sleep is on the async thread, so the main thread can process events
-        log::info!("close_editor: Waiting for WebView cleanup callbacks...");
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        #[cfg(target_os = "macos")]
+        {
+            log::info!("close_editor: Waiting for WebView cleanup callbacks...");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
 
         self.editor_open = false;
         log::info!("close_editor: Editor closed");
     }
 
-    /// Close the plugin's editor window (stub for non-macOS)
-    #[cfg(not(target_os = "macos"))]
+    /// Close the plugin's editor window (stub for unsupported platforms)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn close_editor(&mut self) {
         self.editor_open = false;
     }
@@ -1271,7 +1366,7 @@ impl PluginInstance {
     ///
     /// This creates the window in the current process instead of spawning a child process.
     /// Should only be called from the freqlab-editor-host binary.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn open_editor_window(&mut self) -> Result<(), String> {
         self.open_editor_window_at(None)
     }
@@ -1279,7 +1374,7 @@ impl PluginInstance {
     /// Open the plugin's editor window at a specific position
     ///
     /// If position is None, the window will be centered on screen.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn open_editor_window_at(&mut self, position: Option<(f64, f64)>) -> Result<(), String> {
         log::info!("open_editor_window_at: Called with position {:?}", position);
 
@@ -1303,7 +1398,7 @@ impl PluginInstance {
     }
 
     /// Get the current position of the editor window
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn get_editor_window_position(&self) -> Option<(f64, f64)> {
         self.editor_window.and_then(|window| unsafe {
             editor::get_window_position(window)
@@ -1311,7 +1406,7 @@ impl PluginInstance {
     }
 
     /// Close the plugin's editor window directly (in-process, for editor_host binary only)
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn close_editor_window(&mut self) {
         log::info!("close_editor_window: Called, has_window={}", self.editor_window.is_some());
 
@@ -1327,8 +1422,7 @@ impl PluginInstance {
     }
 
     /// Check if the editor window is still visible (for editor_host event loop)
-    /// Uses main thread dispatch for reliable NSWindow property access
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn is_editor_window_visible(&self) -> bool {
         if let Some(window) = self.editor_window {
             // Use the main-thread-safe visibility check from editor module
@@ -1338,30 +1432,30 @@ impl PluginInstance {
         }
     }
 
-    /// Stub for non-macOS platforms
-    #[cfg(not(target_os = "macos"))]
+    /// Stub for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn open_editor_window(&mut self) -> Result<(), String> {
         Err("GUI not supported on this platform".to_string())
     }
 
-    /// Stub for non-macOS platforms
-    #[cfg(not(target_os = "macos"))]
+    /// Stub for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn open_editor_window_at(&mut self, _position: Option<(f64, f64)>) -> Result<(), String> {
         Err("GUI not supported on this platform".to_string())
     }
 
-    /// Stub for non-macOS platforms
-    #[cfg(not(target_os = "macos"))]
+    /// Stub for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn get_editor_window_position(&self) -> Option<(f64, f64)> {
         None
     }
 
-    /// Stub for non-macOS platforms
-    #[cfg(not(target_os = "macos"))]
+    /// Stub for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn close_editor_window(&mut self) {}
 
-    /// Stub for non-macOS platforms
-    #[cfg(not(target_os = "macos"))]
+    /// Stub for unsupported platforms
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub fn is_editor_window_visible(&self) -> bool {
         false
     }
@@ -1445,9 +1539,9 @@ impl Drop for PluginInstance {
         // Now delete the temp bundle immediately
         if let Some(temp_path) = self.temp_bundle_path.take() {
             log::info!("Deleting temp bundle: {:?}", temp_path);
-            match std::fs::remove_dir_all(&temp_path) {
+            match Self::remove_bundle(&temp_path) {
                 Ok(_) => log::info!("Temp bundle deleted successfully"),
-                Err(e) => log::warn!("Failed to delete temp bundle {:?}: {}", temp_path, e),
+                Err(e) => log::warn!("Failed to delete temp bundle: {}", e),
             }
         }
 

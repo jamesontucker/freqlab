@@ -36,9 +36,14 @@ pub struct CopiedFile {
 }
 
 /// Expand ~ to home directory
+/// Handles both Unix (~/) and Windows (~\) path separators
 fn expand_tilde(path: &str) -> PathBuf {
     if path.starts_with("~/") {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = super::get_home_dir();
+        PathBuf::from(home).join(&path[2..])
+    } else if path.starts_with("~\\") {
+        // Windows users might type ~\ instead of ~/
+        let home = super::get_home_dir();
         PathBuf::from(home).join(&path[2..])
     } else {
         PathBuf::from(path)

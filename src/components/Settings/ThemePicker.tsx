@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { CustomThemeColors } from '../../types';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { IS_MAC } from '../../lib/platform';
 
 // Helper to lighten/darken hex colors for hover states
 function adjustColor(hex: string, percent: number): string {
@@ -336,13 +337,14 @@ export function ThemePicker() {
       </div>
 
       {/* macOS Permissions Help */}
+      {IS_MAC && (
       <div className="pt-6 border-t border-border">
         <h3 className="text-lg font-medium text-text-primary mb-1">macOS Permissions</h3>
         <p className="text-sm text-text-muted mb-4">Troubleshoot permission issues on macOS.</p>
 
         <div className="space-y-3">
           <div className="p-3 rounded-lg bg-bg-tertiary">
-            <p className="text-sm font-medium text-text-primary mb-1">"Access data from other apps" prompt</p>
+            <p className="text-sm font-medium text-text-primary mb-1">&quot;Access data from other apps&quot; prompt</p>
             <p className="text-xs text-text-muted">
               If you see this repeatedly when Claude edits files, enable <span className="text-text-secondary">freqlab</span> in{' '}
               <span className="text-text-secondary">System Settings → Privacy & Security → Full Disk Access</span>.
@@ -358,6 +360,7 @@ export function ThemePicker() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

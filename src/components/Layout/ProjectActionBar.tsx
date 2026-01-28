@@ -41,7 +41,7 @@ interface ProjectActionBarProps {
 
 // Helper to extract folder name from project path
 function getFolderName(projectPath: string): string {
-    return projectPath.split('/').pop() || ''
+    return projectPath.split(/[/\\]/).pop() || ''
 }
 
 export function ProjectActionBar({

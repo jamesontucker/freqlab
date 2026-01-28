@@ -43,8 +43,8 @@ pub struct CreateProjectInput {
 }
 
 pub fn get_workspace_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("VSTWorkshop")
+    let home = super::get_home_dir();
+    PathBuf::from(home).join("Freqlab")
 }
 
 pub fn get_output_path() -> PathBuf {
@@ -182,17 +182,29 @@ fn main() -> nih_plug_xtask::Result<()> {
             .map_err(|e| format!("Failed to create xtask main.rs: {}", e))?;
     }
 
-    // Create .cargo/config.toml with xtask alias if it doesn't exist
+    // Create .cargo/config.toml with xtask alias and custom target directory
     let cargo_config_dir = workspace.join(".cargo");
     fs::create_dir_all(&cargo_config_dir)
         .map_err(|e| format!("Failed to create .cargo dir: {}", e))?;
 
     let cargo_config = cargo_config_dir.join("config.toml");
-    if !cargo_config.exists() {
-        let config_content = r#"[alias]
+    let desired_config = r#"[alias]
 xtask = "run --package xtask --release --"
+
+[build]
+target-dir = ".cache/cargo-target"
 "#;
-        fs::write(&cargo_config, config_content)
+
+    // Check if config needs updating (missing target-dir setting)
+    let needs_update = if cargo_config.exists() {
+        let existing = fs::read_to_string(&cargo_config).unwrap_or_default();
+        !existing.contains("target-dir")
+    } else {
+        true
+    };
+
+    if needs_update {
+        fs::write(&cargo_config, desired_config)
             .map_err(|e| format!("Failed to create cargo config: {}", e))?;
     }
 
@@ -247,7 +259,7 @@ fn generate_vst3_id(name: &str) -> String {
     let hash = hasher.finish();
 
     // Create a 16-byte ID string
-    format!("VSTWorkshop{:05}", hash % 100000)
+    format!("Freqlab{:05}", hash % 100000)
         .chars()
         .take(16)
         .collect()
@@ -358,8 +370,8 @@ pub async fn create_project(
     // Create directory structure
     fs::create_dir_all(project_path.join("src"))
         .map_err(|e| format!("Failed to create src dir: {}", e))?;
-    fs::create_dir_all(project_path.join(".vstworkshop"))
-        .map_err(|e| format!("Failed to create .vstworkshop dir: {}", e))?;
+    fs::create_dir_all(project_path.join(".freqlab"))
+        .map_err(|e| format!("Failed to create .freqlab dir: {}", e))?;
 
     let snake_name = to_snake_case(&input.name);
     let pascal_name = to_pascal_case(&input.name);
@@ -521,7 +533,7 @@ pub async fn create_project(
 
     let metadata_json = serde_json::to_string_pretty(&metadata)
         .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
-    fs::write(project_path.join(".vstworkshop/metadata.json"), metadata_json)
+    fs::write(project_path.join(".freqlab/metadata.json"), metadata_json)
         .map_err(|e| format!("Failed to write metadata.json: {}", e))?;
 
     // Generate CLAUDE.md for project-specific Claude guidance (uses display name for header)
@@ -613,7 +625,7 @@ pub async fn list_projects() -> Result<Vec<ProjectMeta>, String> {
             continue;
         }
 
-        let metadata_path = path.join(".vstworkshop/metadata.json");
+        let metadata_path = path.join(".freqlab/metadata.json");
         if metadata_path.exists() {
             let content = fs::read_to_string(&metadata_path)
                 .map_err(|e| format!("Failed to read metadata: {}", e))?;
@@ -632,7 +644,7 @@ pub async fn list_projects() -> Result<Vec<ProjectMeta>, String> {
 #[tauri::command]
 pub async fn get_project(name: String) -> Result<ProjectMeta, String> {
     let project_path = get_projects_path().join(&name);
-    let metadata_path = project_path.join(".vstworkshop/metadata.json");
+    let metadata_path = project_path.join(".freqlab/metadata.json");
 
     if !metadata_path.exists() {
         return Err(format!("Project '{}' not found", name));
@@ -691,7 +703,7 @@ pub async fn update_project(
     }
 
     let path = PathBuf::from(&project_path);
-    let metadata_path = path.join(".vstworkshop/metadata.json");
+    let metadata_path = path.join(".freqlab/metadata.json");
 
     if !metadata_path.exists() {
         return Err("Project metadata not found".to_string());
@@ -793,7 +805,7 @@ pub fn update_cmake_formats(
     use crate::library;
 
     // Read framework ID from metadata
-    let metadata_path = project_path.join(".vstworkshop/metadata.json");
+    let metadata_path = project_path.join(".freqlab/metadata.json");
     if !metadata_path.exists() {
         return Ok(()); // No metadata = nothing to do
     }

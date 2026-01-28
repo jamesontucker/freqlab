@@ -49,14 +49,14 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-/// Store uploaded files in the project's .vstworkshop/uploads directory
+/// Store uploaded files in the project's .freqlab/uploads directory
 #[tauri::command]
 pub async fn store_chat_attachments(
     project_path: String,
     attachments: Vec<AttachmentInput>,
 ) -> Result<Vec<StoredAttachment>, String> {
     let uploads_dir = PathBuf::from(&project_path)
-        .join(".vstworkshop")
+        .join(".freqlab")
         .join("uploads");
 
     let mut stored = Vec::new();

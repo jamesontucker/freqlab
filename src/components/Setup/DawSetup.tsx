@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import type { DawPaths } from '../../types';
+import { getPlatformDefaults } from '../../lib/platform';
 
 interface DawSetupProps {
   onComplete: () => void;
@@ -71,12 +72,15 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
   const [selectedDaws, setSelectedDaws] = useState<Set<DawKey>>(new Set());
   const [useDefaults, setUseDefaults] = useState(true);
 
-  const defaultVst3 = '~/Library/Audio/Plug-Ins/VST3';
-  const defaultClap = '~/Library/Audio/Plug-Ins/CLAP';
-  const defaultAu = '~/Library/Audio/Plug-Ins/Components';
-  const defaultStandalone = '/Applications';
-  const defaultAax = '/Library/Application Support/Avid/Audio/Plug-Ins';
-  const defaultLv2 = '~/Library/Audio/Plug-Ins/LV2';
+  const defaults = getPlatformDefaults();
+  // Use reaper as the canonical reference for default paths (all DAWs share the same system plugin folders)
+  const refPaths = defaults.dawPaths.reaper;
+  const defaultVst3 = refPaths.vst3;
+  const defaultClap = refPaths.clap;
+  const defaultAu = refPaths.au;
+  const defaultStandalone = refPaths.standalone;
+  const defaultAax = refPaths.aax;
+  const defaultLv2 = refPaths.lv2;
 
   const toggleDaw = useCallback((dawKey: DawKey) => {
     setSelectedDaws(prev => {
@@ -207,7 +211,7 @@ export function DawSetup({ onComplete, onBack }: DawSetupProps) {
               className="w-4 h-4 rounded border-border bg-bg-tertiary text-accent focus:ring-accent focus:ring-offset-0 cursor-pointer"
             />
             <label htmlFor="useDefaults" className="text-xs text-text-secondary">
-              Use standard macOS plugin folders (recommended)
+              Use standard plugin folders (recommended)
             </label>
           </div>
 

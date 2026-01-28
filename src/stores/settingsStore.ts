@@ -1,14 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppConfig, DawPaths, DawPathConfig, CustomThemeColors, AudioSettings, AISettings, ChatStyle, ClaudeModel, AgentVerbosity } from '../types';
+import { getPlatformDefaults } from '../lib/platform';
 
-const defaultDawPaths: DawPaths = {
-  reaper: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
-  ableton: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
-  flStudio: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
-  logic: { vst3: '~/Library/Audio/Plug-Ins/VST3', clap: '~/Library/Audio/Plug-Ins/CLAP', au: '~/Library/Audio/Plug-Ins/Components', auv3: '', aax: '/Library/Application Support/Avid/Audio/Plug-Ins', lv2: '~/Library/Audio/Plug-Ins/LV2', standalone: '/Applications' },
-  other: { vst3: '', clap: '', au: '', auv3: '', aax: '', lv2: '', standalone: '' },
-};
+const platformDefaults = getPlatformDefaults();
+const defaultDawPaths: DawPaths = platformDefaults.dawPaths;
 
 const defaultCustomColors: CustomThemeColors = {
   accent: '#2DA86E',
@@ -71,8 +67,8 @@ interface SettingsState extends AppConfig {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      workspacePath: '~/VSTWorkshop',
-      outputPath: '~/VSTWorkshop/output',
+      workspacePath: platformDefaults.workspacePath,
+      outputPath: '~/Freqlab/output',
       buildFormats: ['vst3', 'clap'],
       autoOpenOutput: true,
       showNotifications: true,

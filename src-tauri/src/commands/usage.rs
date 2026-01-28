@@ -42,14 +42,17 @@ struct UsageData {
 }
 
 /// Convert a project path to Claude's folder name format
-/// /Users/jameson/VSTWorkshop/projects/my_plugin -> -Users-jameson-VSTWorkshop-projects-my_plugin
+/// /Users/jameson/Freqlab/projects/my_plugin -> -Users-jameson-Freqlab-projects-my_plugin
 fn project_path_to_claude_folder(project_path: &str) -> String {
     project_path.replace('/', "-")
 }
 
 /// Get the Claude projects directory
 fn get_claude_projects_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
+    let home = super::get_home_dir();
+    if home.is_empty() {
+        return None;
+    }
     let claude_dir = PathBuf::from(home).join(".claude").join("projects");
     if claude_dir.exists() {
         Some(claude_dir)
@@ -154,12 +157,12 @@ pub async fn get_session_usage(project_path: String, session_id: String) -> Resu
 }
 
 /// Get token usage for the current session of a project
-/// Reads session_id from .vstworkshop/claude_session.txt
+/// Reads session_id from .freqlab/claude_session.txt
 #[tauri::command]
 pub async fn get_project_usage(project_path: String) -> Result<TokenUsage, String> {
     // Read the current session ID
     let session_file = PathBuf::from(&project_path)
-        .join(".vstworkshop")
+        .join(".freqlab")
         .join("claude_session.txt");
 
     let session_id = fs::read_to_string(&session_file)
@@ -223,7 +226,7 @@ pub async fn list_orphaned_claude_logs(workspace_path: String) -> Result<Vec<Str
 
     let mut orphaned = Vec::new();
 
-    // Pattern to match VSTWorkshop project folders
+    // Pattern to match Freqlab project folders
     let workspace_prefix = project_path_to_claude_folder(&workspace_path);
 
     let entries = fs::read_dir(&claude_dir)

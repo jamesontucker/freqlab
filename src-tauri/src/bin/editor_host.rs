@@ -39,6 +39,9 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEventMask};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
 
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+
 fn main() {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -154,9 +157,12 @@ fn run_editor(plugin_path: &str, position: Option<(f64, f64)>) -> Result<(), Str
     #[cfg(target_os = "macos")]
     run_macos_event_loop(&mut plugin, should_close, request_position)?;
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    run_windows_event_loop(&mut plugin, should_close, request_position)?;
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        // On other platforms, just wait for close signal
+        // On unsupported platforms, just wait for close signal
         while !should_close.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(100));
         }
@@ -321,6 +327,122 @@ fn run_macos_event_loop(
 
         // Small sleep to prevent busy waiting
         thread::sleep(Duration::from_millis(16)); // ~60fps
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_event_loop(
+    plugin: &mut PluginInstance,
+    should_close: Arc<AtomicBool>,
+    request_position: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let mut iteration_count: u32 = 0;
+    let mut last_state: Option<Vec<u8>> = None;
+
+    eprintln!("[editor_host] ENTERING EVENT LOOP");
+    let _ = std::io::stderr().flush();
+
+    log::info!(
+        "Entering Win32 event loop, will sync state every {} iterations (~{}ms)",
+        STATE_SYNC_INTERVAL,
+        STATE_SYNC_INTERVAL * 16
+    );
+
+    println!("info:event_loop_started");
+    let _ = std::io::stdout().flush();
+
+    eprintln!("[editor_host] Plugin has_state: {}", plugin.has_state());
+    let _ = std::io::stderr().flush();
+
+    loop {
+        // Check if position was requested
+        if request_position.swap(false, Ordering::SeqCst) {
+            if let Some((x, y)) = plugin.get_editor_window_position() {
+                println!("position:{},{}", x, y);
+                let _ = std::io::stdout().flush();
+                log::info!("Reported window position: ({}, {})", x, y);
+            }
+        }
+
+        // Check if we should close
+        if should_close.load(Ordering::SeqCst) {
+            log::info!("Close signal received");
+            break;
+        }
+
+        // Check if the editor window is still visible (user may have closed it)
+        if !plugin.is_editor_window_visible() {
+            log::info!("Editor window was closed by user");
+            break;
+        }
+
+        // Process all pending Win32 messages (non-blocking)
+        // PeekMessageW with PM_REMOVE drains the queue without blocking,
+        // equivalent to NSDate.distantPast on macOS
+        unsafe {
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
+        // Check if the plugin requested a main thread callback
+        // (used by nih-plug for deferred GUI operations)
+        if take_callback_request() {
+            plugin.call_on_main_thread();
+        }
+
+        // Flush parameter changes from the GUI AFTER processing messages
+        // Critical for plugins that rely on the host calling flush() after request_flush()
+        plugin.flush_params();
+
+        // Periodically sync plugin state to parent process
+        // Must happen AFTER flush_params() to capture updated parameter values
+        iteration_count += 1;
+        if iteration_count >= STATE_SYNC_INTERVAL {
+            iteration_count = 0;
+
+            match plugin.save_state() {
+                Ok(state) => {
+                    static FIRST_SAVE: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(true);
+                    if FIRST_SAVE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                        println!("info:first_state_save_ok_{}bytes", state.len());
+                        let _ = std::io::stdout().flush();
+                        log::info!("First state save succeeded: {} bytes", state.len());
+                    }
+
+                    let should_send = match &last_state {
+                        Some(prev) => prev != &state,
+                        None => true,
+                    };
+
+                    if should_send {
+                        let encoded =
+                            base64::engine::general_purpose::STANDARD.encode(&state);
+                        println!("state:{}", encoded);
+                        let _ = std::io::stdout().flush();
+                        log::info!("Sent state update to parent: {} bytes", state.len());
+                        last_state = Some(state);
+                    }
+                }
+                Err(e) => {
+                    static LOGGED_ERROR: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+                    if !LOGGED_ERROR.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        println!("info:state_save_error:{}", e);
+                        let _ = std::io::stdout().flush();
+                        log::error!("Failed to save plugin state: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Small sleep to prevent busy waiting (~60fps)
+        thread::sleep(Duration::from_millis(16));
     }
 
     Ok(())

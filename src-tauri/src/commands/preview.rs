@@ -748,9 +748,12 @@ pub fn get_project_plugin_path(project_name: String, version: u32) -> Result<Opt
     // Map version 0 (no Claude commits) to v1 for filesystem lookups
     let folder_version = version.max(1);
 
-    let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
+    let home = super::get_home_dir();
+    if home.is_empty() {
+        return Err("Could not get home directory".to_string());
+    }
     let output_path = std::path::PathBuf::from(home)
-        .join("VSTWorkshop")
+        .join("Freqlab")
         .join("output")
         .join(&project_name)
         .join(format!("v{}", folder_version));

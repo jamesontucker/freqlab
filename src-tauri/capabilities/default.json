@@ -15,6 +15,7 @@
     "process:default",
     "process:allow-restart",
     "updater:default",
-    "notification:default"
+    "notification:default",
+    "os:default"
   ]
 }

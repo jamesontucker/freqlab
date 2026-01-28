@@ -65,7 +65,7 @@ pub async fn export_project(project_name: String, destination: String) -> Result
     };
 
     // Prepare portable chat.json with relative paths (if it exists)
-    let chat_file_path = project_path.join(".vstworkshop/chat.json");
+    let chat_file_path = project_path.join(".freqlab/chat.json");
     let portable_chat_json = if chat_file_path.exists() {
         prepare_portable_chat_json(&project_path)?
     } else {
@@ -104,7 +104,7 @@ pub async fn export_project(project_name: String, destination: String) -> Result
 
             // For chat.json, use our portable version with relative paths
             // Use path comparison instead of string to handle cross-platform path separators
-            let is_chat_file = relative_path == Path::new(".vstworkshop").join("chat.json");
+            let is_chat_file = relative_path == Path::new(".freqlab").join("chat.json");
             if is_chat_file {
                 if let Some(ref portable_json) = portable_chat_json {
                     zip.write_all(portable_json.as_bytes())
@@ -135,9 +135,9 @@ pub async fn export_project(project_name: String, destination: String) -> Result
 
 /// Prepare a portable version of chat.json with relative attachment paths
 /// Converts absolute paths like "/Users/.../uploads/uuid/file.pdf"
-/// to relative paths like ".vstworkshop/uploads/uuid/file.pdf"
+/// to relative paths like ".freqlab/uploads/uuid/file.pdf"
 fn prepare_portable_chat_json(project_path: &Path) -> Result<Option<String>, String> {
-    let chat_path = project_path.join(".vstworkshop/chat.json");
+    let chat_path = project_path.join(".freqlab/chat.json");
 
     if !chat_path.exists() {
         return Ok(None);
@@ -159,8 +159,8 @@ fn prepare_portable_chat_json(project_path: &Path) -> Result<Option<String>, Str
             for attachment in attachments.iter_mut() {
                 // If path starts with project path, make it relative
                 if attachment.path.starts_with(&project_path_str) {
-                    // Convert "/Users/.../projects/my-synth/.vstworkshop/uploads/uuid/file.pdf"
-                    // to ".vstworkshop/uploads/uuid/file.pdf"
+                    // Convert "/Users/.../projects/my-synth/.freqlab/uploads/uuid/file.pdf"
+                    // to ".freqlab/uploads/uuid/file.pdf"
                     if let Some(relative) = attachment.path.strip_prefix(&project_path_str) {
                         // Trim both forward and back slashes, then normalize to forward slashes
                         let relative = relative
@@ -171,9 +171,9 @@ fn prepare_portable_chat_json(project_path: &Path) -> Result<Option<String>, Str
                     }
                 } else {
                     // Path doesn't match project - try to extract just the relative part
-                    // Look for ".vstworkshop/uploads" or ".vstworkshop\uploads" in the path
+                    // Look for ".freqlab/uploads" or ".freqlab\uploads" in the path
                     let normalized = attachment.path.replace('\\', "/");
-                    if let Some(idx) = normalized.find(".vstworkshop/uploads") {
+                    if let Some(idx) = normalized.find(".freqlab/uploads") {
                         attachment.path = normalized[idx..].to_string();
                     }
                 }
@@ -400,7 +400,7 @@ pub async fn import_project(
     }
 
     // Load and update the project metadata
-    let metadata_path = target_path.join(".vstworkshop/metadata.json");
+    let metadata_path = target_path.join(".freqlab/metadata.json");
     if !metadata_path.exists() {
         return Err("Imported project is missing metadata".to_string());
     }
@@ -486,14 +486,14 @@ fn update_cargo_package_name(
 
 /// Fix attachment paths in chat history after import
 /// Handles both:
-/// 1. Relative paths from new exports (e.g., ".vstworkshop/uploads/uuid/file.pdf")
+/// 1. Relative paths from new exports (e.g., ".freqlab/uploads/uuid/file.pdf")
 /// 2. Absolute paths from legacy exports (e.g., "/Users/.../uploads/uuid/file.pdf")
 fn fix_chat_attachment_paths(
     project_path: &Path,
     _original_name: &str,
     _new_name: &str,
 ) -> Result<(), String> {
-    let chat_path = project_path.join(".vstworkshop/chat.json");
+    let chat_path = project_path.join(".freqlab/chat.json");
 
     if !chat_path.exists() {
         return Ok(()); // No chat history to fix
@@ -508,7 +508,7 @@ fn fix_chat_attachment_paths(
     };
 
     let project_path_str = project_path.to_string_lossy().to_string();
-    let uploads_dir = project_path.join(".vstworkshop/uploads");
+    let uploads_dir = project_path.join(".freqlab/uploads");
     let mut modified = false;
 
     // Update attachment paths in all messages
@@ -519,8 +519,8 @@ fn fix_chat_attachment_paths(
                 let normalized_path = attachment.path.replace('\\', "/");
 
                 // Case 1: Relative path from portable export (new format)
-                // e.g., ".vstworkshop/uploads/uuid/file.pdf"
-                if normalized_path.starts_with(".vstworkshop/") {
+                // e.g., ".freqlab/uploads/uuid/file.pdf"
+                if normalized_path.starts_with(".freqlab/") {
                     // Convert to absolute path for this project
                     let absolute_path = project_path.join(&normalized_path);
                     attachment.path = absolute_path.to_string_lossy().to_string();
@@ -546,8 +546,8 @@ fn fix_chat_attachment_paths(
                     attachment.path = reconstructed.to_string_lossy().to_string();
                     modified = true;
                 } else {
-                    // Last resort: check if path contains .vstworkshop/uploads and extract relative part
-                    if let Some(idx) = normalized_path.find(".vstworkshop/uploads") {
+                    // Last resort: check if path contains .freqlab/uploads and extract relative part
+                    if let Some(idx) = normalized_path.find(".freqlab/uploads") {
                         let relative = &normalized_path[idx..];
                         let absolute_path = project_path.join(relative);
                         if absolute_path.exists() {

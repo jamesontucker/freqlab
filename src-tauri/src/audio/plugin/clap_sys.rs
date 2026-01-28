@@ -462,6 +462,15 @@ impl ClapWindow {
         }
     }
 
+    /// Create a null window descriptor for unparenting on Windows
+    #[cfg(target_os = "windows")]
+    pub fn null() -> Self {
+        Self {
+            api: CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char,
+            handle: ClapWindowHandle { win32: std::ptr::null_mut() },
+        }
+    }
+
     /// Create a window descriptor for macOS (Cocoa)
     #[cfg(target_os = "macos")]
     pub fn cocoa(view: *mut c_void) -> Self {

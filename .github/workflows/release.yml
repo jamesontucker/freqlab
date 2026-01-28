@@ -15,8 +15,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
-    name: Build (macOS Universal)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: universal-apple-darwin
+            name: macOS Universal
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows x64
+
+    runs-on: ${{ matrix.platform }}
+    name: Build (${{ matrix.name }})
 
     steps:
       - name: Checkout repository
@@ -31,7 +42,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
@@ -42,6 +53,7 @@ jobs:
         run: npm ci
 
       - name: Import Apple certificate
+        if: matrix.platform == 'macos-latest'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -55,18 +67,23 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions build.keychain
           rm certificate.p12
 
-      - name: Build editor-host for both architectures
+      - name: Build editor-host universal binary (macOS)
+        if: matrix.platform == 'macos-latest'
         run: |
           cd src-tauri
-          # Build editor-host binary for both architectures
           cargo build --release --target aarch64-apple-darwin --bin freqlab-editor-host
           cargo build --release --target x86_64-apple-darwin --bin freqlab-editor-host
-          # Create universal binary with lipo
           mkdir -p target/universal-apple-darwin/release
           lipo -create \
             target/aarch64-apple-darwin/release/freqlab-editor-host \
             target/x86_64-apple-darwin/release/freqlab-editor-host \
             -output target/universal-apple-darwin/release/freqlab-editor-host
+
+      - name: Build editor-host (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd src-tauri
+          cargo build --release --target x86_64-pc-windows-msvc --bin freqlab-editor-host
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -76,7 +93,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: "Developer ID Application: Nanoshrine Interactive LLC (PC4KPNUNP8)"
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && 'Developer ID Application: Nanoshrine Interactive LLC (PC4KPNUNP8)' || '' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -87,14 +104,15 @@ jobs:
             See the assets below to download freqlab for your platform.
 
             **macOS:** Download the `_universal.dmg` file (works on both Intel and Apple Silicon)
+            **Windows:** Download the `_x64-setup.exe` installer
 
             ## Installation
-            1. Download the `.dmg` file
-            2. Open the DMG and drag freqlab to Applications
+            - **macOS:** Open the DMG and drag freqlab to Applications
+            - **Windows:** Run the installer and follow the prompts
 
             ## What's Changed
             <!-- Add release notes here before publishing -->
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
-          args: --target universal-apple-darwin
+          args: --target ${{ matrix.target }}

@@ -37,7 +37,7 @@ fn to_package_name(name: &str) -> String {
 
 /// Get project metadata to determine framework
 fn get_project_framework(project_path: &std::path::Path) -> Option<String> {
-    let metadata_path = project_path.join(".vstworkshop/metadata.json");
+    let metadata_path = project_path.join(".freqlab/metadata.json");
     if metadata_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&metadata_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -54,7 +54,7 @@ fn get_project_framework(project_path: &std::path::Path) -> Option<String> {
 /// Get project build formats from metadata
 /// Returns None if not set (copy all artifacts for backward compat)
 fn get_project_build_formats(project_path: &std::path::Path) -> Option<Vec<String>> {
-    let metadata_path = project_path.join(".vstworkshop/metadata.json");
+    let metadata_path = project_path.join(".freqlab/metadata.json");
     if metadata_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&metadata_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -235,7 +235,7 @@ async fn build_cargo_project(
 
     if status.success() {
         // Copy artifacts to output folder (filtered by build formats)
-        let bundled_path = workspace_path.join("target/bundled");
+        let bundled_path = workspace_path.join(".cache/cargo-target/bundled");
         let copied_files = copy_cargo_artifacts(&bundled_path, output_path, project_name, build_formats)?;
 
         // Clear macOS quarantine attributes
@@ -842,7 +842,38 @@ pub async fn clear_project_build_cache() -> Result<(), String> {
     }
 }
 
-/// Open the output folder in Finder
+/// Get the size of the Rust/Cargo compilation cache
+#[tauri::command]
+pub async fn get_rust_cache_info() -> Result<CacheInfo, String> {
+    let cache_dir = get_workspace_path().join(".cache/cargo-target");
+    if !cache_dir.exists() {
+        return Ok(CacheInfo {
+            size_bytes: 0,
+            size_display: "Empty".into(),
+            exists: false,
+        });
+    }
+
+    let bytes = dir_size(&cache_dir);
+    Ok(CacheInfo {
+        size_bytes: bytes,
+        size_display: format_byte_size(bytes),
+        exists: true,
+    })
+}
+
+/// Clear the Rust/Cargo compilation cache
+#[tauri::command]
+pub async fn clear_rust_cache() -> Result<(), String> {
+    let cache_dir = get_workspace_path().join(".cache/cargo-target");
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)
+            .map_err(|e| format!("Failed to clear Rust cache: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Open the output folder in the system file browser
 #[tauri::command]
 pub async fn open_output_folder() -> Result<(), String> {
     let output_path = get_output_path();
@@ -854,5 +885,22 @@ pub async fn open_output_folder() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
     Ok(())
 }

@@ -39,6 +39,8 @@ export function BuildSettings() {
   const [isClearing, setIsClearing] = useState(false);
   const [buildCacheInfo, setBuildCacheInfo] = useState<CacheInfo | null>(null);
   const [isClearingBuild, setIsClearingBuild] = useState(false);
+  const [rustCacheInfo, setRustCacheInfo] = useState<CacheInfo | null>(null);
+  const [isClearingRust, setIsClearingRust] = useState(false);
 
   const aaxEnabled = buildFormats.includes('aax');
 
@@ -46,6 +48,7 @@ export function BuildSettings() {
   useEffect(() => {
     invoke<CacheInfo>('get_build_cache_info').then(setCacheInfo).catch(() => {});
     invoke<CacheInfo>('get_project_build_cache_info').then(setBuildCacheInfo).catch(() => {});
+    invoke<CacheInfo>('get_rust_cache_info').then(setRustCacheInfo).catch(() => {});
   }, []);
 
   const handleClearCache = async () => {
@@ -71,6 +74,19 @@ export function BuildSettings() {
       // ignore
     } finally {
       setIsClearingBuild(false);
+    }
+  };
+
+  const handleClearRustCache = async () => {
+    setIsClearingRust(true);
+    try {
+      await invoke('clear_rust_cache');
+      const info = await invoke<CacheInfo>('get_rust_cache_info');
+      setRustCacheInfo(info);
+    } catch {
+      // ignore
+    } finally {
+      setIsClearingRust(false);
     }
   };
 
@@ -275,6 +291,30 @@ export function BuildSettings() {
           className="px-3 py-2 bg-bg-tertiary hover:bg-bg-elevated disabled:bg-bg-tertiary disabled:text-text-muted text-text-primary text-sm rounded-lg border border-border transition-colors disabled:cursor-not-allowed"
         >
           {isClearingBuild ? 'Clearing...' : 'Clear Build Files'}
+        </button>
+      </div>
+
+      {/* Rust Compilation Cache */}
+      <div className="p-4 rounded-lg border border-border bg-bg-secondary space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-text-primary">Rust Compilation Cache</h4>
+            <p className="text-xs text-text-muted mt-0.5">
+              Compiled Rust dependencies shared across all projects. Can be large (5-20GB). Safe to clear — rebuilt on next build.
+            </p>
+          </div>
+          {rustCacheInfo && (
+            <span className="text-xs text-text-muted whitespace-nowrap ml-4">
+              {rustCacheInfo.exists ? rustCacheInfo.size_display : 'Empty'}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={handleClearRustCache}
+          disabled={isClearingRust || !rustCacheInfo?.exists}
+          className="px-3 py-2 bg-bg-tertiary hover:bg-bg-elevated disabled:bg-bg-tertiary disabled:text-text-muted text-text-primary text-sm rounded-lg border border-border transition-colors disabled:cursor-not-allowed"
+        >
+          {isClearingRust ? 'Clearing...' : 'Clear Rust Cache'}
         </button>
       </div>
     </div>

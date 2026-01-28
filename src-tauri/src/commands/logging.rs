@@ -8,9 +8,10 @@ static LOG_FILE: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
 /// Get the log file path (in user's home directory)
 fn get_log_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = super::get_home_dir();
+    let home = if home.is_empty() { ".".to_string() } else { home };
     PathBuf::from(home)
-        .join("VSTWorkshop")
+        .join("Freqlab")
         .join("logs")
         .join("freqlab.log")
 }

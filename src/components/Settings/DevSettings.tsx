@@ -269,7 +269,7 @@ export function DevSettings() {
           </svg>
           <div className="text-sm text-text-muted">
             <p>
-              Reset clears settings like theme, branding, DAW paths, and license acceptance. Your plugin projects in ~/VSTWorkshop/projects remain untouched.
+              Reset clears settings like theme, branding, DAW paths, and license acceptance. Your plugin projects remain untouched.
             </p>
           </div>
         </div>

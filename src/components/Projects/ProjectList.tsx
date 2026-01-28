@@ -68,7 +68,7 @@ export function ProjectList({ collapsed = false }: ProjectListProps) {
 
   // Stable callback for delete - memoize with project path
   const handleDelete = useCallback(async (projectPath: string) => {
-    const folderName = projectPath.split('/').pop() || '';
+    const folderName = projectPath.split(/[/\\]/).pop() || '';
     await deleteProject(folderName, projectPath);
   }, [deleteProject]);
 
