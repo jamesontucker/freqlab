@@ -2002,6 +2002,8 @@ pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
         return install_cmake_windows(window).await;
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
     // macOS/Linux: Check if Homebrew is available - use it if so (faster, handles updates)
     if run_command_with_timeout("which", &["brew"], 3)
         .map(|o| o.status.success())
@@ -2252,6 +2254,7 @@ pub async fn install_cmake(window: tauri::Window) -> Result<bool, String> {
     );
     let _ = window.emit("install-stream", InstallEvent::Done { success: true });
     Ok(true)
+    } // end of #[cfg(not(target_os = "windows"))]
 }
 
 /// Install CMake on Windows via MSI installer (silent)

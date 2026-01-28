@@ -2,7 +2,9 @@ pub mod audio;
 pub mod library;
 mod commands;
 
-use tauri::{Manager, RunEvent};
+use tauri::RunEvent;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -174,6 +176,8 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        // Suppress unused warning on non-macOS platforms
+        let _ = &app_handle;
         match event {
             RunEvent::Exit => {
                 // Clean up any spawned child processes when the app exits
