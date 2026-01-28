@@ -5,6 +5,13 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Windows flag to hide console window when spawning processes
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 // Track active child process PIDs for cleanup on exit
 static ACTIVE_CHILD_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
@@ -43,11 +50,12 @@ pub fn cleanup_child_processes() {
                 // On Windows, use TerminateProcess via the standard library
                 // std::process::Child::kill() uses TerminateProcess internally,
                 // but we only have PIDs here, so we use a simple taskkill command
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
+                let mut cmd = Command::new("taskkill");
+                cmd.args(["/F", "/PID", &pid.to_string()])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
-                    .status();
+                    .creation_flags(CREATE_NO_WINDOW);
+                let _ = cmd.status();
             }
         }
     }
@@ -150,13 +158,18 @@ fn find_vs_build_tools() -> Option<String> {
 fn run_command_with_timeout(cmd: &str, args: &[&str], timeout_secs: u64) -> Option<std::process::Output> {
     use std::process::Stdio;
 
-    let mut child = Command::new(cmd)
+    let mut command = Command::new(cmd);
+    command
         .args(args)
         .env("PATH", super::get_extended_path())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::piped());
+
+    // Hide console window on Windows
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command.spawn().ok()?;
 
     // Simple timeout: wait in a loop
     let start = std::time::Instant::now();
@@ -506,11 +519,12 @@ fn get_available_disk_space_gb() -> Result<f64, String> {
     #[cfg(windows)]
     {
         // Use wmic or PowerShell to get free disk space
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-Command", "(Get-PSDrive C).Free"])
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-Command", "(Get-PSDrive C).Free"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
+            .creation_flags(CREATE_NO_WINDOW);
+        let output = cmd.output()
             .map_err(|e| format!("Failed to check disk space: {}", e))?;
 
         if output.status.success() {
@@ -736,12 +750,14 @@ async fn install_build_tools_windows(window: tauri::Window) -> Result<bool, Stri
         installer_path.to_str().unwrap_or_default()
     );
 
-    let mut child = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &download_cmd])
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", &download_cmd])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to download installer: {}", e))?;
 
     if !stream_and_wait(&mut child, &window).await {
@@ -762,8 +778,8 @@ async fn install_build_tools_windows(window: tauri::Window) -> Result<bool, Stri
 
     // Run the installer silently with the C++ workload
     // --quiet: no UI, --wait: block until done, --norestart: don't reboot
-    let mut child = tokio::process::Command::new(installer_path.to_str().unwrap_or_default())
-        .args([
+    let mut installer_cmd = tokio::process::Command::new(installer_path.to_str().unwrap_or_default());
+    installer_cmd.args([
             "--quiet", "--wait", "--norestart",
             "--add", "Microsoft.VisualStudio.Workload.VCTools",
             "--includeRecommended",
@@ -771,7 +787,8 @@ async fn install_build_tools_windows(window: tauri::Window) -> Result<bool, Stri
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = installer_cmd.spawn()
         .map_err(|e| format!("Failed to start installer: {}", e))?;
 
     let success = stream_and_wait(&mut child, &window).await;
@@ -931,12 +948,13 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
             rustup_path.to_str().unwrap_or_default()
         );
         // Download first
-        let dl = tokio::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &download_cmd])
+        let mut dl_cmd = tokio::process::Command::new("powershell");
+        dl_cmd.args(["-NoProfile", "-Command", &download_cmd])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .spawn()
+            .creation_flags(CREATE_NO_WINDOW);
+        let dl = dl_cmd.spawn()
             .map_err(|e| format!("Failed to download rustup: {}", e))?;
         let mut dl = dl;
         if !stream_and_wait(&mut dl, &window).await {
@@ -944,13 +962,14 @@ pub async fn install_rust(window: tauri::Window) -> Result<bool, String> {
             return Err("Failed to download rustup-init.exe".to_string());
         }
         // Run rustup-init.exe silently
-        tokio::process::Command::new(rustup_path.to_str().unwrap_or_default())
-            .args(["-y", "--default-toolchain", "stable", "--profile", "default"])
+        let mut rustup_cmd = tokio::process::Command::new(rustup_path.to_str().unwrap_or_default());
+        rustup_cmd.args(["-y", "--default-toolchain", "stable", "--profile", "default"])
             .env("PATH", super::get_extended_path())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .spawn()
+            .creation_flags(CREATE_NO_WINDOW);
+        rustup_cmd.spawn()
             .map_err(|e| format!("Failed to start Rust installer: {}", e))?
     };
 
@@ -1054,13 +1073,14 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
                 exit 1
             }
         "#;
-        tokio::process::Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_script])
+        let mut cmd = tokio::process::Command::new("powershell");
+        cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_script])
             .env("PATH", super::get_extended_path())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .spawn()
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd.spawn()
             .map_err(|e| format!("Failed to start installer: {}", e))?
     };
 
@@ -2279,12 +2299,13 @@ async fn install_cmake_windows(window: tauri::Window) -> Result<bool, String> {
         msi_path.to_str().unwrap_or_default()
     );
 
-    let mut child = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &download_cmd])
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", &download_cmd])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to download CMake: {}", e))?;
 
     if !stream_and_wait(&mut child, &window).await {
@@ -2305,12 +2326,13 @@ async fn install_cmake_windows(window: tauri::Window) -> Result<bool, String> {
         msi_path.to_str().unwrap_or_default()
     );
 
-    let mut child = tokio::process::Command::new("cmd")
-        .args(["/C", &install_cmd])
+    let mut cmd = tokio::process::Command::new("cmd");
+    cmd.args(["/C", &install_cmd])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start CMake installer: {}", e))?;
 
     let success = stream_and_wait(&mut child, &window).await;

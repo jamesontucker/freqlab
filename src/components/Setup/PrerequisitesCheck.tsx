@@ -11,6 +11,7 @@ import {
   requestAccessibilityPermission,
   primeAdminPrivileges,
 } from '../../lib/tauri';
+import { IS_MAC, IS_WINDOWS, getPlatformDefaults } from '../../lib/platform';
 import type { CheckResult, DiskSpaceInfo, PermissionStatus } from '../../types';
 
 // ============================================================================
@@ -121,8 +122,9 @@ function parseStageFromOutput(step: InstallStep, output: string[], currentStage:
   }
 
   // Default based on current stage
+  const buildToolsName = IS_WINDOWS ? 'Visual Studio Build Tools' : 'Apple Developer Tools';
   const defaults: Record<InstallStep, string> = {
-    xcode: 'Setting up Apple Developer Tools...',
+    xcode: `Setting up ${buildToolsName}...`,
     rust: 'Setting up Rust...',
     cmake: 'Setting up CMake...',
     claude_cli: 'Setting up Claude Code...',
@@ -980,6 +982,9 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
   }, [refreshChecks]);
 
   // Item configs
+  // Platform-aware labels
+  const platformDefaults = getPlatformDefaults();
+
   const items: Array<{
     key: InstallStep;
     label: string;
@@ -990,8 +995,8 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
   }> = [
     {
       key: 'xcode',
-      label: 'Apple Developer Tools',
-      timeEstimate: 'Takes 5-10 minutes',
+      label: platformDefaults.buildToolsName,
+      timeEstimate: IS_WINDOWS ? 'Takes 10-15 minutes' : 'Takes 5-10 minutes',
       result: status?.xcode_cli,
       onInstall: handleInstallXcode,
     },
@@ -1060,17 +1065,19 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
         {/* Disk Space Check */}
         <DiskSpaceSection diskSpace={diskSpace} />
 
-        {/* Permission Section */}
-        <PermissionSection
-          permissions={permissions}
-          onRefresh={refreshPermissions}
-          adminPrimed={adminPrimed}
-          onAdminPrimed={setAdminPrimed}
-          allInstalled={allInstalled}
-          needsXcode={needsXcode}
-          needsClaudeAuth={needsClaudeAuth}
-          onShowAccessibilityInstructions={() => setShowAccessibilityInstructions(true)}
-        />
+        {/* Permission Section - macOS only */}
+        {IS_MAC && (
+          <PermissionSection
+            permissions={permissions}
+            onRefresh={refreshPermissions}
+            adminPrimed={adminPrimed}
+            onAdminPrimed={setAdminPrimed}
+            allInstalled={allInstalled}
+            needsXcode={needsXcode}
+            needsClaudeAuth={needsClaudeAuth}
+            onShowAccessibilityInstructions={() => setShowAccessibilityInstructions(true)}
+          />
+        )}
 
         {/* Install Items */}
         <div className="space-y-2">
