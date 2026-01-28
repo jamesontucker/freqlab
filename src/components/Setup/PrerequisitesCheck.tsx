@@ -781,7 +781,8 @@ export function PrerequisitesCheck({ onComplete, helpUrl = 'https://freqlab.app/
     claude_auth: null,
   });
   const [installingStep, setInstallingStep] = useState<InstallStep | null>(null);
-  const [adminPrimed, setAdminPrimed] = useState(false);
+  // On Windows, admin priming isn't needed (UAC handles elevation per-operation)
+  const [adminPrimed, setAdminPrimed] = useState(!IS_MAC);
 
   // Overlay states
   const [showAccessibilityInstructions, setShowAccessibilityInstructions] = useState(false);
