@@ -293,49 +293,88 @@ fn check_rust() -> CheckResult {
 }
 
 fn check_cmake() -> CheckResult {
-    match run_command_with_timeout("cmake", &["--version"], 5) {
-        Some(output) if output.status.success() => {
+    // First try cmake from extended PATH
+    if let Some(output) = run_command_with_timeout("cmake", &["--version"], 5) {
+        if output.status.success() {
             let version = String::from_utf8_lossy(&output.stdout)
                 .lines()
                 .next()
                 .unwrap_or("installed")
                 .to_string();
-            CheckResult {
+            return CheckResult {
                 status: CheckStatus::Installed,
                 version: Some(version),
                 message: None,
+            };
+        }
+    }
+
+    // On Windows, also check common install locations directly
+    // (MSI updates system PATH but running process doesn't see it until restart)
+    #[cfg(windows)]
+    {
+        let cmake_paths = [
+            r"C:\Program Files\CMake\bin\cmake.exe",
+            r"C:\Program Files (x86)\CMake\bin\cmake.exe",
+        ];
+        for path in cmake_paths {
+            if std::path::Path::new(path).exists() {
+                if let Some(output) = run_command_with_timeout(path, &["--version"], 5) {
+                    if output.status.success() {
+                        let version = String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .next()
+                            .unwrap_or("installed")
+                            .to_string();
+                        return CheckResult {
+                            status: CheckStatus::Installed,
+                            version: Some(version),
+                            message: None,
+                        };
+                    }
+                }
             }
         }
-        _ => CheckResult {
-            status: CheckStatus::NotInstalled,
-            version: None,
-            message: Some("Required for JUCE/iPlug2 frameworks".to_string()),
-        },
+    }
+
+    CheckResult {
+        status: CheckStatus::NotInstalled,
+        version: None,
+        message: Some("Required for JUCE/iPlug2 frameworks".to_string()),
     }
 }
 
 fn check_claude_cli() -> CheckResult {
-    // Use platform-appropriate command to find claude binary
-    match run_command_with_timeout(which_cmd(), &["claude"], 3) {
-        Some(output) if output.status.success() => {
-            CheckResult {
+    // First try using 'which' (Unix) or 'where' (Windows) via extended PATH
+    if let Some(output) = run_command_with_timeout(which_cmd(), &["claude"], 3) {
+        if output.status.success() {
+            return CheckResult {
                 status: CheckStatus::Installed,
                 version: Some("Installed".to_string()),
                 message: None,
-            }
-        }
-        _ => {
-            let install_hint = if cfg!(windows) {
-                "Download from https://claude.ai/download".to_string()
-            } else {
-                "Run: curl -fsSL https://claude.ai/install.sh | bash".to_string()
             };
-            CheckResult {
-                status: CheckStatus::NotInstalled,
-                version: None,
-                message: Some(install_hint),
-            }
         }
+    }
+
+    // Fallback: check common install locations directly
+    // (native installer may not update current process's PATH)
+    if find_claude_binary().is_some() {
+        return CheckResult {
+            status: CheckStatus::Installed,
+            version: Some("Installed".to_string()),
+            message: None,
+        };
+    }
+
+    let install_hint = if cfg!(windows) {
+        "Download from https://claude.ai/download".to_string()
+    } else {
+        "Run: curl -fsSL https://claude.ai/install.sh | bash".to_string()
+    };
+    CheckResult {
+        status: CheckStatus::NotInstalled,
+        version: None,
+        message: Some(install_hint),
     }
 }
 
@@ -769,26 +808,30 @@ async fn install_build_tools_windows(window: tauri::Window) -> Result<bool, Stri
     }
 
     let _ = window.emit("install-stream", InstallEvent::Output {
-        line: "Installing Visual Studio Build Tools (this may take several minutes)...".to_string(),
+        line: "Installing Visual Studio Build Tools...".to_string(),
+    });
+    let _ = window.emit("install-stream", InstallEvent::Output {
+        line: "This typically takes 10-15 minutes. Please wait...".to_string(),
     });
     let _ = window.emit("install-stream", InstallEvent::ActionRequired {
         action: "uac".to_string(),
         message: "Click 'Yes' on the Windows security prompt to allow installation".to_string(),
     });
 
-    // Run the installer silently with the C++ workload
-    // --quiet: no UI, --wait: block until done, --norestart: don't reboot
-    let mut installer_cmd = tokio::process::Command::new(installer_path.to_str().unwrap_or_default());
-    installer_cmd.args([
-            "--quiet", "--wait", "--norestart",
-            "--add", "Microsoft.VisualStudio.Workload.VCTools",
-            "--includeRecommended",
-        ])
+    // Use Start-Process -Verb RunAs to trigger UAC elevation
+    // The installer won't show UAC on its own - it needs to be launched elevated
+    let install_script = format!(
+        r#"Start-Process -FilePath '{}' -ArgumentList '--quiet','--wait','--norestart','--add','Microsoft.VisualStudio.Workload.VCTools','--includeRecommended' -Verb RunAs -Wait"#,
+        installer_path.to_str().unwrap_or_default()
+    );
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &install_script])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .creation_flags(CREATE_NO_WINDOW);
-    let mut child = installer_cmd.spawn()
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start installer: {}", e))?;
 
     let success = stream_and_wait(&mut child, &window).await;
@@ -1062,24 +1105,35 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
 
     #[cfg(windows)]
     let mut child = {
-        // Download and run the Windows installer via PowerShell
+        // Use the official installer command: irm https://claude.ai/install.ps1 | iex
+        // Note: irm = Invoke-RestMethod, iex = Invoke-Expression
+        // We use -WindowStyle Hidden to avoid showing a terminal window
         let install_script = r#"
             $ErrorActionPreference = 'Stop'
-            $installerUrl = 'https://claude.ai/install.ps1'
+            Write-Output "Downloading Claude Code installer..."
             try {
-                Invoke-Expression (Invoke-WebRequest -Uri $installerUrl -UseBasicParsing).Content
+                $script = Invoke-RestMethod -Uri 'https://claude.ai/install.ps1'
+                Write-Output "Installing Claude Code..."
+                Invoke-Expression $script
+                Write-Output "Installation complete!"
             } catch {
                 Write-Error "Failed to install Claude Code: $_"
                 exit 1
             }
         "#;
-        // Note: Don't use CREATE_NO_WINDOW here - Claude CLI installer may need user interaction
         let mut cmd = tokio::process::Command::new("powershell");
-        cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_script])
+        cmd.args([
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-WindowStyle", "Hidden",
+            "-Command", install_script
+        ])
             .env("PATH", super::get_extended_path())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd.spawn()
             .map_err(|e| format!("Failed to start installer: {}", e))?
     };
@@ -1567,11 +1621,12 @@ fn find_claude_binary() -> Option<String> {
 
     #[cfg(windows)]
     let possible_paths = vec![
+        // Official native installer location (primary)
+        format!(r"{}\.local\bin\claude.exe", home),
+        // Legacy/alternate locations
         format!(r"{}\.claude\bin\claude.exe", home),
         format!(r"{}\Programs\Claude\bin\claude.exe",
             std::env::var("LOCALAPPDATA").unwrap_or_default()),
-        format!(r"{}\Claude\bin\claude.exe",
-            std::env::var("APPDATA").unwrap_or_default()),
     ];
 
     for path in possible_paths {
@@ -2317,21 +2372,26 @@ async fn install_cmake_windows(window: tauri::Window) -> Result<bool, String> {
     }
 
     let _ = window.emit("install-stream", InstallEvent::Output {
-        line: "Installing CMake (may require administrator access)...".to_string(),
+        line: "Installing CMake...".to_string(),
+    });
+    let _ = window.emit("install-stream", InstallEvent::ActionRequired {
+        action: "uac".to_string(),
+        message: "Click 'Yes' on the Windows security prompt to allow installation".to_string(),
     });
 
-    // Install silently with msiexec, add to system PATH
-    let install_cmd = format!(
-        "msiexec /i \"{}\" /qn ADD_CMAKE_TO_PATH=System ALLUSERS=1 REBOOT=ReallySuppress",
-        msi_path.to_str().unwrap_or_default()
+    // Use Start-Process -Verb RunAs to trigger UAC elevation
+    // msiexec with /qn won't show UAC on its own - needs to be launched elevated
+    let install_script = format!(
+        r#"Start-Process -FilePath 'msiexec' -ArgumentList '/i','"{}"\','/qn','ADD_CMAKE_TO_PATH=System','ALLUSERS=1','REBOOT=ReallySuppress' -Verb RunAs -Wait"#,
+        msi_path.to_str().unwrap_or_default().replace('\\', "\\\\")
     );
-
-    // Note: Don't use CREATE_NO_WINDOW - msiexec needs UAC elevation dialog
-    let mut cmd = tokio::process::Command::new("cmd");
-    cmd.args(["/C", &install_cmd])
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &install_script])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start CMake installer: {}", e))?;
 

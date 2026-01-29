@@ -59,11 +59,10 @@ pub fn get_extended_path() -> String {
 
         let extra_paths = [
             format!(r"{}\.cargo\bin", userprofile),                     // Rust/Cargo
-            format!(r"{}\.claude\bin", userprofile),                    // Claude CLI
-            format!(r"{}\Programs\Claude\bin", localappdata),           // Claude CLI alt
+            format!(r"{}\.local\bin", userprofile),                     // Claude CLI (official native installer)
+            format!(r"{}\.claude\bin", userprofile),                    // Claude CLI (legacy)
             format!(r"{}\CMake\bin", programfiles),                     // CMake (Program Files)
             format!(r"{}\CMake\bin", programfiles_x86),                 // CMake (x86)
-            format!(r"{}\Programs\CMake\bin", localappdata),            // CMake (local install)
             format!(r"{}\Git\cmd", programfiles),                       // Git
             format!(r"{}\Microsoft\WinGet\Links", localappdata),        // WinGet
             r"C:\ProgramData\chocolatey\bin".to_string(),               // Chocolatey

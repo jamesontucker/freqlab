@@ -54,10 +54,16 @@ function parseStageFromOutput(step: InstallStep, output: string[], currentStage:
       return { stage: 'preparing', message: 'Preparing installation...' };
     }
     if (lastLines.includes('downloading') || lastLines.includes('found:')) {
-      return { stage: 'downloading', message: 'Downloading (this may take 5-10 minutes)...' };
+      const downloadMsg = IS_WINDOWS
+        ? 'Downloading Visual Studio Build Tools (~2 GB)...'
+        : 'Downloading (this may take 5-10 minutes)...';
+      return { stage: 'downloading', message: downloadMsg };
     }
-    if (lastLines.includes('installing') || lastLines.includes('softwareupdate')) {
-      return { stage: 'installing', message: 'Installing...' };
+    if (lastLines.includes('installing') || lastLines.includes('softwareupdate') || lastLines.includes('10-15 minutes')) {
+      const installMsg = IS_WINDOWS
+        ? 'Installing (this takes 10-15 minutes, please wait)...'
+        : 'Installing...';
+      return { stage: 'installing', message: installMsg };
     }
     if (lastLines.includes('complete') || lastLines.includes('success')) {
       return { stage: 'finishing', message: 'Finishing up...' };
