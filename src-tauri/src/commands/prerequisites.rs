@@ -1073,13 +1073,13 @@ pub async fn install_claude_cli(window: tauri::Window) -> Result<bool, String> {
                 exit 1
             }
         "#;
+        // Note: Don't use CREATE_NO_WINDOW here - Claude CLI installer may need user interaction
         let mut cmd = tokio::process::Command::new("powershell");
         cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", install_script])
             .env("PATH", super::get_extended_path())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .creation_flags(CREATE_NO_WINDOW);
+            .kill_on_drop(true);
         cmd.spawn()
             .map_err(|e| format!("Failed to start installer: {}", e))?
     };
@@ -2326,12 +2326,12 @@ async fn install_cmake_windows(window: tauri::Window) -> Result<bool, String> {
         msi_path.to_str().unwrap_or_default()
     );
 
+    // Note: Don't use CREATE_NO_WINDOW - msiexec needs UAC elevation dialog
     let mut cmd = tokio::process::Command::new("cmd");
     cmd.args(["/C", &install_cmd])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .creation_flags(CREATE_NO_WINDOW);
+        .kill_on_drop(true);
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start CMake installer: {}", e))?;
 

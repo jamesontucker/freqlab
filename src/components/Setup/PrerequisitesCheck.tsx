@@ -613,7 +613,8 @@ function InstallItem({
 }: InstallItemProps) {
   const [showDetails, setShowDetails] = useState(false);
   const isInstalled = result?.status === 'installed';
-  const isInstalling = installState !== null && installState.stage !== 'done' && installState.stage !== 'error';
+  // Don't show installing UI if the item is already detected as installed (e.g., from a recheck)
+  const isInstalling = !isInstalled && installState !== null && installState.stage !== 'done' && installState.stage !== 'error';
   const hasError = installState?.stage === 'error';
   const justCompletedSuccessfully = installState?.stage === 'done';
   // Don't show button if: already installed, currently installing, or just finished successfully (waiting for recheck)
